@@ -1,0 +1,141 @@
+"""Portfolio valuation and aggregate risk."""
+
+from __future__ import annotations
+
+from sqlalchemy.orm import Session
+
+from app.calculations.portfolio import (
+    PositionInput,
+    calculate_portfolio_duration,
+    calculate_portfolio_ytm,
+    calculate_weighted_score,
+)
+from app.calculations.returns import calculate_real_return
+from app.core.errors import NotFoundError
+from app.models.portfolio import Portfolio
+from app.repositories.bonds import BondRepository
+from app.repositories.metrics import MetricRepository
+from app.repositories.portfolios import PortfolioRepository
+from app.repositories.scores import ScoreRepository
+
+
+class PortfolioService:
+    def __init__(self, session: Session):
+        self.session = session
+        self.repo = PortfolioRepository(session)
+        self.bonds = BondRepository(session)
+        self.metrics = MetricRepository(session)
+        self.scores = ScoreRepository(session)
+
+    def require(self, portfolio_id: int) -> Portfolio:
+        portfolio = self.repo.get(portfolio_id)
+        if portfolio is None:
+            raise NotFoundError(f"Портфель не найден: {portfolio_id}")
+        return portfolio
+
+    def valuation(self, portfolio: Portfolio) -> dict:
+        bond_ids = [p.bond_id for p in portfolio.positions]
+        metrics = self.metrics.latest_for_many(bond_ids)
+        scores = self.scores.latest_investment_for_many(bond_ids)
+
+        positions: list[dict] = []
+        inputs: list[PositionInput] = []
+        total_value = 0.0
+        total_cost = 0.0
+        inflation_rates: list[float] = []
+
+        for position in portfolio.positions:
+            bond = position.bond
+            metric = metrics.get(position.bond_id)
+            nominal = bond.nominal or 100.0
+            price_pct = metric.clean_price if metric else None
+            accrued_pct = metric.accrued_interest if metric else None
+
+            market_value = None
+            if price_pct is not None:
+                dirty_pct = price_pct + (accrued_pct or 0.0)
+                market_value = dirty_pct / 100.0 * nominal * position.quantity
+                total_value += market_value
+
+            cost = None
+            if position.purchase_clean_price is not None:
+                cost = (
+                    (position.purchase_clean_price + (position.purchase_accrued_interest or 0.0))
+                    / 100.0
+                    * nominal
+                    * position.quantity
+                ) + (position.fees or 0.0)
+                total_cost += cost
+
+            if metric and metric.inflation_rate_used is not None:
+                inflation_rates.append(metric.inflation_rate_used)
+
+            inputs.append(
+                PositionInput(
+                    market_value=market_value,
+                    ytm=metric.ytm if metric else None,
+                    modified_duration=metric.modified_duration if metric else None,
+                )
+            )
+            score = scores.get(position.bond_id)
+            positions.append(
+                {
+                    "id": position.id,
+                    "bond_id": bond.id,
+                    "ticker": bond.ticker,
+                    "name": bond.name,
+                    "currency": bond.currency,
+                    "quantity": position.quantity,
+                    "purchase_clean_price": position.purchase_clean_price,
+                    "purchase_date": position.purchase_date.isoformat()
+                    if position.purchase_date
+                    else None,
+                    "clean_price": price_pct,
+                    "market_value": None if market_value is None else round(market_value, 2),
+                    "cost": None if cost is None else round(cost, 2),
+                    "unrealized_pnl": None
+                    if (market_value is None or cost is None)
+                    else round(market_value - cost, 2),
+                    "ytm": metric.ytm if metric else None,
+                    "real_ytm": metric.real_ytm if metric else None,
+                    "modified_duration": metric.modified_duration if metric else None,
+                    "years_to_maturity": metric.years_to_maturity if metric else None,
+                    "investment_score": score.value if score else None,
+                }
+            )
+
+        portfolio_ytm = calculate_portfolio_ytm(inputs)
+        avg_inflation = (
+            sum(inflation_rates) / len(inflation_rates) if inflation_rates else None
+        )
+        weighted_score = calculate_weighted_score(
+            [
+                (str(p["bond_id"]), p["investment_score"], p["market_value"] or 0.0)
+                for p in positions
+            ]
+        )
+
+        return {
+            "id": portfolio.id,
+            "name": portfolio.name,
+            "base_currency": portfolio.base_currency,
+            "positions": positions,
+            "summary": {
+                "position_count": len(positions),
+                "market_value": round(total_value, 2) if total_value else None,
+                "cost": round(total_cost, 2) if total_cost else None,
+                "unrealized_pnl": round(total_value - total_cost, 2)
+                if (total_value and total_cost)
+                else None,
+                "portfolio_ytm": portfolio_ytm,
+                "portfolio_ytm_pct": None if portfolio_ytm is None else round(portfolio_ytm * 100, 2),
+                "portfolio_real_ytm_pct": None
+                if (portfolio_ytm is None or avg_inflation is None)
+                else round((calculate_real_return(portfolio_ytm, avg_inflation) or 0) * 100, 2),
+                "portfolio_duration": calculate_portfolio_duration(inputs),
+                "average_investment_score": None
+                if weighted_score is None
+                else round(weighted_score["value"], 1),
+                "inflation_pct": None if avg_inflation is None else round(avg_inflation * 100, 2),
+            },
+        }
