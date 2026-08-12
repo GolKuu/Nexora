@@ -1,0 +1,39 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# databases
+*.db
+*.sqlite3
+tests/.test.db
+
+# node / next
+node_modules/
+.next/
+out/
+.turbo/
+npm-debug.log*
+yarn-error.log*
+
+# env & secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# build artifacts
+dist/
+build/
+coverage/
