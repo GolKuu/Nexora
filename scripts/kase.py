@@ -4,6 +4,8 @@
     python scripts/kase.py sync-kase-catalog      # bonds, issuers, parameters
     python scripts/kase.py sync-kase-quotes       # session prices only
     python scripts/kase.py sync-kase-all          # everything, then recompute
+    python scripts/kase.py sync-coupon-schedules  # official coupon schedules
+    python scripts/kase.py sync-yield-curve       # KZ_GOV curve from KZGB list
     python scripts/kase.py sync-inflation         # official CPI from stat.gov.kz
     python scripts/kase.py set-inflation 10.2     # manual override, in percent
     python scripts/kase.py recalculate-metrics    # YTM, duration, spreads
@@ -105,6 +107,38 @@ async def cmd_sync_all(_: argparse.Namespace) -> int:
     return 1 if summary.get("is_mock") else 0
 
 
+async def cmd_sync_coupon_schedules(args: argparse.Namespace) -> int:
+    """Fetch the exchange's published coupon schedule for every stored bond."""
+    provider = get_provider()
+    with SessionLocal() as session:
+        collector = KaseCollector(session, provider)
+        bonds = collector.bonds.list(limit=args.limit)
+        rows = 0
+        covered = 0
+        for bond in bonds:
+            written = await collector.sync_coupon_schedule(bond.ticker)
+            rows += written
+            covered += 1 if written else 0
+    _emit(
+        {
+            "provider": provider.name,
+            "bonds": len(bonds),
+            "with_published_schedule": covered,
+            "rows": rows,
+        }
+    )
+    return 0 if covered else 1
+
+
+async def cmd_sync_yield_curve(_: argparse.Namespace) -> int:
+    """Rebuild the government curve every credit spread is measured against."""
+    provider = get_provider()
+    with SessionLocal() as session:
+        nodes = await KaseCollector(session, provider).sync_yield_curve()
+    _emit({"provider": provider.name, "curve": "KZ_GOV", "nodes": nodes})
+    return 0 if nodes else 1
+
+
 async def cmd_sync_inflation(_: argparse.Namespace) -> int:
     with SessionLocal() as session:
         collector = StatGovInflationCollector(session)
@@ -163,6 +197,8 @@ COMMANDS = {
     "sync-kase-catalog": cmd_sync_catalog,
     "sync-kase-quotes": cmd_sync_quotes,
     "sync-kase-all": cmd_sync_all,
+    "sync-coupon-schedules": cmd_sync_coupon_schedules,
+    "sync-yield-curve": cmd_sync_yield_curve,
     "sync-inflation": cmd_sync_inflation,
     "set-inflation": cmd_set_inflation,
     "recalculate-metrics": cmd_recalculate_metrics,
@@ -187,6 +223,8 @@ def build_parser() -> argparse.ArgumentParser:
                 default=400,
                 help="how many active issues to fetch full parameters for",
             )
+        if name == "sync-coupon-schedules":
+            child.add_argument("--limit", type=int, default=5000)
         if name == "set-inflation":
             child.add_argument("percent", type=float, help="annual rate, in percent")
             child.add_argument("--note", default=None)

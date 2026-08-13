@@ -464,6 +464,28 @@ async def _enrich_catalog(
     return [by_ticker.get(b.ticker, b) for b in bonds]
 
 
+async def _sync_inflation(session: Session) -> float | None:
+    """Refresh the official CPI. A failure is logged, never fatal.
+
+    Inflation comes from stat.gov.kz, not KASE, but it has to be in place
+    before metrics are computed: without it every real yield would be null.
+    """
+    from app.collectors.inflation_collector import StatGovInflationCollector
+
+    collector = StatGovInflationCollector(session)
+    try:
+        result = await collector.fetch_latest()
+    except Exception as exc:
+        logger.warning("inflation refresh failed: %s", exc)
+        return None
+    finally:
+        await collector.aclose()
+    if not result.get("ok"):
+        logger.warning("inflation refresh failed: %s", result.get("detail"))
+        return None
+    return result.get("annual_rate")
+
+
 async def full_sync(session: Session, provider: BondDataProvider) -> dict:
     """One complete refresh: reference data, quotes, trades, metrics, scores."""
     collector = KaseCollector(session, provider)
@@ -498,9 +520,11 @@ async def full_sync(session: Session, provider: BondDataProvider) -> dict:
         if issuer is not None:
             collector.credit.recompute(issuer)
 
-    # The government curve must exist before metrics run: credit spread is
-    # measured against it.
+    # Both of these must land before metrics run, or the derived fields are
+    # silently null: credit spread needs the government curve, and real yield
+    # needs an inflation reading.
     curve_nodes = await collector.sync_yield_curve()
+    inflation = await _sync_inflation(session)
 
     # The published coupon schedule turns projected flows into facts, so it is
     # fetched for every bond that is still tradable.
@@ -526,6 +550,7 @@ async def full_sync(session: Session, provider: BondDataProvider) -> dict:
         "trades": trade_count,
         "coupon_schedule_rows": schedule_rows,
         "yield_curve_nodes": curve_nodes,
+        "inflation_rate": inflation,
         **derived,
         "started_at": started.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
