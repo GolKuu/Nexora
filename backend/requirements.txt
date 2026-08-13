@@ -8,3 +8,6 @@ psycopg[binary]>=3.2
 httpx>=0.28
 selectolax>=0.3.27
 tenacity>=9.0
+# Browser agent. The engine itself is downloaded separately:
+#   python -m playwright install chromium
+playwright>=1.49

@@ -2,6 +2,7 @@
 
 from app.models.ai import AIAnalysis
 from app.models.bond import Bond, BondCashFlow, PeerGroup
+from app.models.browser import BrowserNavigationLog, RawBrowserSnapshot
 from app.models.financials import (
     CreditRating,
     FinancialStatement,
@@ -25,6 +26,7 @@ __all__ = [
     "BondQuote",
     "BondScore",
     "BondTrade",
+    "BrowserNavigationLog",
     "CreditRating",
     "DataSource",
     "FinancialStatement",
@@ -35,6 +37,7 @@ __all__ = [
     "PeerGroup",
     "Portfolio",
     "PortfolioPosition",
+    "RawBrowserSnapshot",
     "RawKaseData",
     "ScoreComponent",
     "User",

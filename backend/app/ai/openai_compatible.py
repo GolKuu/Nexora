@@ -7,6 +7,7 @@ Switching provider is a change of AI_BASE_URL + AI_MODEL, nothing else.
 
 from __future__ import annotations
 
+import base64
 import time
 
 import httpx
@@ -20,6 +21,9 @@ logger = get_logger(__name__)
 
 class OpenAICompatibleClient(LLMClient):
     provider = "openai_compatible"
+    #: The chat-completions image_url part is understood by every gateway this
+    #: client targets; whether the *model* can see is a deployment choice.
+    supports_vision = True
 
     def __init__(
         self,
@@ -46,9 +50,54 @@ class OpenAICompatibleClient(LLMClient):
         temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> LLMResponse:
+        return await self._complete(
+            [{"role": m.role, "content": m.content} for m in messages],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    async def describe_image(
+        self,
+        image_bytes: bytes,
+        prompt: str,
+        *,
+        system: str | None = None,
+        media_type: str = "image/png",
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        """Send one image plus a prompt as an OpenAI-style multimodal message."""
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{encoded}"},
+                    },
+                ],
+            }
+        )
+        return await self._complete(
+            messages, temperature=0.0, max_tokens=max_tokens, model=model
+        )
+
+    async def _complete(
+        self,
+        messages: list[dict],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
         payload = {
-            "model": self.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "model": model or self.model,
+            "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens or settings.AI_MAX_TOKENS,
         }
@@ -60,14 +109,14 @@ class OpenAICompatibleClient(LLMClient):
         except Exception as exc:
             logger.warning("LLM request failed: %s", exc)
             return LLMResponse(
-                content="", model=self.model, provider=self.provider, error=str(exc)
+                content="", model=payload["model"], provider=self.provider, error=str(exc)
             )
         latency = (time.perf_counter() - started) * 1000
 
         if response.status_code >= 400:
             return LLMResponse(
                 content="",
-                model=self.model,
+                model=payload["model"],
                 provider=self.provider,
                 latency_ms=latency,
                 error=f"HTTP {response.status_code}: {response.text[:500]}",
@@ -78,7 +127,7 @@ class OpenAICompatibleClient(LLMClient):
         except (ValueError, KeyError, IndexError) as exc:
             return LLMResponse(
                 content="",
-                model=self.model,
+                model=payload["model"],
                 provider=self.provider,
                 latency_ms=latency,
                 error=f"Unexpected response shape: {exc}",
@@ -86,7 +135,7 @@ class OpenAICompatibleClient(LLMClient):
         usage = data.get("usage") or {}
         return LLMResponse(
             content=content.strip(),
-            model=data.get("model") or self.model,
+            model=data.get("model") or payload["model"],
             provider=self.provider,
             tokens_prompt=usage.get("prompt_tokens"),
             tokens_completion=usage.get("completion_tokens"),

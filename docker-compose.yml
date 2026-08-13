@@ -27,6 +27,10 @@ services:
       KASE_API_KEY: ${KASE_API_KEY:-}
       KASE_API_URL: ${KASE_API_URL:-https://api.kase.kz}
       KASE_WEBSITE_URL: ${KASE_WEBSITE_URL:-https://kase.kz}
+      KASE_LANGUAGE: ${KASE_LANGUAGE:-ru}
+      BROWSER_ENABLED: ${BROWSER_ENABLED:-true}
+      BROWSER_HEADLESS: ${BROWSER_HEADLESS:-true}
+      BROWSER_ARTIFACT_DIR: ${BROWSER_ARTIFACT_DIR:-/app/var/browser}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
       AI_MODEL: ${AI_MODEL:-gpt-4o-mini}

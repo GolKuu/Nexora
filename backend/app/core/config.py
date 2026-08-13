@@ -13,7 +13,16 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AppEnv = Literal["development", "staging", "production", "test"]
-KaseDataMode = Literal["auto", "official_api", "website", "mock"]
+KaseDataMode = Literal[
+    "auto",
+    "official_api",
+    # "website_structured" is the spec's name for the plain-HTTP HTML reader.
+    # "website" is kept as the historical alias for the same provider.
+    "website",
+    "website_structured",
+    "browser",
+    "mock",
+]
 
 
 class Settings(BaseSettings):
@@ -44,7 +53,53 @@ class Settings(BaseSettings):
     KASE_API_URL: str = "https://api.kase.kz"
     KASE_WEBSITE_URL: str = "https://kase.kz"
     KASE_HTTP_TIMEOUT: float = 15.0
+    #: Preferred language of the public site. The browser agent switches to it
+    #: with the site's own language control when the page renders another one.
+    KASE_LANGUAGE: str = "ru"
     RUN_LIVE_KASE_TESTS: bool = False
+
+    # --- browser agent ---------------------------------------------------
+    # The browser agent reads the *public* site as an ordinary visitor. It
+    # never needs KASE_API_KEY and never works around a login or a CAPTCHA.
+    BROWSER_ENABLED: bool = True
+    BROWSER_ENGINE: Literal["chromium", "firefox", "webkit"] = "chromium"
+    BROWSER_HEADLESS: bool = True
+    BROWSER_USER_AGENT: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    )
+    BROWSER_LOCALE: str = "ru-RU"
+    BROWSER_VIEWPORT_WIDTH: int = 1440
+    BROWSER_VIEWPORT_HEIGHT: int = 1000
+    #: Per-action timeout (find/click/wait), milliseconds.
+    BROWSER_ACTION_TIMEOUT_MS: int = 15_000
+    #: Per-navigation timeout, milliseconds.
+    BROWSER_NAV_TIMEOUT_MS: int = 45_000
+    #: Politeness: never more than this many pages in flight, and never two
+    #: navigations closer together than the pacing interval.
+    BROWSER_MAX_CONCURRENCY: int = 2
+    BROWSER_MIN_INTERVAL_MS: int = 1_200
+    BROWSER_MAX_RETRIES: int = 3
+    BROWSER_BACKOFF_BASE_MS: int = 1_500
+    #: Hard stops so no extraction loop can run forever.
+    BROWSER_MAX_PAGES: int = 20
+    BROWSER_MAX_SCROLLS: int = 30
+    BROWSER_MAX_ROWS: int = 5_000
+    BROWSER_MAX_RUNTIME_S: float = 180.0
+    #: Cache TTLs (seconds) per kind of page.
+    BROWSER_CACHE_TTL_CATALOG_S: float = 3_600.0
+    BROWSER_CACHE_TTL_BOND_S: float = 900.0
+    BROWSER_CACHE_TTL_ISSUER_S: float = 21_600.0
+    BROWSER_CACHE_TTL_DEFAULT_S: float = 900.0
+    #: Artefacts. Screenshots are taken only when visual context is needed.
+    BROWSER_ARTIFACT_DIR: str = "./var/browser"
+    BROWSER_STORE_SCREENSHOTS: bool = True
+    BROWSER_MAX_STORED_SCREENSHOTS: int = 200
+    #: Visual analysis costs a vision model call; opt-in and never a source of
+    #: precise numbers (see docs/browser-agent.md).
+    BROWSER_VISUAL_ANALYSIS_ENABLED: bool = True
+    BROWSER_VISION_MODEL: str | None = None
+    RUN_LIVE_BROWSER_TESTS: bool = False
 
     # --- AI --------------------------------------------------------------
     # OpenAI-compatible: works with OpenAI, Claude-compatible gateways, Qwen, etc.
@@ -93,7 +148,20 @@ class Settings(BaseSettings):
             problems.append(
                 "KASE_DATA_MODE=official_api requires KASE_API_KEY to be set."
             )
+        if self.KASE_DATA_MODE == "browser" and not self.BROWSER_ENABLED:
+            problems.append(
+                "KASE_DATA_MODE=browser requires BROWSER_ENABLED=true."
+            )
         return problems
+
+    @property
+    def browser_limits(self) -> dict[str, float]:
+        return {
+            "max_pages": self.BROWSER_MAX_PAGES,
+            "max_scrolls": self.BROWSER_MAX_SCROLLS,
+            "max_rows": self.BROWSER_MAX_ROWS,
+            "max_runtime_s": self.BROWSER_MAX_RUNTIME_S,
+        }
 
 
 @lru_cache

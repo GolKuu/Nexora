@@ -36,6 +36,10 @@ async def lifespan(app: FastAPI):
             "is synthetic."
         )
     yield
+    # The browser engine is a child process; leaving it behind leaks memory.
+    from app.browser.session import browser_service
+
+    await browser_service.aclose()
     logger.info("shutting down")
 
 

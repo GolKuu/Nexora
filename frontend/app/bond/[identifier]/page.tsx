@@ -9,6 +9,7 @@ import { Card, CardBody } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { BondCharts } from "@/features/bonds/BondCardSections";
 import { Calculator } from "@/features/bonds/Calculator";
+import { KaseVerify } from "@/features/bonds/KaseVerify";
 import { PeerList } from "@/features/bonds/PeerList";
 import { ProDetails } from "@/features/bonds/ProDetails";
 import { ScoreExplanation } from "@/features/bonds/ScoreExplanation";
@@ -105,20 +106,7 @@ export default function BondPage({
         <div className="space-y-4">
           <Calculator ticker={bond.ticker} currency={bond.currency} />
           <PeerList ticker={bond.ticker} />
-          {bond.kase_url ? (
-            <Card>
-              <CardBody>
-                <a
-                  href={bond.kase_url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="text-sm underline"
-                >
-                  Страница выпуска на KASE ↗
-                </a>
-              </CardBody>
-            </Card>
-          ) : null}
+          <KaseVerify ticker={bond.ticker} kaseUrl={bond.kase_url} />
         </div>
       </div>
     </div>

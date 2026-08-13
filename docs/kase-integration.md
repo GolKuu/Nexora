@@ -15,12 +15,16 @@
 
 ## Режимы (`KASE_DATA_MODE`)
 
-| Режим          | Цепочка провайдеров                                       |
-|----------------|-----------------------------------------------------------|
-| `official_api` | `KaseApiProvider`                                          |
-| `website`      | `KaseWebsiteProvider`                                      |
-| `auto`         | `KaseApiProvider` (если есть ключ) → `KaseWebsiteProvider` → `MockKaseProvider` (только вне production) |
-| `mock`         | `MockKaseProvider` (в production — ошибка запуска)         |
+| Режим                | Цепочка провайдеров                                 |
+|----------------------|-----------------------------------------------------|
+| `official_api`       | `KaseApiProvider`                                    |
+| `browser`            | `KaseBrowserProvider` — настоящий браузер на публичном сайте |
+| `website_structured` | `KaseWebsiteProvider` — чтение HTML по HTTP (псевдоним: `website`) |
+| `auto`               | `KaseApiProvider` (если есть ключ) → `KaseBrowserProvider` → `KaseWebsiteProvider` → `MockKaseProvider` (только вне production) |
+| `mock`               | `MockKaseProvider` (в production — ошибка запуска)   |
+
+**`KASE_API_KEY` нужен только для `official_api`.** Всё, что публично видно
+посетителю kase.kz, браузерный агент получает без ключа.
 
 `CompositeKaseProvider` перебирает источники по порядку, запоминает, кто
 ответил (`last_source`), и пишет предупреждение в лог при каждом ответе от
@@ -44,6 +48,21 @@
 3. Приведите `ENDPOINTS` и `FIELD_MAP` в соответствие с документацией биржи.
 4. Проверьте: `RUN_LIVE_KASE_TESTS=true pytest -m live_kase`.
 5. Переключите `KASE_DATA_MODE=official_api`.
+
+## `KaseBrowserProvider` — публичный сайт через браузер
+
+Настоящий Chromium: сайт исполняет свой JavaScript, агент дожидается
+отрисовки, переходит по вкладкам, читает таблицы и текст, находит ссылки на
+документы. Каталог инструментов не захардкожен — он читается со страницы.
+
+Проверено на живом сайте (август 2026): каталог
+`/ru/markets/corporate-bonds`, страница выпуска
+`/ru/investors/bonds/{TICKER}`, страница эмитента
+`/ru/listing/issuers/{CODE}`.
+
+Агент не обходит CAPTCHA, не логинится и не трогает ничего, кроме того, что
+видит обычный посетитель. Подробности, ограничения и набор команд —
+в [`docs/browser-agent.md`](browser-agent.md).
 
 ## `KaseWebsiteProvider` — публичный сайт
 

@@ -13,6 +13,12 @@ RUN apt-get update \
 COPY backend/requirements.txt backend/requirements-dev.txt ./
 RUN pip install --upgrade pip && pip install -r requirements-dev.txt
 
+# Browser agent: the Chromium build plus the system libraries it needs. This
+# is the bulk of the image; drop both lines and set BROWSER_ENABLED=false to
+# build a browser-less deployment that still serves API and cached data.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN python -m playwright install --with-deps chromium
+
 COPY backend/ /app/backend/
 COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini

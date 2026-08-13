@@ -350,3 +350,80 @@ export interface PeersResponse {
     years_to_maturity: number | null;
   }[];
 }
+
+/** Browser agent (§31, §49): every value carries how it was read and how much
+ *  that method is worth. `method: "visual"` is qualitative by construction. */
+export interface KaseExtractedField {
+  field: string;
+  label: string | null;
+  raw_value: string | null;
+  normalized_value: unknown;
+  unit: string | null;
+  method: "dom" | "table" | "tooltip" | "document" | "visual";
+  confidence: number;
+  warnings: string[];
+  source: {
+    page_url: string;
+    page_title: string | null;
+    section: string | null;
+    fetched_at: string;
+    source_timestamp: string | null;
+    browser_session_id: string | null;
+    extractor_version: string;
+  } | null;
+}
+
+export interface KaseDocumentLink {
+  document_url: string;
+  document_name: string;
+  document_type: string;
+  publication_date: string | null;
+  source_page: string;
+  section: string | null;
+}
+
+export interface KaseVerifyResponse {
+  ticker: string;
+  source: string;
+  source_url: string | null;
+  checked_at: string;
+  checked_at_label: string;
+  status: string;
+  ok: boolean;
+  notice: string | null;
+  browser_blocked_by_captcha: boolean;
+  requires_authentication: boolean;
+  data_mode: string;
+  identity_confirmed: boolean;
+  tabs_available: string[];
+  tabs_read: {
+    tab_name: string;
+    changed_content: boolean;
+    tables: number;
+    documents: number;
+    status: string;
+  }[];
+  fields: Record<string, KaseExtractedField>;
+  documents: KaseDocumentLink[];
+  warnings: string[];
+  chart: Record<string, unknown>;
+  visual: Record<string, unknown> | null;
+}
+
+export interface KaseTabResponse extends KaseVerifyResponse {
+  section: string;
+  tab: {
+    tab_name: string;
+    url: string;
+    text: string;
+    changed_content: boolean;
+    status: string;
+  } | null;
+}
+
+export interface KaseLinkResponse {
+  ticker: string;
+  url: string | null;
+  verified_at: string | null;
+  source: string | null;
+}

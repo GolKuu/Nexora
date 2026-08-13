@@ -89,13 +89,15 @@ npm run dev
 |-----------------------|-----------------------------------------------------------------------|
 | `APP_ENV`             | `development` / `staging` / `production` / `test`                     |
 | `DATABASE_URL`        | строка подключения SQLAlchemy к PostgreSQL                            |
-| `KASE_DATA_MODE`      | `auto` / `official_api` / `website` / `mock`                          |
-| `KASE_API_KEY`        | ключ контрактного API KASE (обязателен для `official_api`)            |
+| `KASE_DATA_MODE`      | `auto` / `official_api` / `browser` / `website_structured` / `mock`   |
+| `KASE_API_KEY`        | ключ контрактного API KASE; нужен **только** для `official_api`        |
+| `BROWSER_ENABLED`     | браузерный агент для публичного сайта kase.kz (ключ API не нужен)      |
 | `KASE_API_URL`        | базовый URL API KASE                                                  |
 | `OPENAI_API_KEY`      | ключ LLM-провайдера; пусто — ИИ отключается, объяснения даёт движок   |
 | `AI_BASE_URL`         | любой OpenAI-совместимый эндпоинт                                     |
 | `AI_MODEL`            | имя модели                                                            |
 | `RUN_LIVE_KASE_TESTS` | разрешить тестам ходить в реальный KASE                               |
+| `RUN_LIVE_BROWSER_TESTS` | разрешить браузерному тесту открыть настоящий kase.kz             |
 | `SEED_DEMO_DATA`      | загрузить демо-данные при старте контейнера (игнорируется в проде)    |
 
 Заполнение:
@@ -171,12 +173,15 @@ python scripts/seed_demo.py
 | Режим          | Поведение                                                                    |
 |----------------|------------------------------------------------------------------------------|
 | `official_api` | только контрактный API KASE; без `KASE_API_KEY` приложение не стартует        |
-| `website`      | только публичные страницы kase.kz                                             |
-| `auto`         | API (если есть ключ) → сайт → демо (демо только вне production)               |
+| `browser`      | настоящий браузер на публичном сайте kase.kz; ключ API не нужен               |
+| `website_structured` | чтение публичного HTML по HTTP без браузера (псевдоним: `website`)     |
+| `auto`         | API (если есть ключ) → браузер → HTML → демо (демо только вне production)     |
 | `mock`         | только демо-данные; в production запрещён                                     |
 
 Что реализовано и что нужно доделать под конкретный контракт — подробно
 описано в [`docs/kase-integration.md`](docs/kase-integration.md).
+Браузерный агент (вкладки, таблицы, документы, скриншоты, ограничения) —
+в [`docs/browser-agent.md`](docs/browser-agent.md).
 
 Честная проверка подключения:
 

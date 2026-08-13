@@ -86,6 +86,16 @@ def _warning(is_mock: bool) -> str | None:
     )
 
 
+def _browser_health() -> dict:
+    """Whether the browser agent could run, without actually launching it."""
+    from app.services.browser_agent_service import browser_status
+
+    try:
+        return browser_status()
+    except Exception as exc:  # a missing engine is a status, not a 500
+        return {"enabled": settings.BROWSER_ENABLED, "running": False, "error": str(exc)}
+
+
 def app_health(session: Session) -> dict:
     problems = settings.validate_runtime()
     return {
@@ -97,6 +107,7 @@ def app_health(session: Session) -> dict:
         "scoring_model_version": settings.SCORING_MODEL_VERSION,
         "formula_version": settings.FORMULA_VERSION,
         "database": database_health(session),
+        "browser": _browser_health(),
         "problems": problems,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "data_mode_values": [m.value for m in DataMode],

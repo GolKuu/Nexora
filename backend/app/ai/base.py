@@ -30,6 +30,9 @@ class LLMResponse:
 class LLMClient(abc.ABC):
     provider: str = "abstract"
 
+    #: True when the client can be given an image alongside the prompt.
+    supports_vision: bool = False
+
     @abc.abstractmethod
     async def chat(
         self,
@@ -38,6 +41,23 @@ class LLMClient(abc.ABC):
         temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> LLMResponse: ...
+
+    async def describe_image(
+        self,
+        image_bytes: bytes,
+        prompt: str,
+        *,
+        system: str | None = None,
+        media_type: str = "image/png",
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        """Describe an image. Optional: clients without vision say so."""
+        return LLMResponse(
+            content="",
+            provider=self.provider,
+            error="This LLM client has no vision support.",
+        )
 
     async def aclose(self) -> None:
         return None
