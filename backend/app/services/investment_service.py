@@ -56,10 +56,19 @@ class InvestmentService:
         if hasattr(last_trade, "date"):
             last_trade = last_trade.date()
 
+        # The exchange's own accrued interest, valid for the session it was
+        # published for. The calculator uses it only when pricing that date.
+        accrued_as_of = None
+        quote_timestamp = getattr(quote, "timestamp", None)
+        if quote_timestamp is not None:
+            accrued_as_of = quote_timestamp.date()
+
         return MarketSnapshot(
             ask=getattr(quote, "ask", None),
             bid=getattr(quote, "bid", None),
             last=getattr(quote, "last", None) or getattr(quote, "clean_price", None),
+            accrued_interest=getattr(quote, "accrued_interest", None),
+            accrued_as_of=accrued_as_of,
             ytm=getattr(quote, "ytm", None),
             turnover=getattr(quote, "turnover", None),
             number_of_trades=getattr(quote, "number_of_trades", None),

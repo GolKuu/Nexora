@@ -99,7 +99,7 @@ def price_from_spec(
         flows,
         ytm,
         settlement,
-        frequency=spec.coupon_frequency or 1,
+        frequency=spec.effective_frequency or 1,
         day_count=spec.day_count,
         accrued_interest=accrued,
     )
@@ -208,7 +208,7 @@ def yield_to_date(
         truncated,
         dirty_price,
         settlement,
-        frequency=spec.coupon_frequency or 1,
+        frequency=spec.effective_frequency or 1,
         day_count=spec.day_count,
     )
 

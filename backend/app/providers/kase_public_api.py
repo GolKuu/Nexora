@@ -10,26 +10,33 @@ contract and no login: it is the same JSON the public website consumes.
 
 Endpoints (all GET, all JSON, all anonymous, trailing slash required):
 
-===========================================  ===================================
-``/api/instruments/securities/?sec_type=bond``  catalog of 2 100+ bonds
-``/api/instruments/bonds/{code}/``              issue parameters + ISIN + CFI
-``/api/trade-results/bonds/``                   clean/dirty bid, ask, last, yields
-``/api/companies/issuers/{code}/``              issuer profile
-``/api/companies/defaulted-issuers/``           issuers in default
-``/api/companies/fin-data/{code}/``             quarterly financial statements
-``/api/companies/documents/?org_code=..``       prospectuses, reports, opinions
-``/api/indicators/``                            KZGB yield curve, TONIA, FX
-===========================================  ===================================
+===============================================  ===============================
+``/api/instruments/securities/?sec_type=bond``   catalog of 2 100+ bonds
+``/api/instruments/bonds/{code}/``               issue parameters + ISIN + CFI
+``/api/instruments/coupon-payments/{code}/``     published coupon schedule
+``/api/trade-results/bonds/``                    clean/dirty bid, ask, last, yields
+``/api/companies/issuers/{code}/``               issuer profile
+``/api/companies/defaulted-issuers/``            issuers in default
+``/api/companies/fin-data/{code}/``              quarterly financial statements
+``/api/companies/documents/?org_code=..``        prospectuses, reports, opinions
+``/api/indicators/``                             benchmark curve, TONIA, FX
+``/api/indicators/kzgb/representative-list/``    per-bond government curve
+``/api/search/suggestions/?query=..``            server-side ticker suggestions
+===============================================  ===============================
 
-Known gaps, documented rather than faked:
+The full API surface was enumerated from the site's own JavaScript bundle by
+extracting every ``apiService.get(...)`` path template, so the gaps below are
+"this endpoint does not exist", not "we did not find one":
 
-* There is no coupon-schedule endpoint. The schedule is *derived* from
-  ``coupon_rate``, the previous/next coupon dates and ``maturity_start_date``
-  by the calculation engine, and every derived flow is marked estimated.
-* There is no credit-rating endpoint. :meth:`get_ratings` returns ``[]``; it
-  never invents a rating.
-* Order-book depth is not published. Only best bid/ask are available, which is
-  why large orders get a liquidity warning instead of a fake fill price.
+* **No credit-rating endpoint.** The only occurrence of "rating" in the whole
+  bundle is a listing-application form asking an issuer whether it has one.
+  :meth:`get_ratings` returns ``[]`` and never invents a rating.
+* **No order-book depth.** Only best bid/ask are published, which is why large
+  orders get a liquidity warning instead of a fabricated fill price.
+* **No trade log for bonds.** ``last-deals`` exists only under
+  ``instruments/shares``; for bonds the session aggregate is all there is.
+* **No EBITDA, interest expense or cash flow** in ``fin-data``, so Debt/EBITDA
+  and interest coverage are not derivable and stay ``None``.
 """
 
 from __future__ import annotations
@@ -43,6 +50,7 @@ from app.core.logging import get_logger
 from app.providers.base import (
     BondDataProvider,
     ProviderBond,
+    ProviderCouponPeriod,
     ProviderDocument,
     ProviderFinancials,
     ProviderIssuer,
@@ -61,6 +69,12 @@ logger = get_logger(__name__)
 ENDPOINTS = {
     "catalog": "/api/instruments/securities/",
     "bond": "/api/instruments/bonds/{code}/",
+    # The exchange's own coupon schedule, with the rate applicable to each
+    # period. Found in the site bundle as getCouponPayments().
+    "coupon_payments": "/api/instruments/coupon-payments/{code}/",
+    "search_suggestions": "/api/search/suggestions/",
+    "kzgb_representative": "/api/indicators/kzgb/representative-list/",
+    "index_representative": "/api/indicators/kase-b/{code}/representative-list/",
     "security": "/api/instruments/securities/{code}/",
     "trade_results": "/api/trade-results/bonds/",
     "issuer": "/api/companies/issuers/{code}/",
@@ -463,12 +477,74 @@ class KasePublicApiProvider(BondDataProvider):
                 bonds.append(item)
         return bonds
 
+    async def get_coupon_schedule(self, identifier: str) -> list[ProviderCouponPeriod]:
+        """The exchange's own coupon schedule for one issue.
+
+        ``/api/instruments/coupon-payments/{code}/`` returns every period over
+        the bond's whole life:
+
+        * ``fixation_date`` - when the rate for the period is fixed;
+        * ``start_date``    - the payment date (this is the cash flow date);
+        * ``end_date``      - close of the ~14-day settlement window;
+        * ``rate`` / ``index_rate`` / ``total_rate`` - annual rate in percent.
+
+        ``total_rate`` is the applicable rate and varies period to period on
+        floating and indexed issues, which is exactly what a projection from
+        today's coupon cannot capture.
+        """
+        code = identifier.strip()
+        result = await self._get(
+            ENDPOINTS["coupon_payments"].format(code=code),
+            kind="coupon_payments",
+            key=code,
+        )
+        if not result.ok or not isinstance(result.json, list):
+            return []
+        provenance = self._provenance(result, code)
+        periods = []
+        for row in result.json:
+            payment_date = _d(row.get("start_date"))
+            if payment_date is None:
+                continue
+            periods.append(
+                ProviderCouponPeriod(
+                    ticker=code,
+                    payment_date=payment_date,
+                    period_end=_d(row.get("end_date")),
+                    fixation_date=_d(row.get("fixation_date")),
+                    rate=_pct_to_decimal(_f(row.get("total_rate"))),
+                    base_rate=_pct_to_decimal(_f(row.get("rate"))),
+                    index_rate=_pct_to_decimal(_f(row.get("index_rate"))),
+                    provenance=provenance,
+                )
+            )
+        periods.sort(key=lambda p: p.payment_date)
+        return periods
+
+    async def suggest(self, query: str, limit: int = 10) -> list[str]:
+        """Ticker suggestions from KASE's own search index.
+
+        Cheaper and better ordered than scanning the 13 MB catalog, and it is
+        what the exchange's own search box uses.
+        """
+        needle = query.strip()
+        if not needle:
+            return []
+        result = await self._get(
+            ENDPOINTS["search_suggestions"],
+            params={"query": needle},
+            kind="search_suggestions",
+            key=needle,
+        )
+        if not result.ok or not isinstance(result.json, dict):
+            return []
+        return [str(s) for s in (result.json.get("suggestions") or [])][:limit]
+
     async def search_bonds(self, query: str) -> list[ProviderBond]:
-        """Exact ticker/ISIN first, then substring matches on issuer name.
+        """Exact ticker/ISIN first, then the exchange's own suggestions.
 
         The catalog carries no ISIN, so an ISIN-shaped query is resolved by
-        checking the issue endpoint for exact-ticker candidates rather than
-        downloading every issue.
+        checking suggested candidates rather than downloading every issue.
         """
         needle = query.strip().upper()
         if not needle:
@@ -479,9 +555,20 @@ class KasePublicApiProvider(BondDataProvider):
         if exact is not None:
             return [exact]
 
+        # KASE's search index resolves partial tickers and issuer codes.
+        suggestions = await self.suggest(needle, limit=20)
+        if suggestions:
+            found = await self.enrich_bonds(suggestions)
+            if ISIN_RE.match(needle):
+                matched = [bond for bond in found if bond.isin == needle]
+                if matched:
+                    return matched
+            elif found:
+                return found
+
         catalog = await self.get_bonds()
         if ISIN_RE.match(needle):
-            # Fall back to a bounded scan: only active issues, detail-checked.
+            # Bounded scan of active issues; ISIN is not in the catalog.
             candidates = [b.ticker for b in catalog if b.is_active][:400]
             for chunk_start in range(0, len(candidates), 40):
                 chunk = candidates[chunk_start : chunk_start + 40]
@@ -792,6 +879,71 @@ class KasePublicApiProvider(BondDataProvider):
                 "fetched_at": result.fetched_at,
             }
         return indicators
+
+    async def get_government_curve(self) -> dict:
+        """The government yield curve, built from its actual constituents.
+
+        ``/api/indicators/kzgb/representative-list/`` publishes every bond in
+        the KZGB index with its own duration and yield. Fitting the curve to
+        those points gives a real term structure instead of the three coarse
+        buckets the headline indicators offer, so a credit spread can be taken
+        against a benchmark of matching duration.
+
+        Points are aggregated by tenor node and weighted by market
+        capitalisation, so a large liquid issue counts for more than a stub.
+        """
+        result = await self._get(
+            ENDPOINTS["kzgb_representative"], kind="kzgb_representative"
+        )
+        if not result.ok or not isinstance(result.json, dict):
+            return {"as_of": None, "points": [], "constituents": 0}
+
+        rows = result.json.get("list") or []
+        as_of = _d(result.json.get("date0"))
+
+        # Collect (tenor, yield, weight) from every constituent that has all
+        # three. A bond without a duration cannot be placed on the curve.
+        raw_points = []
+        for row in rows:
+            tenor = _f(row.get("duration"))
+            if tenor is None or tenor <= 0:
+                days = _f(row.get("dtm"))
+                tenor = None if days is None else days / 365.25
+            yield_rate = _pct_to_decimal(_f(row.get("dohod")))
+            if tenor is None or tenor <= 0 or yield_rate is None:
+                continue
+            weight = _f(row.get("capit")) or 1.0
+            raw_points.append((tenor, yield_rate, max(weight, 1.0)))
+
+        if not raw_points:
+            return {"as_of": as_of, "points": [], "constituents": 0}
+
+        # Standard tenor nodes; each takes the cap-weighted average of the
+        # constituents nearest to it.
+        nodes = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0]
+        points = []
+        for node in nodes:
+            lower = node * 0.7
+            upper = node * 1.4
+            bucket = [p for p in raw_points if lower <= p[0] <= upper]
+            if not bucket:
+                continue
+            total_weight = sum(p[2] for p in bucket)
+            average = sum(p[1] * p[2] for p in bucket) / total_weight
+            points.append(
+                {
+                    "tenor_years": node,
+                    "yield_rate": average,
+                    "constituents": len(bucket),
+                }
+            )
+        return {
+            "as_of": as_of,
+            "points": points,
+            "constituents": len(raw_points),
+            "source_url": result.url,
+            "fetched_at": result.fetched_at,
+        }
 
     async def get_benchmark_curve(self) -> dict[str, float | None]:
         """Government bond yield benchmarks, as decimals, by maturity bucket."""

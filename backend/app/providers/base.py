@@ -104,6 +104,25 @@ class ProviderTrade:
 
 
 @dataclass(slots=True)
+class ProviderCouponPeriod:
+    """One coupon period exactly as the exchange publishes it.
+
+    ``rate`` is the annual coupon for this period as a decimal. For floating
+    and indexed issues it differs period to period, which is precisely why a
+    published schedule beats one projected from today's rate.
+    """
+
+    ticker: str
+    payment_date: date
+    period_end: date | None = None
+    fixation_date: date | None = None
+    rate: float | None = None
+    base_rate: float | None = None
+    index_rate: float | None = None
+    provenance: Provenance | None = None
+
+
+@dataclass(slots=True)
 class ProviderFinancials:
     issuer_code: str
     period_end: date
@@ -175,6 +194,15 @@ class BondDataProvider(abc.ABC):
     async def get_trades(
         self, ticker: str, *, since: datetime | None = None
     ) -> list[ProviderTrade]: ...
+
+    async def get_coupon_schedule(self, identifier: str) -> list[ProviderCouponPeriod]:
+        """Published coupon schedule, or ``[]`` when the source has none.
+
+        Not abstract: a source that does not publish a schedule is a normal
+        case, and the calculation engine falls back to deriving one (marking
+        every flow estimated) rather than failing.
+        """
+        return []
 
     @abc.abstractmethod
     async def get_issuer(self, identifier: str) -> ProviderIssuer | None: ...

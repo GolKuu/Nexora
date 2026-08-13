@@ -105,6 +105,12 @@ class MarketSnapshot:
     ask: float | None = None
     bid: float | None = None
     last: float | None = None
+    #: Accrued interest the exchange itself applied, as a percentage of
+    #: nominal, and the date it applies to. KASE's figure embeds its own
+    #: settlement convention (T+n, ex-coupon), so it is preferred over our
+    #: recomputation whenever it refers to the settlement date being priced.
+    accrued_interest: float | None = None
+    accrued_as_of: date | None = None
     ytm: float | None = None
     turnover: float | None = None  # money traded in the last session
     number_of_trades: int | None = None
@@ -248,7 +254,7 @@ def calculate_investment(
 
     nominal = spec.nominal
     principal_per_bond = clean_pct / 100.0 * nominal
-    accrued_per_bond = calculate_accrued_interest(spec, settlement) or 0.0
+    accrued_per_bond = _resolve_accrued(spec, market, settlement, nominal)
     dirty_per_bond = principal_per_bond + accrued_per_bond
     if dirty_per_bond <= 0:
         result["warnings"] = ["Некорректная цена: расчет невозможен."]
@@ -491,6 +497,29 @@ def _empty_result(
     }
 
 
+def _resolve_accrued(
+    spec: BondSpec,
+    market: MarketSnapshot,
+    settlement: date,
+    nominal: float,
+) -> float:
+    """Accrued interest per bond, in money.
+
+    The exchange's own figure wins when it refers to the date being priced:
+    it already accounts for KASE's settlement convention, including the
+    ex-coupon reset that makes accrued jump to zero just before a payment.
+    Away from that date it is stale, so the schedule-based calculation - which
+    is correct for any settlement date - takes over.
+    """
+    if (
+        market.accrued_interest is not None
+        and market.accrued_as_of == settlement
+        and market.accrued_interest >= 0
+    ):
+        return market.accrued_interest / 100.0 * nominal
+    return calculate_accrued_interest(spec, settlement) or 0.0
+
+
 def _resolve_exit_date(spec: BondSpec, request: InvestmentRequest) -> date:
     """Maturity unless a valid earlier exit date was asked for."""
     if request.exit_mode == EXIT_DATE and request.exit_date:
@@ -558,7 +587,7 @@ def derive_risk_measures(
     ``dirty_price_money`` is money per bond, on the same scale as the nominal.
     """
     flows = calculate_cashflows(spec, settlement)
-    frequency = spec.coupon_frequency or 1
+    frequency = spec.effective_frequency or 1
     ytm = calculate_ytm(
         flows, dirty_price_money, settlement,
         frequency=frequency, day_count=spec.day_count,

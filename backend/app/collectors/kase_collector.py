@@ -24,7 +24,7 @@ from app.providers.base import (
     ProviderQuote,
     ProviderRating,
 )
-from app.repositories.bonds import BondRepository
+from app.repositories.bonds import BondRepository, CashFlowRepository
 from app.repositories.issuers import IssuerRepository
 from app.repositories.market import QuoteRepository, TradeRepository
 from app.repositories.sources import DataSourceRepository, RawDataRepository
@@ -49,6 +49,21 @@ _STATEMENT_FIELDS = {
 }
 
 
+def _frequency_from_periods(periods) -> int | None:
+    """Payments per year implied by the spacing of a published schedule."""
+    if len(periods) < 2:
+        return None
+    gaps = sorted(
+        (periods[i + 1].payment_date - periods[i].payment_date).days
+        for i in range(len(periods) - 1)
+    )
+    median = gaps[len(gaps) // 2]
+    for days, frequency in ((31, 12), (92, 4), (184, 2), (366, 1)):
+        if median <= days:
+            return frequency
+    return None
+
+
 def _prov_fields(dto) -> dict:
     p = getattr(dto, "provenance", None)
     if p is None:
@@ -71,6 +86,7 @@ class KaseCollector:
         self.session = session
         self.provider = provider
         self.bonds = BondRepository(session)
+        self.cashflows = CashFlowRepository(session)
         self.issuers = IssuerRepository(session)
         self.quotes = QuoteRepository(session)
         self.trades = TradeRepository(session)
@@ -178,6 +194,96 @@ class KaseCollector:
         return written
 
     # -- market ------------------------------------------------------------
+
+    async def sync_coupon_schedule(self, ticker: str) -> int:
+        """Store the exchange's published coupon schedule for one bond.
+
+        These rows are facts, not projections, so they are written with
+        ``is_estimated=False`` and the calculation engine prefers them over
+        anything it could roll forward itself.
+        """
+        bond = self.bonds.get_by_ticker(ticker)
+        if bond is None:
+            return 0
+        periods = await self.provider.get_coupon_schedule(ticker)
+        self._flush_raw()
+        if not periods:
+            return 0
+
+        nominal = bond.nominal or 100.0
+        frequency = _frequency_from_periods(periods) or bond.coupon_frequency or 1
+        rows = []
+        previous = None
+        for period in periods:
+            rate = period.rate if period.rate is not None else bond.coupon_rate
+            coupon = None if rate is None else nominal * rate / frequency
+            is_final = (
+                bond.maturity_date is not None
+                and period.payment_date >= bond.maturity_date
+            )
+            principal = nominal if is_final else 0.0
+            rows.append(
+                {
+                    "payment_date": period.payment_date,
+                    "period_start": previous,
+                    "coupon_amount": coupon,
+                    "principal_amount": principal,
+                    "total_amount": None if coupon is None else coupon + principal,
+                    # Published by the exchange, so not an estimate - except
+                    # where the rate for a future period is not yet fixed.
+                    "is_estimated": period.rate is None,
+                    "is_final": is_final,
+                    # Provenance marks these as published, which is what stops
+                    # the metrics job from replacing them with projections.
+                    **_prov_fields(period),
+                }
+            )
+            previous = period.payment_date
+
+        self.cashflows.replace(bond.id, rows)
+        # The schedule is the reliable source of the payment frequency.
+        if frequency and bond.coupon_frequency != frequency:
+            bond.coupon_frequency = frequency
+        self.session.commit()
+        return len(rows)
+
+    async def sync_yield_curve(self) -> int:
+        """Rebuild the government curve used for every credit spread."""
+        build = getattr(self.provider, "get_government_curve", None)
+        if build is None:
+            return 0
+        curve = await build()
+        self._flush_raw()
+        points = curve.get("points") or []
+        as_of = curve.get("as_of")
+        if not points or as_of is None:
+            logger.warning("government curve unavailable; leaving the stored one intact")
+            return 0
+
+        from app.models.macro import YieldCurve
+
+        self.session.query(YieldCurve).filter_by(
+            curve_code="KZ_GOV", currency="KZT", as_of_date=as_of
+        ).delete()
+        for point in points:
+            self.session.add(
+                YieldCurve(
+                    curve_code="KZ_GOV",
+                    currency="KZT",
+                    as_of_date=as_of,
+                    tenor_years=point["tenor_years"],
+                    yield_rate=point["yield_rate"],
+                    source=self.provider.name,
+                    source_url=curve.get("source_url"),
+                    fetched_at=curve.get("fetched_at"),
+                )
+            )
+        self.session.commit()
+        logger.info(
+            "government curve: %d nodes from %d constituents as of %s",
+            len(points), curve.get("constituents"), as_of,
+        )
+        return len(points)
 
     async def sync_quotes(self, tickers: list[str] | None = None) -> dict:
         # The KASE public feed quotes clean prices as a percentage of nominal
@@ -392,6 +498,16 @@ async def full_sync(session: Session, provider: BondDataProvider) -> dict:
         if issuer is not None:
             collector.credit.recompute(issuer)
 
+    # The government curve must exist before metrics run: credit spread is
+    # measured against it.
+    curve_nodes = await collector.sync_yield_curve()
+
+    # The published coupon schedule turns projected flows into facts, so it is
+    # fetched for every bond that is still tradable.
+    schedule_rows = 0
+    for bond in collector.bonds.list(limit=5000):
+        schedule_rows += await collector.sync_coupon_schedule(bond.ticker)
+
     quotes = await collector.sync_quotes()
     trade_count = 0
     for bond in collector.bonds.list(limit=5000):
@@ -408,6 +524,8 @@ async def full_sync(session: Session, provider: BondDataProvider) -> dict:
         **details,
         **quotes,
         "trades": trade_count,
+        "coupon_schedule_rows": schedule_rows,
+        "yield_curve_nodes": curve_nodes,
         **derived,
         "started_at": started.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),

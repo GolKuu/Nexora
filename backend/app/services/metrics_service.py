@@ -23,7 +23,7 @@ from app.calculations.bond_math import (
 from app.calculations.cashflows import calculate_cashflows
 from app.calculations.daycount import year_fraction
 from app.calculations.returns import calculate_real_return
-from app.calculations.types import FORMULA_VERSION, BondSpec
+from app.calculations.types import FORMULA_VERSION, BondSpec, CouponPeriod
 from app.core.logging import get_logger
 from app.models.bond import Bond
 from app.models.market import BondQuote
@@ -38,17 +38,46 @@ logger = get_logger(__name__)
 
 
 def bond_to_spec(bond: Bond) -> BondSpec | None:
+    """Build the pricing spec, including the stored coupon schedule.
+
+    When KASE's published schedule has been synced, it travels with the spec
+    and the engine prices off real payment dates and per-period rates instead
+    of rolling a schedule backwards from maturity.
+    """
     if bond.maturity_date is None:
         return None
+
+    nominal = bond.nominal or 100.0
+    schedule: tuple[CouponPeriod, ...] = ()
+    stored = getattr(bond, "cashflows", None) or ()
+    if stored:
+        periods = []
+        for row in sorted(stored, key=lambda r: r.payment_date):
+            # Recover the annual rate this period was written with, so a
+            # floating issue keeps its per-period fixings.
+            rate = None
+            if row.coupon_amount is not None and nominal:
+                frequency = bond.coupon_frequency or 1
+                rate = row.coupon_amount * frequency / nominal
+            periods.append(
+                CouponPeriod(
+                    payment_date=row.payment_date,
+                    rate=rate,
+                    period_start=row.period_start,
+                )
+            )
+        schedule = tuple(periods)
+
     return BondSpec(
         maturity_date=bond.maturity_date,
         coupon_rate=bond.coupon_rate,
         coupon_frequency=bond.coupon_frequency,
-        nominal=bond.nominal or 100.0,
+        nominal=nominal,
         issue_date=bond.issue_date,
         next_coupon_date=bond.next_coupon_date,
         coupon_type=bond.coupon_type or "fixed",
         day_count=bond.day_count or "ACT/365F",
+        schedule=schedule,
     )
 
 
@@ -70,6 +99,17 @@ class MetricsService:
     # -- cash flows -------------------------------------------------------
 
     def rebuild_cashflows(self, bond: Bond, settlement: date | None = None) -> int:
+        """Regenerate the projected schedule.
+
+        A schedule published by the exchange is never overwritten by a
+        projected one: real payment dates and per-period rates outrank
+        anything this can compute, and losing them would silently downgrade
+        every figure derived from them.
+        """
+        existing = self.cashflows.for_bond(bond.id)
+        if any(row.source and row.source != "calculated" for row in existing):
+            return len(existing)
+
         spec = bond_to_spec(bond)
         if spec is None:
             return 0
@@ -133,7 +173,7 @@ class MetricsService:
         elif quote is not None and quote.dirty_price is not None:
             dirty_price = quote.dirty_price
 
-        frequency = spec.coupon_frequency or 1
+        frequency = spec.effective_frequency or 1
 
         # Prefer the exchange's own YTM; fall back to solving it ourselves.
         ytm = quote.ytm if quote else None
