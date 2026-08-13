@@ -13,15 +13,31 @@
   `data_mode = "mock"`, а фабрика провайдеров отказывается их создавать при
   `APP_ENV=production`.
 
+## Проверенный публичный источник — начните отсюда
+
+С 13 августа 2026 у проекта есть **реальный, проверенный запросами публичный
+JSON API KASE**, не требующий ключа: `KasePublicApiProvider`
+(`KASE_DATA_MODE=public_api`). Он покрывает каталог, параметры выпусков с
+ISIN и купоном, котировки с bid/ask/clean/dirty, эмитентов, дефолты,
+отчетность и кривую доходности ГЦБ.
+
+Полный реестр эндпоинтов, поля, ограничения и методика их поиска —
+[`technical/kase-sources.md`](technical/kase-sources.md).
+Контракт для frontend — [`technical/api-contract.md`](technical/api-contract.md).
+
+Это предпочтительный источник: он структурирован и не ломается при
+изменении верстки сайта, в отличие от браузерного агента и HTML-ридера.
+
 ## Режимы (`KASE_DATA_MODE`)
 
-| Режим                | Цепочка провайдеров                                 |
-|----------------------|-----------------------------------------------------|
-| `official_api`       | `KaseApiProvider`                                    |
-| `browser`            | `KaseBrowserProvider` — настоящий браузер на публичном сайте |
-| `website_structured` | `KaseWebsiteProvider` — чтение HTML по HTTP (псевдоним: `website`) |
-| `auto`               | `KaseApiProvider` (если есть ключ) → `KaseBrowserProvider` → `KaseWebsiteProvider` → `MockKaseProvider` (только вне production) |
-| `mock`               | `MockKaseProvider` (в production — ошибка запуска)   |
+| Режим                | Цепочка провайдеров                                                                                                             |
+|----------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `public_api`         | `KasePublicApiProvider` — публичный JSON API, без ключа                                                                         |
+| `official_api`       | `KaseApiProvider`                                                                                                               |
+| `browser`            | `KaseBrowserProvider` — настоящий браузер на публичном сайте                                                                    |
+| `website_structured` | `KaseWebsiteProvider` — чтение HTML по HTTP (псевдоним: `website`)                                                              |
+| `auto`               | `KaseApiProvider` (если есть ключ) → `KasePublicApiProvider` → `KaseBrowserProvider` → `KaseWebsiteProvider` → `MockKaseProvider` (только вне production) |
+| `mock`               | `MockKaseProvider` (в production — ошибка запуска)                                                                              |
 
 **`KASE_API_KEY` нужен только для `official_api`.** Всё, что публично видно
 посетителю kase.kz, браузерный агент получает без ключа.
@@ -84,9 +100,21 @@
 ## Проверка подключения
 
 ```bash
-python scripts/check_kase.py
+python scripts/kase.py check-kase
 # 0 — ответил реальный источник
 # 1 — источник недоступен либо отдаются демо-данные
+```
+
+Полный набор операторских команд:
+
+```bash
+python scripts/kase.py sync-kase-catalog     # каталог, эмитенты, параметры выпусков
+python scripts/kase.py sync-kase-quotes      # котировки сессии + пересчет
+python scripts/kase.py sync-kase-all         # всё сразу
+python scripts/kase.py sync-inflation        # официальный ИПЦ со stat.gov.kz
+python scripts/kase.py set-inflation 10.2    # ручное значение, в процентах
+python scripts/kase.py recalculate-metrics
+python scripts/kase.py recalculate-scores
 ```
 
 ```bash

@@ -38,7 +38,7 @@ logger = get_logger(__name__)
 
 _STATEMENT_FIELDS = {
     "revenue", "operating_profit", "ebitda", "net_profit", "interest_expense",
-    "total_assets", "total_equity", "total_debt", "short_term_debt",
+    "total_assets", "total_equity", "total_liabilities", "total_debt", "short_term_debt",
     "long_term_debt", "cash_and_equivalents", "current_assets",
     "current_liabilities", "inventory", "operating_cash_flow",
     "investing_cash_flow", "financing_cash_flow", "capex", "free_cash_flow",
@@ -180,7 +180,11 @@ class KaseCollector:
     # -- market ------------------------------------------------------------
 
     async def sync_quotes(self, tickers: list[str] | None = None) -> dict:
-        quotes = await self.provider.get_quotes(tickers)
+        # The KASE public feed quotes clean prices as a percentage of nominal
+        # but dirty prices as money per bond, so it can only normalise the
+        # dirty side when it is told each bond's nominal. Providers that do
+        # not need this simply do not accept the argument.
+        quotes = await self._get_quotes(tickers)
         self._flush_raw()
         written = 0
         for dto in quotes:
@@ -191,6 +195,21 @@ class KaseCollector:
             written += 1
         self.session.commit()
         return {"quotes": written, "data_mode": self.provider.data_mode}
+
+    async def _get_quotes(self, tickers: list[str] | None) -> list[ProviderQuote]:
+        """Call the provider, supplying nominals when it can use them."""
+        nominals = {
+            bond.ticker: bond.nominal
+            for bond in self.bonds.list(limit=5000)
+            if bond.nominal
+        }
+        if nominals:
+            try:
+                return await self.provider.get_quotes(tickers, nominals=nominals)
+            except TypeError:
+                # Provider predates the nominals argument; its own units apply.
+                pass
+        return await self.provider.get_quotes(tickers)
 
     def _to_quote(self, dto: ProviderQuote, bond_id: int) -> BondQuote:
         prov = _prov_fields(dto)
@@ -304,6 +323,41 @@ async def sync_issuer_details(collector: KaseCollector, code: str, issuer_id: in
     return {"statements": written, "ratings": saved_ratings}
 
 
+#: Cap on per-issue detail requests in one sync. The KASE catalog holds ~2 200
+#: bonds but only ~970 are still live, and each detail call is a separate
+#: request, so the collector stays inside a polite budget and picks up where
+#: it left off on the next run.
+ENRICH_BUDGET = 400
+
+
+async def _enrich_catalog(
+    provider: BondDataProvider,
+    bonds: list[ProviderBond],
+    collector: "KaseCollector",
+) -> list[ProviderBond]:
+    """Fill in ISIN, coupon and schedule for active issues.
+
+    The KASE catalog endpoint is deliberately light: it has no ISIN, no coupon
+    rate and no coupon dates. Those live behind one request per issue, so this
+    fetches them for the bonds a user could actually buy and leaves matured
+    issues as catalog stubs.
+    """
+    enrich = getattr(provider, "enrich_bonds", None)
+    if enrich is None:
+        return bonds
+
+    active = [b.ticker for b in bonds if b.is_active][:ENRICH_BUDGET]
+    if not active:
+        return bonds
+
+    detailed = await enrich(active)
+    collector._flush_raw()
+    by_ticker = {b.ticker: b for b in detailed}
+    logger.info("enriched %d of %d active issues", len(by_ticker), len(active))
+    # Detail wins where it exists; the catalog stub stands in everywhere else.
+    return [by_ticker.get(b.ticker, b) for b in bonds]
+
+
 async def full_sync(session: Session, provider: BondDataProvider) -> dict:
     """One complete refresh: reference data, quotes, trades, metrics, scores."""
     collector = KaseCollector(session, provider)
@@ -311,6 +365,7 @@ async def full_sync(session: Session, provider: BondDataProvider) -> dict:
 
     bonds = await provider.get_bonds()
     collector._flush_raw()
+    bonds = await _enrich_catalog(provider, bonds, collector)
     issuer_cache: dict[str, int] = {}
     for dto in bonds:
         code = (dto.issuer_code or "").strip()

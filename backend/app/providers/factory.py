@@ -11,6 +11,7 @@ from app.providers.base import BondDataProvider
 from app.providers.composite import CompositeKaseProvider
 from app.providers.kase_api import KaseApiProvider
 from app.providers.kase_browser import KaseBrowserProvider
+from app.providers.kase_public_api import KasePublicApiProvider
 from app.providers.kase_website import KaseWebsiteProvider
 from app.providers.mock_kase import MockKaseProvider
 
@@ -23,9 +24,10 @@ _STRUCTURED_MODES = {"website", "website_structured"}
 def build_provider(config: Settings | None = None) -> BondDataProvider:
     """Construct the provider chain described by the configuration.
 
-    ``auto``                official API (if a key exists) -> browser agent ->
-                            plain HTML reader -> mock (dev only)
-    ``official_api``        official API only
+    ``auto``                contract API (if a key exists) -> public JSON API ->
+                            browser agent -> plain HTML reader -> mock (dev only)
+    ``public_api``          the verified public JSON API only, no key needed
+    ``official_api``        contract API only
     ``website_structured``  plain HTTP reader of the public HTML (alias: website)
     ``browser``             real browser session on the public site only
     ``mock``                demo data, refused in production
@@ -43,6 +45,9 @@ def build_provider(config: Settings | None = None) -> BondDataProvider:
             )
         logger.warning("KASE data mode: MOCK. All market data is synthetic.")
         return MockKaseProvider()
+
+    if mode == "public_api":
+        return _public_api(config)
 
     if mode == "official_api":
         if not config.KASE_API_KEY:
@@ -64,12 +69,16 @@ def build_provider(config: Settings | None = None) -> BondDataProvider:
         logger.info("KASE data mode: BROWSER. Data is read from the public site.")
         return KaseBrowserProvider(config.KASE_WEBSITE_URL)
 
-    # auto (§48): structured official source, then the browser agent, then the
-    # plain HTML reader; the last-verified cache lives in the database and is
-    # what the API serves when every live source fails.
+    # auto (§48): the contract API when a key exists, then the public JSON API,
+    # then the browser agent, then the plain HTML reader. The last-verified
+    # cache lives in the database and is what the API serves when every live
+    # source fails. The public JSON API sits above the scrapers deliberately:
+    # it is structured, documented in docs/technical/kase-sources.md and does
+    # not break when KASE restyles a page.
     chain: list[BondDataProvider] = []
     if config.KASE_API_KEY:
         chain.append(KaseApiProvider(config.KASE_API_URL, config.KASE_API_KEY))
+    chain.append(_public_api(config))
     if config.BROWSER_ENABLED:
         chain.append(KaseBrowserProvider(config.KASE_WEBSITE_URL))
     chain.append(KaseWebsiteProvider(config.KASE_WEBSITE_URL))
@@ -81,6 +90,14 @@ def build_provider(config: Settings | None = None) -> BondDataProvider:
         )
         chain.append(MockKaseProvider())
     return CompositeKaseProvider(chain)
+
+
+def _public_api(config: Settings) -> KasePublicApiProvider:
+    return KasePublicApiProvider(
+        config.KASE_WEBSITE_URL,
+        timeout=config.KASE_HTTP_TIMEOUT,
+        language=config.KASE_LANGUAGE,
+    )
 
 
 @lru_cache

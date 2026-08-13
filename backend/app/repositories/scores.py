@@ -65,6 +65,43 @@ class ScoreRepository:
         ).scalars()
         return {s.bond_id: s for s in rows}
 
+    def latest_by_kind_for_many(
+        self, bond_ids: list[int], kinds: list[str]
+    ) -> dict[int, dict[str, float | None]]:
+        """Latest value of each requested score kind, per bond.
+
+        One query for the whole page instead of one per bond per kind, which
+        is what /bonds/top needs to stay responsive over 500 candidates.
+        """
+        if not bond_ids or not kinds:
+            return {}
+        newest = (
+            select(
+                BondScore.bond_id,
+                BondScore.kind,
+                func.max(BondScore.calculated_at).label("ts"),
+            )
+            .where(
+                BondScore.bond_id.in_(bond_ids),
+                BondScore.kind.in_(kinds),
+                BondScore.user_id.is_(None),
+            )
+            .group_by(BondScore.bond_id, BondScore.kind)
+            .subquery()
+        )
+        rows = self.session.execute(
+            select(BondScore).join(
+                newest,
+                (BondScore.bond_id == newest.c.bond_id)
+                & (BondScore.kind == newest.c.kind)
+                & (BondScore.calculated_at == newest.c.ts),
+            )
+        ).scalars()
+        result: dict[int, dict[str, float | None]] = {}
+        for score in rows:
+            result.setdefault(score.bond_id, {})[score.kind] = score.value
+        return result
+
     def save(self, bond_id: int, result: ScoreResult, user_id: int | None = None) -> BondScore:
         score = BondScore(
             bond_id=bond_id,

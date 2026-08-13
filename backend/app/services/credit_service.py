@@ -46,11 +46,19 @@ def corporate_ratios(
     if free_cash_flow is None and statement.operating_cash_flow is not None and statement.capex is not None:
         free_cash_flow = statement.operating_cash_flow - statement.capex
 
+    # KASE publishes total liabilities but never a borrowings breakdown, so
+    # leverage falls back to liabilities/equity. That is a broader measure than
+    # debt/equity - it includes payables - and it is the honest one to use when
+    # the debt line is genuinely unreported.
+    leverage_base = statement.total_debt
+    if leverage_base is None:
+        leverage_base = statement.total_liabilities
+
     return {
         "model_kind": "corporate",
         "debt_to_ebitda": _ratio(statement.total_debt, statement.ebitda),
         "net_debt_to_ebitda": _ratio(net_debt, statement.ebitda),
-        "debt_to_equity": _ratio(statement.total_debt, statement.total_equity),
+        "debt_to_equity": _ratio(leverage_base, statement.total_equity),
         "interest_coverage": _ratio(statement.ebitda, statement.interest_expense),
         "current_ratio": _ratio(statement.current_assets, statement.current_liabilities),
         "quick_ratio": _ratio(quick_assets, statement.current_liabilities),
@@ -91,6 +99,9 @@ def bank_ratios(
         "net_interest_margin": _ratio(statement.net_interest_income, statement.total_assets),
         "cost_to_income": _ratio(operating_costs, operating_income),
         "equity_to_assets": _ratio(statement.total_equity, statement.total_assets),
+        # Not regulatory leverage, but it is what the public feed supports and
+        # it still separates a thinly capitalised bank from a solid one.
+        "debt_to_equity": _ratio(statement.total_liabilities, statement.total_equity),
         "roa": _ratio(statement.net_profit, statement.total_assets),
         "roe": _ratio(statement.net_profit, statement.total_equity),
         "operating_cash_flow": statement.operating_cash_flow,

@@ -252,11 +252,16 @@ class BondService:
         metrics = self.metrics.latest_for_many(ids)
         quotes = self.quotes.latest_for_many(ids)
         scores = self.scores.latest_investment_for_many(ids)
+        # The secondary scores /bonds/top can sort and filter on.
+        extra = self.scores.latest_by_kind_for_many(
+            ids, ["credit", "liquidity", "growth", "hold", "trade", "data_quality"]
+        )
         rows = []
         for bond in bonds:
             metric = metrics.get(bond.id)
             quote = quotes.get(bond.id)
             score = scores.get(bond.id)
+            others = extra.get(bond.id, {})
             rows.append(
                 {
                     "id": bond.id,
@@ -279,20 +284,73 @@ class BondService:
                     "real_yield_pct": _pct(metric.real_ytm) if metric else None,
                     "clean_price": metric.clean_price if metric else None,
                     "investment_score": score.value if score else None,
+                    "credit_score": others.get("credit"),
+                    "liquidity_score": others.get("liquidity"),
+                    "growth_score": others.get("growth"),
+                    "hold_score": others.get("hold"),
+                    "trade_score": others.get("trade"),
+                    "data_quality_score": others.get("data_quality"),
                     "data_mode": (metric.data_mode if metric else None)
                     or (quote.data_mode if quote else None),
                 }
             )
         return rows
 
-    def top(self, limit: int = 10, *, category: str | None = None) -> list[dict]:
-        """Best bonds by Investment Score, optionally within a category."""
-        bonds = self.bonds.list(limit=500)
+    #: Maps a /bonds/top sort key onto the list-view field it orders by.
+    _SORT_FIELDS = {
+        "investment_score": "investment_score",
+        "credit_score": "credit_score",
+        "liquidity_score": "liquidity_score",
+        "growth_score": "growth_score",
+        "hold_score": "hold_score",
+        "trade_score": "trade_score",
+        "real_return": "real_yield_pct",
+    }
+
+    def top(
+        self,
+        limit: int = 10,
+        *,
+        category: str | None = None,
+        currency: str | None = None,
+        max_maturity_years: float | None = None,
+        min_ytm: float | None = None,
+        min_real_ytm: float | None = None,
+        min_credit_score: float | None = None,
+        sort: str = "investment_score",
+    ) -> list[dict]:
+        """Best bonds by the requested measure, after the hard filters (§36).
+
+        Bonds missing the sort field are dropped rather than sorted as zero: an
+        unscored bond is not a bad bond, and ranking it last would say it is.
+        """
+        bonds = self.bonds.list(
+            limit=500, currency=currency, max_years=max_maturity_years
+        )
         rows = self.list_view(bonds)
         if category:
             rows = [r for r in rows if r["bond_type"] == category]
-        rows = [r for r in rows if r["investment_score"] is not None]
-        rows.sort(key=lambda r: r["investment_score"], reverse=True)
+        if min_ytm is not None:
+            rows = [
+                r for r in rows
+                if r.get("yield_pct") is not None and r["yield_pct"] >= min_ytm
+            ]
+        if min_real_ytm is not None:
+            rows = [
+                r for r in rows
+                if r.get("real_yield_pct") is not None
+                and r["real_yield_pct"] >= min_real_ytm
+            ]
+        if min_credit_score is not None:
+            rows = [
+                r for r in rows
+                if r.get("credit_score") is not None
+                and r["credit_score"] >= min_credit_score
+            ]
+
+        field = self._SORT_FIELDS.get(sort, "investment_score")
+        rows = [r for r in rows if r.get(field) is not None]
+        rows.sort(key=lambda r: r[field], reverse=True)
         return rows[:limit]
 
     def cashflow_view(self, bond: Bond) -> list[dict]:

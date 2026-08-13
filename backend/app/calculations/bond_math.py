@@ -149,6 +149,106 @@ def calculate_ytm(
     return (low + high) / 2
 
 
+def yield_to_date(
+    spec: BondSpec,
+    dirty_price: float | None,
+    settlement: date,
+    redemption_date: date,
+    redemption_price: float,
+) -> float | None:
+    """Yield earned if the bond is redeemed early at a stated price.
+
+    The shared engine behind yield-to-call and yield-to-put: truncate the
+    schedule at ``redemption_date``, replace the final principal with the
+    redemption amount, then solve for the yield exactly as for YTM.
+
+    ``redemption_price`` is money per bond on the same scale as ``spec.nominal``
+    (par redemption is simply ``spec.nominal``).
+    """
+    if dirty_price is None or dirty_price <= 0:
+        return None
+    if redemption_date <= settlement:
+        return None
+
+    flows = [
+        flow
+        for flow in calculate_cashflows(spec, settlement)
+        if flow.payment_date <= redemption_date
+    ]
+    # Coupons only up to the redemption; principal comes back at that date.
+    truncated = [
+        CashFlow(
+            payment_date=flow.payment_date,
+            coupon_amount=flow.coupon_amount,
+            principal_amount=0.0,
+            period_start=flow.period_start,
+            is_estimated=flow.is_estimated,
+        )
+        for flow in flows
+    ]
+    if truncated and truncated[-1].payment_date == redemption_date:
+        last = truncated[-1]
+        truncated[-1] = CashFlow(
+            payment_date=last.payment_date,
+            coupon_amount=last.coupon_amount,
+            principal_amount=redemption_price,
+            period_start=last.period_start,
+            is_estimated=last.is_estimated,
+        )
+    else:
+        truncated.append(
+            CashFlow(
+                payment_date=redemption_date,
+                coupon_amount=0.0,
+                principal_amount=redemption_price,
+                is_estimated=True,
+            )
+        )
+    return calculate_ytm(
+        truncated,
+        dirty_price,
+        settlement,
+        frequency=spec.coupon_frequency or 1,
+        day_count=spec.day_count,
+    )
+
+
+def calculate_ytc(
+    spec: BondSpec,
+    dirty_price: float | None,
+    settlement: date,
+    call_date: date | None,
+    call_price: float | None = None,
+) -> float | None:
+    """Yield to call. ``None`` when no call date is known - never guessed.
+
+    KASE publishes callability through the CFI code but not the call schedule,
+    so in practice ``call_date`` comes from the prospectus and is often absent.
+    Returning ``None`` keeps that gap visible instead of quietly reporting YTM
+    under a different name.
+    """
+    if call_date is None:
+        return None
+    return yield_to_date(
+        spec, dirty_price, settlement, call_date, call_price or spec.nominal
+    )
+
+
+def calculate_ytp(
+    spec: BondSpec,
+    dirty_price: float | None,
+    settlement: date,
+    put_date: date | None,
+    put_price: float | None = None,
+) -> float | None:
+    """Yield to put - the yield if the holder exercises the put option."""
+    if put_date is None:
+        return None
+    return yield_to_date(
+        spec, dirty_price, settlement, put_date, put_price or spec.nominal
+    )
+
+
 def calculate_duration(
     cashflows: Sequence[CashFlow],
     ytm: float | None,

@@ -51,6 +51,9 @@ class FinancialStatement(Base, TimestampMixin, SourceMixin):
     # balance sheet
     total_assets: Mapped[float | None] = mapped_column(Float)
     total_equity: Mapped[float | None] = mapped_column(Float)
+    #: Everything owed, not just borrowings. This is what KASE publishes; it
+    #: is a superset of ``total_debt`` and the two must not be conflated.
+    total_liabilities: Mapped[float | None] = mapped_column(Float)
     total_debt: Mapped[float | None] = mapped_column(Float)
     short_term_debt: Mapped[float | None] = mapped_column(Float)
     long_term_debt: Mapped[float | None] = mapped_column(Float)

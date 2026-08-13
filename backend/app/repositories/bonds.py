@@ -72,7 +72,15 @@ class BondRepository:
         return int(self.session.execute(stmt).scalar_one())
 
     def search(self, query: str, limit: int = 20) -> list[Bond]:
-        needle = f"%{query.strip().lower()}%"
+        """Search by ticker, ISIN or issuer name.
+
+        An exact ticker or ISIN match is ranked above every substring hit
+        (§37): someone who types ``BRKZb14`` wants that bond first, not
+        ``BRKZb14`` buried under ``BRKZb140``.
+        """
+        cleaned = query.strip()
+        exact = cleaned.lower()
+        needle = f"%{exact}%"
         stmt = (
             select(Bond)
             .options(joinedload(Bond.issuer))
@@ -84,9 +92,21 @@ class BondRepository:
                 )
             )
             .order_by(Bond.ticker)
-            .limit(limit)
+            .limit(max(limit, 50))
         )
-        return list(self.session.execute(stmt).unique().scalars())
+        rows = list(self.session.execute(stmt).unique().scalars())
+
+        def rank(bond: Bond) -> tuple[int, str]:
+            ticker = (bond.ticker or "").lower()
+            isin = (bond.isin or "").lower()
+            if ticker == exact or isin == exact:
+                return (0, ticker)
+            if ticker.startswith(exact) or isin.startswith(exact):
+                return (1, ticker)
+            return (2, ticker)
+
+        rows.sort(key=rank)
+        return rows[:limit]
 
     def upsert(self, ticker: str, values: dict) -> Bond:
         bond = self.get_by_ticker(ticker)

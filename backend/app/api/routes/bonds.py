@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.ai.explainer import ExplainerService
@@ -8,16 +10,23 @@ from app.api.deps import Identity, get_identity
 from app.core.config import settings
 from app.core.enums import DataMode
 from app.db.session import get_session
+from app.providers.inflation import get_inflation
 from app.schemas.bonds import (
     BondCardResponse,
     BondListResponse,
     CalculatorRequest,
     CashFlowItem,
     HistoryPoint,
+    InvestmentCalculationRequest,
+    InvestmentCalculationResponse,
+    RecommendRequest,
+    RecommendResponse,
 )
 from app.services.bond_service import BondService
 from app.services.calculator_service import CalculatorService
+from app.services.investment_service import InvestmentService
 from app.services.peer_service import PeerService
+from app.services.recommendation_service import RecommendationService
 from app.services.scoring_service import ScoringService
 from app.services.settings_service import SettingsService
 
@@ -66,14 +75,48 @@ def list_bonds(
     )
 
 
+#: Sort keys accepted by /bonds/top (§36). Anything else is rejected rather
+#: than silently ignored, so the client never believes it sorted by a field it
+#: misspelled.
+TOP_SORTS = {
+    "investment_score",
+    "credit_score",
+    "liquidity_score",
+    "growth_score",
+    "hold_score",
+    "trade_score",
+    "real_return",
+}
+
+
 @router.get("/top", response_model=BondListResponse, summary="TOP облигаций по оценке")
 def top_bonds(
     session: Session = Depends(get_session),
     limit: int = Query(default=10, ge=1, le=50),
     category: str | None = Query(default=None, description="Тип выпуска"),
+    currency: str | None = Query(default=None),
+    max_maturity_years: float | None = Query(default=None, gt=0),
+    min_ytm: float | None = Query(default=None, description="Доходность в %, минимум"),
+    min_real_ytm: float | None = Query(default=None, description="Реальная доходность в %"),
+    min_credit_score: float | None = Query(default=None, ge=0, le=100),
+    sort: str = Query(default="investment_score"),
 ) -> BondListResponse:
+    if sort not in TOP_SORTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sort must be one of: {', '.join(sorted(TOP_SORTS))}",
+        )
     service = BondService(session)
-    items = service.top(limit=limit, category=category)
+    items = service.top(
+        limit=limit,
+        category=category,
+        currency=currency,
+        max_maturity_years=max_maturity_years,
+        min_ytm=min_ytm,
+        min_real_ytm=min_real_ytm,
+        min_credit_score=min_credit_score,
+        sort=sort,
+    )
     modes = [i["data_mode"] for i in items]
     return BondListResponse(
         items=items,
@@ -91,6 +134,7 @@ def search_bonds(
     session: Session = Depends(get_session),
     limit: int = Query(default=20, ge=1, le=50),
 ) -> BondListResponse:
+    """Exact ticker and ISIN matches rank above every substring hit (§37)."""
     service = BondService(session)
     items = service.list_view(service.bonds.search(q, limit=limit))
     modes = [i["data_mode"] for i in items]
@@ -102,6 +146,34 @@ def search_bonds(
         data_mode=modes[0] if modes else None,
         warning=_warning(modes),
     )
+
+
+@router.post(
+    "/recommend",
+    response_model=RecommendResponse,
+    summary="Подбор облигаций под сумму и профиль",
+    description=(
+        "Отбор и ранжирование выполняет backend по сохраненным метрикам и "
+        "оценкам. Языковая модель в ранжировании не участвует — она может "
+        "только объяснить готовый список по полю reason_codes."
+    ),
+)
+def recommend_bonds(
+    payload: RecommendRequest,
+    session: Session = Depends(get_session),
+) -> RecommendResponse:
+    result = RecommendationService(session).recommend(
+        amount=payload.amount,
+        currency=payload.currency,
+        max_maturity_years=payload.max_maturity_years,
+        min_maturity_years=payload.min_maturity_years,
+        profile=payload.profile,
+        inflation_enabled=payload.inflation_enabled,
+        limit=payload.limit,
+        commission_type=payload.commission.type,
+        commission_value=payload.commission.value,
+    )
+    return RecommendResponse(**result)
 
 
 @router.get("/{identifier}", response_model=BondCardResponse, summary="Карточка облигации")
@@ -269,3 +341,50 @@ def calculate(
     )
     result["ticker"] = bond.ticker
     return result
+
+
+@router.post(
+    "/{identifier}/investment-calculation",
+    response_model=InvestmentCalculationResponse,
+    summary="Расчет инвестиции на произвольную сумму",
+    description=(
+        "Полный расчет покупки на любую сумму: количество бумаг, НКД, "
+        "комиссия, график выплат, прибыль и реальная доходность с поправкой "
+        "на инфляцию. Возвращенный номинал прибылью не считается."
+    ),
+)
+def investment_calculation(
+    identifier: str,
+    payload: InvestmentCalculationRequest,
+    session: Session = Depends(get_session),
+) -> InvestmentCalculationResponse:
+    bond = BondService(session).require(identifier)
+
+    exit_date = date.fromisoformat(payload.exit_date) if payload.exit_date else None
+    if payload.exit_mode == "date" and exit_date is None:
+        raise HTTPException(
+            status_code=422,
+            detail="exit_mode='date' requires exit_date (YYYY-MM-DD).",
+        )
+
+    horizon = None
+    if bond.maturity_date is not None:
+        horizon = (bond.maturity_date - date.today()).days / 365.25
+    inflation = (
+        get_inflation(session, horizon_years=horizon)
+        if payload.inflation_enabled
+        else None
+    )
+
+    result = InvestmentService(session).calculate(
+        bond,
+        amount=payload.amount,
+        commission_type=payload.commission.type,
+        commission_value=payload.commission.value,
+        inflation_enabled=payload.inflation_enabled,
+        inflation=inflation,
+        exit_mode=payload.exit_mode,
+        exit_date=exit_date,
+        scenario=payload.scenario,
+    )
+    return InvestmentCalculationResponse(**result)

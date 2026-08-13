@@ -15,6 +15,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 AppEnv = Literal["development", "staging", "production", "test"]
 KaseDataMode = Literal[
     "auto",
+    # The public JSON API kase.kz serves to its own front end. Verified, no key
+    # required, and the source the product is meant to run on.
+    "public_api",
     "official_api",
     # "website_structured" is the spec's name for the plain-HTTP HTML reader.
     # "website" is kept as the historical alias for the same provider.

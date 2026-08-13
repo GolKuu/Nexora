@@ -20,7 +20,9 @@ from app.calculations.bond_math import (
     calculate_duration,
     calculate_modified_duration,
     calculate_pull_to_par,
+    calculate_ytc,
     calculate_ytm,
+    calculate_ytp,
     price_from_spec,
 )
 from app.calculations.cashflows import calculate_cashflows
@@ -230,3 +232,50 @@ def test_pull_to_par_missing_inputs():
     assert calculate_pull_to_par(None, 2.0) is None
     assert calculate_pull_to_par(90.0, None) is None
     assert calculate_pull_to_par(90.0, 0.0) is None
+
+
+class TestYieldToCallAndPut:
+    """Early-redemption yields (§14). Absent a schedule, the answer is None."""
+
+    SPEC = BondSpec(
+        maturity_date=date(2030, 6, 18),
+        coupon_rate=0.11,
+        coupon_frequency=2,
+        nominal=1000.0,
+        next_coupon_date=date(2026, 12, 18),
+        day_count="ACT/360",
+    )
+    SETTLEMENT = date(2026, 8, 13)
+
+    def test_no_call_date_means_no_ytc_rather_than_ytm_in_disguise(self):
+        assert calculate_ytc(self.SPEC, 950.0, self.SETTLEMENT, None) is None
+        assert calculate_ytp(self.SPEC, 950.0, self.SETTLEMENT, None) is None
+
+    def test_call_at_par_on_a_discount_bond_beats_yield_to_maturity(self):
+        # Bought below par: getting par back sooner raises the return.
+        price = 900.0
+        ytm = calculate_ytm(
+            calculate_cashflows(self.SPEC, self.SETTLEMENT),
+            price,
+            self.SETTLEMENT,
+            frequency=2,
+            day_count=self.SPEC.day_count,
+        )
+        ytc = calculate_ytc(self.SPEC, price, self.SETTLEMENT, date(2028, 6, 18))
+        assert ytc is not None and ytm is not None
+        assert ytc > ytm
+
+    def test_call_premium_raises_the_yield_further(self):
+        at_par = calculate_ytc(self.SPEC, 900.0, self.SETTLEMENT, date(2028, 6, 18))
+        with_premium = calculate_ytc(
+            self.SPEC, 900.0, self.SETTLEMENT, date(2028, 6, 18), 1050.0
+        )
+        assert with_premium > at_par
+
+    def test_redemption_in_the_past_is_refused(self):
+        assert calculate_ytc(self.SPEC, 950.0, self.SETTLEMENT, date(2020, 1, 1)) is None
+
+    def test_put_and_call_agree_when_the_terms_are_identical(self):
+        ytc = calculate_ytc(self.SPEC, 950.0, self.SETTLEMENT, date(2028, 6, 18))
+        ytp = calculate_ytp(self.SPEC, 950.0, self.SETTLEMENT, date(2028, 6, 18))
+        assert ytc == pytest.approx(ytp)
