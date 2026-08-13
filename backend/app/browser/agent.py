@@ -28,7 +28,12 @@ from app.browser.extractors.page import PageContent, PageExtractor
 from app.browser.extractors.tables import extract_dynamic_table
 from app.browser.extractors.tabs import KaseTabExplorer
 from app.browser.locators import LocatorTarget
-from app.browser.normalize import normalize_isin, normalize_ticker, parse_number
+from app.browser.normalize import (
+    find_isins,
+    normalize_isin,
+    normalize_ticker,
+    parse_number,
+)
 from app.browser.pacing import RuntimeBudget
 from app.browser.session import BrowserService, BrowserSession, browser_service
 from app.browser.types import (
@@ -125,6 +130,8 @@ class BondPageResult:
     snapshot: PageSnapshot | None = None
     content: PageContent | None = None
     tabs_available: list[dict] = field(default_factory=list)
+    #: Price-view toggles read inside a tab (clean / dirty / yield).
+    views_read: list[TabResult] = field(default_factory=list)
     tabs_read: list[TabResult] = field(default_factory=list)
     documents: list[DocumentLink] = field(default_factory=list)
     candidates: list[ExtractedValue] = field(default_factory=list)
@@ -151,6 +158,7 @@ class BondPageResult:
             "tables": [t.as_dict() for t in (self.content.tables if self.content else [])],
             "tabs_available": self.tabs_available,
             "tabs_read": [t.as_dict() for t in self.tabs_read],
+            "views_read": [t.as_dict() for t in self.views_read],
             "documents": [d.as_dict() for d in self.documents],
             "values": {
                 name: value.as_dict()
@@ -341,6 +349,7 @@ class KaseBrowserAgent:
         with_screenshot: bool = True,
         with_visual: bool = False,
         with_chart: bool = True,
+        with_views: bool = True,
         use_cache: bool = True,
         budget: RuntimeBudget | None = None,
     ) -> BondPageResult:
@@ -398,9 +407,15 @@ class KaseBrowserAgent:
         result.tabs_available = available
         result.tabs_read = read
 
+        # The trade table is rendered three ways behind toggles a user clicks:
+        # clean price, dirty price and yield. Reading only the default view
+        # would mean never seeing the yields the page actually publishes.
+        if with_views and budget.check("price views"):
+            result.views_read = await self.tabs.explore_views(budget=budget)
+
         # Documents from the landing page and from every tab visited.
         documents = {d.url: d for d in content.documents}
-        for tab in read:
+        for tab in read + list(result.views_read):
             for document in tab.documents:
                 documents.setdefault(document.url, document)
         result.documents = list(documents.values())
@@ -558,6 +573,40 @@ def _pairs_from_tab(tab: TabResult) -> dict[str, str]:
     return pairs
 
 
+#: Headings that mark the end of a KASE instrument page's identity block and
+#: the start of its tabbed content.
+_IDENTITY_STOP_WORDS = (
+    "торги",
+    "характеристики",
+    "сводные данные",
+    "trades",
+    "characteristic",
+)
+
+
+def _identity_block(text: str, *, max_chars: int = 1200) -> str:
+    """The part of the page that describes the instrument itself.
+
+    Everything above the tab strip belongs to this bond. Below it the page
+    mixes in trade tables and the issuer's other securities.
+    """
+    window = text[:max_chars]
+    cut = len(window)
+    for line_start, line in _iter_lines(window):
+        folded = line.strip().casefold()
+        if folded and any(folded.startswith(word) for word in _IDENTITY_STOP_WORDS):
+            cut = min(cut, line_start)
+            break
+    return window[:cut]
+
+
+def _iter_lines(text: str):
+    position = 0
+    for line in text.splitlines(keepends=True):
+        yield position, line
+        position += len(line)
+
+
 def _header_candidates(ticker: str, content: PageContent) -> list[ExtractedValue]:
     """A few facts KASE prints in the page header rather than in a table."""
     source = content.snapshot.source_ref("header")
@@ -571,17 +620,29 @@ def _header_candidates(ticker: str, content: PageContent) -> list[ExtractedValue
             label="ticker requested and confirmed on page",
         )
     ]
-    isin = normalize_isin(content.main_text[:2000])
-    if isin:
+    # Only the identity block above the tab strip belongs to *this* bond.
+    # Further down the page KASE lists the issuer's other securities, and
+    # reading an ISIN out of that list would label the bond with a sibling's
+    # identifier - which is exactly what used to happen.
+    identity_block = _identity_block(content.main_text)
+    isins = find_isins(identity_block)
+    if len(isins) == 1:
         out.append(
             make_value(
                 "isin",
-                isin,
-                isin,
+                isins[0],
+                isins[0],
                 method=ExtractionMethod.DOM.value,
                 source=source,
                 label="ISIN в заголовке страницы",
             )
+        )
+    elif len(isins) > 1:
+        # Ambiguous header: say nothing and let the characteristics table,
+        # which is labelled, supply the ISIN instead.
+        logger.info(
+            "header holds %d ISINs for %s; deferring to the labelled table",
+            len(isins), ticker,
         )
     for line in content.main_text.splitlines()[:60]:
         folded = line.casefold()

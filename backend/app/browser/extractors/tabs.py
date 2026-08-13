@@ -41,6 +41,28 @@ SECTION_VOCABULARY: dict[str, tuple[str, ...]] = {
     "securities": ("ценные бумаги", "securities"),
 }
 
+#: Toggles *inside* a tab that swap which numbers the same table shows. On a
+#: KASE instrument page the trade table is rendered three ways, and only the
+#: first is visible by default, so a reader that never clicks these sees
+#: clean prices and never learns the yields.
+VIEW_VOCABULARY: dict[str, tuple[str, ...]] = {
+    "clean_price": ("чистая цена", "clean price", "таза баға"),
+    "dirty_price": ("грязная цена", "dirty price", "лас баға"),
+    "yield": ("доходность", "yield", "кірістілік"),
+}
+
+
+def classify_view(name: str | None) -> str | None:
+    """Which price view a toggle switches to, or ``None`` if it is not one."""
+    folded = _WS.sub(" ", (name or "")).strip().casefold()
+    if not folded:
+        return None
+    for view, words in VIEW_VOCABULARY.items():
+        if any(word in folded for word in words):
+            return view
+    return None
+
+
 #: CSS hints that merely *widen* discovery. Losing them costs recall, not
 #: correctness - ARIA roles and tab-ish class names are found regardless.
 TAB_CSS_HINTS = [
@@ -164,6 +186,41 @@ class KaseTabExplorer:
             shot = await self.session.take_screenshot(name=f"tab_{classify(name) or 'other'}")
             result.screenshot_path = shot.value if shot.ok else None
         return result
+
+    async def explore_views(
+        self,
+        *,
+        max_views: int = 3,
+        budget: RuntimeBudget | None = None,
+    ) -> list[TabResult]:
+        """Click the price-view toggles inside the current tab and read each.
+
+        These are what a user clicks to switch the same trade table between
+        clean prices, dirty prices and yields. They are not sections, so the
+        section-based explorer skips them; without this the agent only ever
+        sees the default view.
+        """
+        budget = budget or RuntimeBudget()
+        discovered = await self.discover()
+        views = []
+        seen: set[str] = set()
+        for tab in discovered:
+            view = classify_view(tab.get("tab_name"))
+            if view is None or view in seen:
+                continue
+            seen.add(view)
+            views.append((view, tab))
+
+        results: list[TabResult] = []
+        for view, tab in views[:max_views]:
+            if not budget.check(f"view {view}"):
+                break
+            result = await self.open_tab(tab, with_documents=False)
+            # Label the result with the view it represents, so a caller can
+            # tell a yield column from a price column later.
+            result.view = view
+            results.append(result)
+        return results
 
     async def explore(
         self,

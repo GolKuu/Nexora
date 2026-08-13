@@ -229,6 +229,9 @@ class TabResult:
 
     tab_name: str
     url: str
+    #: Which price view this reading represents, when the tab was a view
+    #: toggle: clean_price | dirty_price | yield. None for ordinary tabs.
+    view: str | None = None
     text: str = ""
     tables: list[TableData] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
@@ -242,6 +245,7 @@ class TabResult:
         return {
             "tab_name": self.tab_name,
             "url": self.url,
+            "view": self.view,
             "text": self.text,
             "tables": [t.as_dict() for t in self.tables],
             "links": self.links,

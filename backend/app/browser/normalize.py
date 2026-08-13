@@ -190,14 +190,34 @@ _ISIN = re.compile(r"\b([A-Z]{2}[A-Z0-9]{9}\d)\b")
 
 
 def normalize_isin(raw: str | None) -> str | None:
-    """Extract an ISIN and check its check digit. Invalid -> ``None``."""
+    """Extract an ISIN and check its check digit. Invalid -> ``None``.
+
+    Spaces are deliberately *not* stripped before matching. Doing so glues the
+    code to whatever word precedes it ("облигации KZ2C00004273" becomes
+    "облигацииKZ2C00004273"), the leading ``\\b`` stops matching, and the
+    search silently walks on to the next ISIN on the page - which on a KASE
+    instrument page belongs to a different bond in the related-securities
+    list.
+    """
     if is_empty(raw):
         return None
-    match = _ISIN.search(raw.upper().replace(" ", ""))  # type: ignore[union-attr]
+    match = _ISIN.search(raw.upper())  # type: ignore[union-attr]
     if match is None:
         return None
     isin = match.group(1)
     return isin if _isin_check_digit_ok(isin) else None
+
+
+def find_isins(raw: str | None) -> list[str]:
+    """Every distinct, checksum-valid ISIN in ``raw``, in order of appearance."""
+    if is_empty(raw):
+        return []
+    seen: list[str] = []
+    for match in _ISIN.finditer(raw.upper()):  # type: ignore[union-attr]
+        isin = match.group(1)
+        if _isin_check_digit_ok(isin) and isin not in seen:
+            seen.append(isin)
+    return seen
 
 
 def _isin_check_digit_ok(isin: str) -> bool:
