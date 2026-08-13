@@ -78,8 +78,11 @@ class InvestmentService:
             source=getattr(quote, "source", None),
             source_url=getattr(quote, "source_url", None),
             data_mode=getattr(quote, "data_mode", None),
-            timestamp=getattr(quote, "source_timestamp", None)
-            or getattr(quote, "timestamp", None),
+            # Freshness is measured from when the *market* produced the figure,
+            # not from when we happened to download it. Re-fetching an old
+            # session's results does not make them new.
+            timestamp=getattr(quote, "timestamp", None)
+            or getattr(quote, "source_timestamp", None),
         )
 
     def calculate(

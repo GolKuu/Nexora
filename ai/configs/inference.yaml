@@ -1,0 +1,78 @@
+# Inference service configuration.
+#
+# Every value here can be overridden by an env var of the same name upper-cased
+# and prefixed KASE_AI_ (e.g. KASE_AI_RUNTIME=vllm). See ai/inference/config.py.
+
+service:
+  host: 0.0.0.0
+  port: 8100
+  # Which model version answers. Written into every response and every log
+  # line so an answer can be traced back to weights (§60, §62).
+  model_version: kase-ai-v0.1
+  request_timeout_s: 120
+  max_concurrent: 8
+
+# runtime selects the engine implementation in ai/inference/engine.py.
+#   vllm         - production GPU serving, OpenAI-compatible server
+#   llama_cpp    - CPU / small-GPU GGUF serving
+#   transformers - single-process HF generate, for a dev box
+#   rules        - NO model. Deterministic baseline used by CI, by the offline
+#                  test suite and as the measured floor in the benchmark. It is
+#                  never a fallback to a third-party API (§61).
+runtime: rules
+
+runtimes:
+  vllm:
+    # We run this ourselves: `vllm serve models/kase-ai-8b-v0.1/merged`
+    base_url: http://127.0.0.1:8000/v1
+    model: kase-ai-8b-v0.1
+    quantization: awq          # see §55; compare on the benchmark before use
+    max_model_len: 16384
+    gpu_memory_utilization: 0.90
+    tensor_parallel_size: 1
+  llama_cpp:
+    base_url: http://127.0.0.1:8080/v1
+    model: models/kase-ai-8b-v0.1/gguf/kase-ai-8b-Q4_K_M.gguf
+    n_ctx: 8192
+    n_threads: 8
+  transformers:
+    model_path: models/kase-ai-8b-v0.1/merged
+    device_map: auto
+    torch_dtype: bfloat16
+    max_new_tokens: 900
+
+generation:
+  temperature: 0.2
+  top_p: 0.9
+  max_tokens: 900
+  # Tool decisions must be reproducible: greedy, and the JSON grammar is
+  # enforced by the engine when the runtime supports it.
+  tool_decision:
+    temperature: 0.0
+    max_tokens: 256
+    enforce_json: true
+
+retrieval:
+  enabled: true
+  index_dir: data/ai/index/v0.1.0
+  top_k: 6
+  min_score: 0.25
+  rerank: false                # §42: off until the benchmark says otherwise
+
+tools:
+  enabled: true
+  max_calls_per_turn: 4
+  # Read-only by construction. Nothing here can place an order or write a
+  # market value (§46).
+  allow_write: false
+
+safety:
+  # Documents and tool results are data, never instructions (§45).
+  isolate_untrusted: true
+  forbidden_phrases_check: true
+  strip_secrets: true
+
+observability:
+  log_dir: var/ai-logs
+  log_payloads: false          # §62: no user content by default
+  log_retrieval_ids: true

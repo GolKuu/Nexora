@@ -45,6 +45,7 @@ _MODE_BY_PROVIDER = {
     "kase_public_api": "public_api",
     "kase_browser": "website",
     "kase_website": "website",
+    "offline_cache": "cache",
     "mock": "cache",
 }
 

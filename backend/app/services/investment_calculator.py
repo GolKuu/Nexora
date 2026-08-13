@@ -40,6 +40,7 @@ from app.calculations.returns import (
 )
 from app.calculations.scenarios import calculate_scenario_price
 from app.calculations.types import BondSpec
+from app.services.freshness import freshness
 
 #: Which quote a purchase is priced off, best first. The ask is what a buyer
 #: actually pays; everything below it is an approximation and is labelled.
@@ -493,7 +494,9 @@ def _empty_result(
         "data_timestamp": market.timestamp.isoformat() if market.timestamp else None,
         "source": market.source,
         "source_url": market.source_url,
-        "data_mode": market.data_mode,
+        # Labelled by how old the data actually is, not by how it was fetched:
+        # a stale end-of-day quote is cached, and says so.
+        **freshness(market.data_mode, market.timestamp),
     }
 
 

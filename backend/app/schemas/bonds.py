@@ -202,7 +202,11 @@ class InvestmentCalculationResponse(BaseModel):
     data_timestamp: str | None = None
     source: str | None = None
     source_url: str | None = None
+    #: Reflects the data's real age: a stale end-of-day quote reports "cached".
     data_mode: str | None = None
+    data_age_seconds: float | None = None
+    is_stale: bool = False
+    stale_after_seconds: float | None = None
 
 
 class RecommendRequest(BaseModel):

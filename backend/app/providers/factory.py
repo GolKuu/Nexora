@@ -14,6 +14,7 @@ from app.providers.kase_browser import KaseBrowserProvider
 from app.providers.kase_public_api import KasePublicApiProvider
 from app.providers.kase_website import KaseWebsiteProvider
 from app.providers.mock_kase import MockKaseProvider
+from app.providers.offline_cache import OfflineCacheProvider
 
 logger = get_logger(__name__)
 
@@ -27,6 +28,7 @@ def build_provider(config: Settings | None = None) -> BondDataProvider:
     ``auto``                contract API (if a key exists) -> public JSON API ->
                             browser agent -> plain HTML reader -> mock (dev only)
     ``public_api``          the verified public JSON API only, no key needed
+    ``offline``             never contact KASE; serve the stored data as cached
     ``official_api``        contract API only
     ``website_structured``  plain HTTP reader of the public HTML (alias: website)
     ``browser``             real browser session on the public site only
@@ -45,6 +47,15 @@ def build_provider(config: Settings | None = None) -> BondDataProvider:
             )
         logger.warning("KASE data mode: MOCK. All market data is synthetic.")
         return MockKaseProvider()
+
+    if mode == "offline":
+        # No network at all. The API keeps serving from the database, and
+        # every answer is labelled cached with its real age.
+        logger.info(
+            "KASE data mode: OFFLINE. No requests will be made; the API serves "
+            "the last verified data from the database."
+        )
+        return OfflineCacheProvider()
 
     if mode == "public_api":
         return _public_api(config)

@@ -8,6 +8,8 @@
     python scripts/kase.py sync-yield-curve       # KZ_GOV curve from KZGB list
     python scripts/kase.py sync-inflation         # official CPI from stat.gov.kz
     python scripts/kase.py set-inflation 10.2     # manual override, in percent
+    python scripts/kase.py export-snapshot        # portable offline dataset
+    python scripts/kase.py import-snapshot        # load it, no network needed
     python scripts/kase.py recalculate-metrics    # YTM, duration, spreads
     python scripts/kase.py recalculate-scores     # all score kinds
 
@@ -165,6 +167,26 @@ async def cmd_set_inflation(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_export_snapshot(args: argparse.Namespace) -> int:
+    """Write the current database out as a portable offline dataset."""
+    from app.collectors.snapshot import export_snapshot
+
+    with SessionLocal() as session:
+        result = export_snapshot(session, args.path, note=args.note)
+    _emit(result)
+    return 0 if result.get("bonds") else 1
+
+
+async def cmd_import_snapshot(args: argparse.Namespace) -> int:
+    """Load a snapshot. Makes no network calls of any kind."""
+    from app.collectors.snapshot import import_snapshot
+
+    with SessionLocal() as session:
+        result = import_snapshot(session, args.path, recompute=not args.no_recompute)
+    _emit(result)
+    return 0 if result.get("bonds") else 1
+
+
 async def cmd_recalculate_metrics(_: argparse.Namespace) -> int:
     with SessionLocal() as session:
         collector = KaseCollector(session, get_provider())
@@ -201,6 +223,8 @@ COMMANDS = {
     "sync-yield-curve": cmd_sync_yield_curve,
     "sync-inflation": cmd_sync_inflation,
     "set-inflation": cmd_set_inflation,
+    "export-snapshot": cmd_export_snapshot,
+    "import-snapshot": cmd_import_snapshot,
     "recalculate-metrics": cmd_recalculate_metrics,
     "recalculate-scores": cmd_recalculate_scores,
 }
@@ -228,6 +252,12 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "set-inflation":
             child.add_argument("percent", type=float, help="annual rate, in percent")
             child.add_argument("--note", default=None)
+        if name in ("export-snapshot", "import-snapshot"):
+            child.add_argument("--path", default=None, help="snapshot file path")
+        if name == "export-snapshot":
+            child.add_argument("--note", default=None)
+        if name == "import-snapshot":
+            child.add_argument("--no-recompute", action="store_true")
         if name == "recalculate-scores":
             child.add_argument("--profile", default="balanced")
     return parser

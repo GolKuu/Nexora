@@ -32,6 +32,7 @@ ISIN и купоном, котировки с bid/ask/clean/dirty, эмитен�
 
 | Режим                | Цепочка провайдеров                                                                                                             |
 |----------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `offline`            | `OfflineCacheProvider` — сеть не используется вообще; API отдает последние проверенные данные из БД |
 | `public_api`         | `KasePublicApiProvider` — публичный JSON API, без ключа                                                                         |
 | `official_api`       | `KaseApiProvider`                                                                                                               |
 | `browser`            | `KaseBrowserProvider` — настоящий браузер на публичном сайте                                                                    |
@@ -97,6 +98,41 @@ ISIN и купоном, котировки с bid/ask/clean/dirty, эмитен�
 Перед включением убедитесь, что ваш сценарий использования соответствует
 условиям использования сайта и `robots.txt`.
 
+## Работа без KASE
+
+Продукт **не требует доступности KASE во время запроса**. API читает из базы,
+а не с биржи: синхронизация — фоновый процесс. Это проверено тестом, который
+блокирует DNS и `connect` на уровне сокетов (`tests/test_offline.py`).
+
+### Холодный старт без сети
+
+В репозитории лежит снимок реальных данных — `data/snapshots/kase-latest.json`
+(торгуемые выпуски, опубликованные графики купонов, котировки последней
+сессии, кривая ГЦБ, официальная инфляция):
+
+```bash
+python scripts/kase.py import-snapshot   # ни одного сетевого запроса
+KASE_DATA_MODE=offline uvicorn app.main:app
+```
+
+После импорта работают каталог, поиск, карточка, cashflows, калькулятор,
+recommend, compare и TOP. Метрики и оценки **пересчитываются локально**, а не
+переносятся из снимка, поэтому всегда соответствуют текущим версиям формул.
+
+Обновить снимок: `python scripts/kase.py export-snapshot`.
+
+### Что при этом честно сообщается
+
+- `/health/kase` → `connected: false`, `mode: "cache"`, `is_mock: false`;
+- каждый ответ несет `data_mode`, `data_age_seconds`, `is_stale`;
+- `data_mode` вычисляется по **возрасту рыночных данных**, а не по способу
+  загрузки: устаревшая сессионная котировка становится `cached` автоматически
+  (порог 3 суток — выходные не делают пятничные данные устаревшими);
+- `mock` никогда не переименовывается: демо-данные остаются демо-данными.
+
+Снимок — это настоящие данные KASE с зафиксированным `captured_at`. Ничего не
+выдумывается и не помечается свежим задним числом.
+
 ## Проверка подключения
 
 ```bash
@@ -111,7 +147,11 @@ python scripts/kase.py check-kase
 python scripts/kase.py sync-kase-catalog     # каталог, эмитенты, параметры выпусков
 python scripts/kase.py sync-kase-quotes      # котировки сессии + пересчет
 python scripts/kase.py sync-kase-all         # всё сразу
+python scripts/kase.py sync-coupon-schedules # официальные графики купонов
+python scripts/kase.py sync-yield-curve      # кривая ГЦБ (KZ_GOV)
 python scripts/kase.py sync-inflation        # официальный ИПЦ со stat.gov.kz
+python scripts/kase.py export-snapshot       # снимок для офлайн-работы
+python scripts/kase.py import-snapshot       # загрузка снимка, без сети
 python scripts/kase.py set-inflation 10.2    # ручное значение, в процентах
 python scripts/kase.py recalculate-metrics
 python scripts/kase.py recalculate-scores

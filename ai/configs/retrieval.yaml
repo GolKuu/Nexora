@@ -1,0 +1,98 @@
+# Retrieval configuration (§23-§27, §42-§43).
+
+index:
+  version: v0.1.0
+  dir: data/ai/index/v0.1.0
+
+embeddings:
+  # Open weights, local inference. No closed embedding API is ever required.
+  model: intfloat/multilingual-e5-large
+  dim: 1024
+  query_prefix: "query: "
+  passage_prefix: "passage: "
+  batch_size: 16
+  normalize: true
+  # Used when torch/sentence-transformers is absent (dev laptops, CI, the
+  # offline test suite). Deterministic, no network, no quality claim.
+  fallback: hashing-ngram-1024
+
+store:
+  # local  - a versioned .npy + .jsonl pair on disk. Zero extra infrastructure,
+  #          which is the right MVP answer for ~10k chunks (§24).
+  # pgvector - reuses the PostgreSQL the product already runs.
+  # qdrant - only if filtered ANN at >1M chunks becomes the bottleneck.
+  backend: local
+  pgvector:
+    table: ai_chunks
+    dsn_env: DATABASE_URL
+  qdrant:
+    url: http://127.0.0.1:6333
+    collection: kase_chunks
+
+chunking:
+  # Structure first, size second (§26). A financial table is never split.
+  strategy: structural
+  target_tokens: 400
+  max_tokens: 900
+  overlap_tokens: 60
+  keep_tables_whole: true
+  max_table_tokens: 1400
+  split_on:
+    - document_section
+    - heading
+    - reporting_period
+    - page
+
+# Every chunk carries these so retrieval can be filtered before it is ranked
+# (§27). Missing values are stored as null, never invented.
+metadata_fields:
+  - issuer_code
+  - bond_ticker
+  - isin
+  - document_type
+  - period
+  - publication_date
+  - source
+  - source_url
+  - page
+  - section
+  - language
+  - dataset_version
+
+query:
+  top_k: 6
+  candidate_k: 40           # retrieved before filtering/reranking
+  min_score: 0.25
+  # Hard filters extracted by ai/retrieval/query.py from the user question.
+  # A ticker or ISIN in the question becomes an equality filter: we would
+  # rather return nothing than return another issuer's report.
+  hard_filters: [bond_ticker, isin, issuer_code]
+  soft_filters: [document_type, period]
+
+rerank:
+  enabled: false
+  model: BAAI/bge-reranker-v2-m3
+  top_k: 6
+  # Turning this on requires a recorded benchmark delta in
+  # docs/ai/evaluation.md (§42).
+  requires_benchmark: true
+
+context_builder:
+  # §43: the model sees the minimum that answers the question.
+  max_context_tokens: 3000
+  max_documents: 6
+  max_chars_per_document: 1200
+  include:
+    - bond_metadata
+    - latest_quote
+    - scores
+    - financial_metrics
+    - calculation_result
+    - retrieved_documents
+  # §44: never, under any condition.
+  never_include:
+    - database_password
+    - api_credentials
+    - auth_tokens
+    - internal_secrets
+    - user_email

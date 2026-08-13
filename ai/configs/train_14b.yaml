@@ -1,0 +1,82 @@
+# Scale-up tier (P1). Needs >=48 GB VRAM for QLoRA r=32 at 4096 tokens, or
+# 2x24 GB with FSDP. Not part of the MVP; the config exists so the jump is a
+# config change, not a rewrite (§3: the architecture must let the base model
+# be replaced).
+#
+#   accelerate launch -m ai.training.train_lora --config ai/configs/train_14b.yaml
+
+run:
+  name: kase-ai-14b
+  seed: 20260813
+  output_dir: models/kase-ai-14b-v0.1
+  record_git_commit: true
+
+model:
+  base: Qwen/Qwen3-14B
+  base_key: qwen3-14b
+  trust_remote_code: false
+  attn_implementation: flash_attention_2
+  torch_dtype: bfloat16
+  chat_template: tokenizer
+
+quantization:
+  enabled: true
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16
+  bnb_4bit_use_double_quant: true
+
+lora:
+  enabled: true
+  rank: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  modules_to_save: []
+
+# Full fine-tuning is supported by the same script (§30) - set lora.enabled
+# false and quantization.enabled false. It needs ~8x the VRAM; do not enable it
+# without a measured reason that LoRA cannot close.
+full_finetune_note: set lora.enabled=false and quantization.enabled=false
+
+distributed:
+  strategy: fsdp                  # ignored on a single device
+  fsdp_sharding_strategy: FULL_SHARD
+  fsdp_offload_params: false
+
+dataset:
+  version: v0.1.0
+  train_file: data/ai/sft/v0.1.0/train.jsonl
+  eval_file: data/ai/sft/v0.1.0/dev.jsonl
+  contamination_guard: ai/evaluation/golden/golden.jsonl
+  max_seq_length: 4096
+  packing: false
+  train_on_completions_only: true
+
+training:
+  epochs: 2
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 32
+  learning_rate: 7.0e-5
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 0.3
+  optim: paged_adamw_8bit
+  bf16: true
+  gradient_checkpointing: true
+  logging_steps: 10
+  eval_steps: 100
+  save_steps: 100
+  save_total_limit: 5
+  checkpoint_interval_minutes: 45
+
+evaluation:
+  benchmark: ai/evaluation/golden/golden.jsonl
+  thresholds:
+    tool_selection_accuracy_min: 0.92
+    argument_f1_min: 0.88
+    json_validity_min: 0.99
+    hallucination_rate_max: 0.04
+    refusal_accuracy_min: 0.92
+    forbidden_phrase_rate_max: 0.0

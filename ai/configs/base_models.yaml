@@ -1,0 +1,137 @@
+# Base model registry for KASE Bond AI.
+#
+# Rule: we own the final weights, the dataset, the training code and the
+# inference. The base model is an open-weights checkpoint we are allowed to
+# fine-tune and to serve on our own hardware. No closed API is ever the
+# product's primary intelligence.
+#
+# `license` below is our *recorded expectation*. It is re-verified from the
+# actual model repository at download time by
+# `python -m ai.training.registry verify-license <key>`, which writes the
+# LICENSE text hash into models/<run>/metadata.json. A candidate whose license
+# cannot be verified is not allowed into a training run.
+
+candidates:
+
+  qwen3-4b:
+    hf_id: Qwen/Qwen3-4B
+    params: 4.0e9
+    context: 32768
+    license: apache-2.0
+    commercial_use: true
+    role: development
+    notes: >
+      Development and CPU-fallback tier. Runs on a 12 GB laptop GPU in bf16 and
+      on CPU in Q4_K_M. Used to keep the pipeline runnable without a server.
+
+  qwen3-8b:
+    hf_id: Qwen/Qwen3-8B
+    params: 8.2e9
+    context: 32768
+    license: apache-2.0
+    commercial_use: true
+    role: mvp_primary          # <-- the MVP choice
+    strengths:
+      russian: strong          # native multilingual pretraining, not translation
+      instruction_following: strong
+      structured_output: strong
+      tool_calling: native chat template with tool role
+      reasoning: strong for size (thinking / non-thinking modes)
+    notes: >
+      Chosen for the first production MVP. See docs/ai/architecture.md §2 for
+      the full justification: it is the smallest model in our shortlist that
+      holds JSON tool-call format under Russian financial prompts, fits QLoRA
+      training on a single 24 GB GPU, and serves at acceptable latency in
+      AWQ/GPTQ 4-bit on the same card.
+
+  t-lite-it:
+    hf_id: t-tech/T-lite-it-1.0
+    params: 7.6e9
+    context: 32768
+    license: apache-2.0
+    commercial_use: true
+    role: russian_challenger
+    notes: >
+      Qwen2.5-7B continued-pretrained on a large Russian corpus by T-Bank.
+      Kept as the challenger in the base-model bake-off (ai/evaluation/
+      compare_models.py) because its Russian financial register is the closest
+      match to our domain. Weaker native tool-call template than Qwen3.
+
+  qwen3-14b:
+    hf_id: Qwen/Qwen3-14B
+    params: 14.8e9
+    context: 32768
+    license: apache-2.0
+    commercial_use: true
+    role: scale_up
+    notes: >
+      The P1 target once a 48 GB card (or 2x24 GB) is available. Same
+      tokenizer and chat template as qwen3-8b, so the dataset, prompts and
+      training configs carry over with no changes.
+
+  llama-3.1-8b:
+    hf_id: meta-llama/Llama-3.1-8B-Instruct
+    params: 8.0e9
+    context: 131072
+    license: llama-3.1-community
+    commercial_use: conditional     # <700M MAU + naming/attribution duties
+    role: rejected
+    rejection_reason: >
+      Not Apache/MIT. The community licence adds naming, attribution and
+      acceptable-use obligations to a derivative model we intend to ship as a
+      product component, and its Russian quality is below Qwen3-8B on our
+      terminology probes. Rejected for the MVP on licence grounds first.
+
+  gemma-3-12b:
+    hf_id: google/gemma-3-12b-it
+    params: 12.0e9
+    context: 131072
+    license: gemma-terms
+    commercial_use: conditional
+    role: rejected
+    rejection_reason: >
+      Custom Gemma Terms of Use with a use-restriction policy that follows the
+      derivative weights. Same objection as Llama: we do not want a
+      third-party acceptable-use policy attached to a financial product's
+      weights.
+
+# Non-generative components. Same rule: open weights, local inference.
+embeddings:
+  primary:
+    hf_id: intfloat/multilingual-e5-large
+    dim: 1024
+    license: mit
+    notes: >
+      Strong Russian retrieval quality, prefix protocol ("query: " /
+      "passage: ") is respected by ai/embeddings/model.py.
+  small:
+    hf_id: intfloat/multilingual-e5-small
+    dim: 384
+    license: mit
+  fallback:
+    id: hashing-ngram-1024
+    dim: 1024
+    license: n/a (ours)
+    notes: >
+      Deterministic char-ngram hashing embedder implemented in
+      ai/embeddings/model.py. Not a quality option - it exists so that the
+      retrieval pipeline, the tests and the evaluation harness run on a
+      machine with no torch and no GPU.
+
+reranker:
+  candidate:
+    hf_id: BAAI/bge-reranker-v2-m3
+    license: apache-2.0
+    status: benchmark_required
+    notes: >
+      Not enabled by default. §42: a reranker is added only if
+      ai/evaluation/evaluate.py shows a measured retrieval gain.
+
+vision:
+  candidate:
+    hf_id: Qwen/Qwen2.5-VL-7B-Instruct
+    license: apache-2.0
+    status: p2_deferred
+    notes: >
+      Not in the MVP (§51). Chart/scan understanding is deferred until the
+      text+tools+RAG core is measured good.
