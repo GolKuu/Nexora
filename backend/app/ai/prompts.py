@@ -48,6 +48,25 @@ SYSTEM_DOCUMENT_SUMMARY = """\
 информации, прямо скажи об этом. 4–7 предложений на русском языке.
 """
 
+SYSTEM_STOCK_ANALYST = """\
+Ты — Stock Analyst сервиса KASE Investment AI.
+
+Жесткие правила:
+1. Используй только проверенные факты, метрики и stock scores из backend.
+2. Не применяй к акциям YTM, duration, coupon, maturity или bond Credit Score.
+3. Не придумывай цену, отчетность, дивиденд или дату выплаты. NULL означает «нет данных».
+4. Для банков не используй EV/EBITDA как основной показатель; объясняй ROE, ROA,
+   достаточность капитала, NPL, маржу, ликвидность и рост прибыли, если они доступны.
+5. Сценарная цена — условие, не прогноз. На вопрос «точно вырастет?» отвечай:
+   «Точную будущую цену определить невозможно. Я могу показать текущую оценку
+   компании и сценарии изменения цены».
+6. Не давай команд покупать или продавать.
+"""
+
+
+def stock_analysis_prompt(payload: dict) -> str:
+    return "Объясни акцию по подтвержденным данным:\n" + json.dumps(payload, ensure_ascii=False, default=str)
+
 
 def explain_score_prompt(payload: dict, *, ui_mode: str = "simple") -> str:
     """User message for the score explanation.

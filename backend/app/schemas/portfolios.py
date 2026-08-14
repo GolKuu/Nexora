@@ -12,9 +12,12 @@ class PortfolioCreate(BaseModel):
 
 
 class PositionCreate(BaseModel):
-    bond: str = Field(description="Тикер, ISIN или id облигации")
+    bond: str | None = Field(default=None, description="Обратная совместимость: облигация")
+    stock: str | None = Field(default=None, description="Тикер, ISIN или id акции")
+    instrument_type: str = Field(default="bond", pattern="^(bond|stock)$")
     quantity: float = Field(gt=0)
     purchase_clean_price: float | None = Field(default=None, gt=0, le=1000)
+    purchase_price: float | None = Field(default=None, gt=0)
     purchase_date: date | None = None
     purchase_accrued_interest: float | None = Field(default=None, ge=0)
     fees: float | None = Field(default=None, ge=0)
@@ -24,6 +27,7 @@ class PositionCreate(BaseModel):
 class PositionUpdate(BaseModel):
     quantity: float | None = Field(default=None, gt=0)
     purchase_clean_price: float | None = Field(default=None, gt=0, le=1000)
+    purchase_price: float | None = Field(default=None, gt=0)
     purchase_date: date | None = None
     purchase_accrued_interest: float | None = Field(default=None, ge=0)
     fees: float | None = Field(default=None, ge=0)

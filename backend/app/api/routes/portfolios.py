@@ -11,6 +11,7 @@ from app.db.session import get_session
 from app.schemas.portfolios import PortfolioCreate, PositionCreate, PositionUpdate
 from app.services.bond_service import BondService
 from app.services.portfolio_service import PortfolioService
+from app.services.stock_service import StockService
 from app.services.change_service import ChangeService, serialize_change
 
 router = APIRouter()
@@ -103,10 +104,23 @@ def add_position(
 ) -> dict:
     service = PortfolioService(session)
     portfolio = _owned(service, portfolio_id, identity)
+    if payload.instrument_type == "stock" or payload.stock:
+        stock = StockService(session).require(payload.stock or payload.bond or "")
+        position = service.repo.add_position(
+            portfolio.id, bond_id=None, stock_id=stock.id, instrument_type="stock",
+            quantity=payload.quantity, purchase_price=payload.purchase_price,
+            purchase_date=payload.purchase_date, fees=payload.fees, note=payload.note,
+        )
+        session.commit()
+        return {"id": position.id, "stock_id": stock.id, "ticker": stock.instrument.ticker, "instrument_type": "stock"}
+    if not payload.bond:
+        raise ValidationError("Укажите bond или stock.")
     bond = BondService(session).require(payload.bond)
     position = service.repo.add_position(
         portfolio.id,
         bond_id=bond.id,
+        stock_id=None,
+        instrument_type="bond",
         quantity=payload.quantity,
         purchase_clean_price=payload.purchase_clean_price,
         purchase_date=payload.purchase_date,
@@ -115,7 +129,7 @@ def add_position(
         note=payload.note,
     )
     session.commit()
-    return {"id": position.id, "bond_id": bond.id, "ticker": bond.ticker}
+    return {"id": position.id, "bond_id": bond.id, "ticker": bond.ticker, "instrument_type": "bond"}
 
 
 @router.put("/{portfolio_id}/positions/{position_id}", summary="Изменить позицию")

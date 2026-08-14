@@ -11,6 +11,7 @@ from app.core.logging import get_logger
 from app.db.session import SessionLocal
 from app.providers.factory import get_provider
 from app.collectors.incremental_catalog import incremental_catalog_sync
+from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.services.change_alerts import ChangeAlertEngine
 from app.services.incremental import JobTracker
 from app.services.ingestion_priority import prioritized_tickers
@@ -27,6 +28,7 @@ async def refresh_all() -> dict:
     session = SessionLocal()
     try:
         summary = await full_sync(session, get_provider())
+        summary["stocks"] = await KaseStockCatalogCollector(session).collect()
         logger.info("full refresh finished: %s", summary)
         return summary
     finally:
@@ -54,9 +56,26 @@ async def refresh_catalog_via_browser(limit: int | None = None) -> dict:
 async def refresh_catalog_incremental(*, force: bool = False, idempotency_key: str | None = None) -> dict:
     session = SessionLocal()
     try:
-        return await incremental_catalog_sync(
+        result = await incremental_catalog_sync(
             session, get_provider(), force=force, idempotency_key=idempotency_key
         )
+        result["stocks"] = await KaseStockCatalogCollector(session).collect()
+        return result
+    finally:
+        session.close()
+
+
+async def refresh_stocks() -> dict:
+    session = SessionLocal()
+    try:
+        result = await KaseStockCatalogCollector(session).collect()
+        from app.models.stock import Stock
+        from app.services.stock_service import StockService
+        service = StockService(session)
+        for stock in session.execute(select(Stock)).scalars():
+            service.persist_metrics_and_scores(stock)
+        session.commit()
+        return result
     finally:
         session.close()
 

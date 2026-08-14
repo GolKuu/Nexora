@@ -35,6 +35,7 @@ TRACKING_QUERY = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_c
 RANDOM_DOM_ID = re.compile(r"^(?:ember|react|mat|ng|radix)-?[a-f0-9_-]{6,}$", re.I)
 
 SECTION_FIELDS: dict[str, set[str]] = {
+    "profile": {"ticker", "isin", "issuer", "company_name", "instrument_type", "share_class", "security_type", "currency", "market_segment", "listing_status", "listing_date", "is_active"},
     "bond_profile": {"ticker", "isin", "name", "currency", "bond_type", "is_active"},
     "issue_terms": {"nominal", "issue_date", "maturity_date", "coupon_rate", "coupon_type", "coupon_frequency", "day_count", "issue_size", "outstanding_amount", "secured", "subordinated", "callable", "putable"},
     "quote": {"bid", "ask", "last", "ytm", "clean_price", "dirty_price", "accrued_interest", "bid_volume", "ask_volume", "volume", "turnover", "number_of_trades"},
@@ -46,6 +47,8 @@ SECTION_FIELDS: dict[str, set[str]] = {
     "news": {"news"},
     "documents": {"documents"},
     "financials": {"financials", "statements"},
+    "dividends": {"dividends"},
+    "corporate_actions": {"corporate_actions"},
 }
 
 
@@ -179,13 +182,16 @@ class WorkPlan:
 
 class RecalculationPlanner:
     DEPENDENCIES = {
+        "profile": WorkPlan({"stock_metrics"}, {"investment", "quality", "valuation", "liquidity", "data_quality"}, {"StockAnalyst"}),
         "quote": WorkPlan(
             {"purchase_calculator", "bid_ask_spread", "market_metrics"},
             {"liquidity", "trade", "investment"}, {"MarketChangeExplainer"}
         ),
         "order_book": WorkPlan({"bid_ask_spread"}, {"liquidity", "trade"}, {"LiquidityAnalyst"}),
         "trades": WorkPlan({"turnover", "liquidity_metrics"}, {"liquidity", "trade", "investment"}, {"LiquidityAnalyst"}),
-        "financials": WorkPlan({"issuer_metrics"}, {"credit", "investment", "hold"}, {"FinancialDocumentAnalyzer", "CreditAnalyst"}),
+        "financials": WorkPlan({"issuer_metrics", "stock_metrics"}, {"credit", "investment", "hold", "quality", "valuation", "growth", "dividend"}, {"FinancialDocumentAnalyzer", "CreditAnalyst", "StockAnalyst"}),
+        "dividends": WorkPlan({"dividend_yield"}, {"dividend", "investment"}, {"StockAnalyst"}),
+        "corporate_actions": WorkPlan({"stock_metrics"}, {"investment", "data_quality"}, {"StockAnalyst"}),
         "ratings": WorkPlan({"credit_metrics"}, {"credit", "investment", "hold"}, {"CreditAnalyst"}),
         "documents": WorkPlan(set(), set(), {"FinancialDocumentAnalyzer"}),
         "news": WorkPlan(set(), set(), {"NewsAnalyzer"}),

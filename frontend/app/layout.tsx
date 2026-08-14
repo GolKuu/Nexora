@@ -6,10 +6,9 @@ import { Header } from "@/components/layout/Header";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "KASE Bond AI — простой анализ облигаций KASE",
+  title: "KASE Investment AI — акции и облигации KASE",
   description:
-    "Доходность, доход после инфляции, надежность и ликвидность облигаций KASE " +
-    "простым языком. Все расчеты выполняет детерминированный движок.",
+    "Раздельный анализ акций и облигаций KASE с прозрачными расчетами и официальными источниками.",
 };
 
 export default function RootLayout({
@@ -22,7 +21,7 @@ export default function RootLayout({
         <DataModeBanner />
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
         <footer className="mx-auto max-w-6xl px-4 pb-10 pt-4 text-xs text-slate-400">
-          KASE Bond AI — аналитический сервис. Не является инвестиционной
+          KASE Investment AI — аналитический сервис. Не является инвестиционной
           рекомендацией. Все расчеты выполняются детерминированным движком;
           языковая модель используется только для объяснений.
         </footer>

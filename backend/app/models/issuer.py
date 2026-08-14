@@ -9,6 +9,7 @@ from app.db.base import Base, SourceMixin, TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.bond import Bond
+    from app.models.instrument import Instrument
     from app.models.financials import CreditRating, FinancialStatement, IssuerMetric
 
 
@@ -33,6 +34,7 @@ class Issuer(Base, TimestampMixin, SourceMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     bonds: Mapped[list["Bond"]] = relationship(back_populates="issuer")
+    instruments: Mapped[list["Instrument"]] = relationship(back_populates="issuer")
     statements: Mapped[list["FinancialStatement"]] = relationship(
         back_populates="issuer", cascade="all, delete-orphan"
     )

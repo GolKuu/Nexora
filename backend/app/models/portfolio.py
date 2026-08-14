@@ -20,6 +20,7 @@ from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.bond import Bond
+    from app.models.stock import Stock
     from app.models.user import User
 
 
@@ -49,18 +50,22 @@ class PortfolioPosition(Base, TimestampMixin):
     portfolio_id: Mapped[int] = mapped_column(
         ForeignKey("portfolios.id", ondelete="CASCADE"), index=True
     )
-    bond_id: Mapped[int] = mapped_column(
+    bond_id: Mapped[int | None] = mapped_column(
         ForeignKey("bonds.id", ondelete="CASCADE"), index=True
     )
+    stock_id: Mapped[int | None] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"), index=True)
+    instrument_type: Mapped[str] = mapped_column(String(16), default="bond", index=True)
     quantity: Mapped[float] = mapped_column(Float)
     purchase_clean_price: Mapped[float | None] = mapped_column(Float)
+    purchase_price: Mapped[float | None] = mapped_column(Float)
     purchase_date: Mapped[date | None] = mapped_column(Date)
     purchase_accrued_interest: Mapped[float | None] = mapped_column(Float)
     fees: Mapped[float | None] = mapped_column(Float)
     note: Mapped[str | None] = mapped_column(Text)
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="positions")
-    bond: Mapped["Bond"] = relationship()
+    bond: Mapped["Bond | None"] = relationship()
+    stock: Mapped["Stock | None"] = relationship()
 
 
 class Watchlist(Base, TimestampMixin):

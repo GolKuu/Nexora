@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class CommissionRequest(BaseModel):
+    type: str = "percent"
+    value: float = Field(default=0.0, ge=0)
+
+    @field_validator("type")
+    @classmethod
+    def valid_type(cls, value: str) -> str:
+        if value not in {"percent", "fixed"}:
+            raise ValueError("commission.type must be percent or fixed")
+        return value
+
+
+class StockInvestmentRequest(BaseModel):
+    mode: str = "amount"
+    amount: float = Field(gt=0)
+    currency: str = "KZT"
+    commission: CommissionRequest = Field(default_factory=CommissionRequest)
+    scenario: str = "base"
+    target_period_months: int = Field(default=12, ge=1, le=120)
+
+
+class StockRecommendRequest(BaseModel):
+    amount: float = Field(gt=0)
+    currency: str = "KZT"
+    profile: str = "balanced"
+    limit: int = Field(default=5, ge=1, le=20)
+    min_dividend_yield: float | None = None
+    max_pe: float | None = None
+    min_roe: float | None = None
+    min_quality_score: float | None = None
+    min_liquidity_score: float | None = None
+    sector: str | None = None
+
+
+class StockCompareRequest(BaseModel):
+    identifiers: list[str] = Field(min_length=2, max_length=10)
+    amount: float | None = Field(default=None, gt=0)
+    scenario: str = "base"
+
+
+class UniversalSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    limit: int = Field(default=20, ge=1, le=100)

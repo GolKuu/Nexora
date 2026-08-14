@@ -23,7 +23,10 @@ class PortfolioRepository:
     def get(self, portfolio_id: int) -> Portfolio | None:
         return self.session.execute(
             select(Portfolio)
-            .options(selectinload(Portfolio.positions).selectinload(PortfolioPosition.bond))
+            .options(
+                selectinload(Portfolio.positions).selectinload(PortfolioPosition.bond),
+                selectinload(Portfolio.positions).selectinload(PortfolioPosition.stock),
+            )
             .where(Portfolio.id == portfolio_id)
         ).unique().scalar_one_or_none()
 

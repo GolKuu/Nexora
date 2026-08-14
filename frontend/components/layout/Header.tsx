@@ -8,6 +8,8 @@ import { cn } from "@/utils/cn";
 
 const NAV = [
   { href: "/", label: "Главная" },
+  { href: "/bonds", label: "Облигации" },
+  { href: "/stocks", label: "Акции" },
   { href: "/compare", label: "Сравнение" },
   { href: "/portfolio", label: "Портфель" },
   { href: "/watchlist", label: "Избранное" },
@@ -21,7 +23,7 @@ export function Header() {
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur dark:border-slate-800 dark:bg-slate-900/85">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4">
         <Link href="/" className="shrink-0 text-sm font-semibold tracking-tight">
-          KASE&nbsp;Bond&nbsp;AI
+          KASE&nbsp;Investment&nbsp;AI
         </Link>
 
         <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">

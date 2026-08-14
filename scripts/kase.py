@@ -167,6 +167,12 @@ async def cmd_set_inflation(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_sync_stocks(_: argparse.Namespace) -> int:
+    from app.jobs.refresh import refresh_stocks
+    _emit(await refresh_stocks())
+    return 0
+
+
 async def cmd_export_snapshot(args: argparse.Namespace) -> int:
     """Write the current database out as a portable offline dataset."""
     from app.collectors.snapshot import export_snapshot
@@ -218,6 +224,7 @@ COMMANDS = {
     "check-kase": cmd_check_kase,
     "sync-kase-catalog": cmd_sync_catalog,
     "sync-kase-quotes": cmd_sync_quotes,
+    "sync-kase-stocks": cmd_sync_stocks,
     "sync-kase-all": cmd_sync_all,
     "sync-coupon-schedules": cmd_sync_coupon_schedules,
     "sync-yield-curve": cmd_sync_yield_curve,
@@ -232,7 +239,7 @@ COMMANDS = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="KASE Bond AI data operations",
+        description="KASE Investment AI data operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

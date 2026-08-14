@@ -351,6 +351,32 @@ export interface PeersResponse {
   }[];
 }
 
+export interface StockScoreValue { value: number | null; confidence: number; version: string }
+export interface StockListItem {
+  id: number; ticker: string; isin: string; company_name: string; issuer: string;
+  instrument_type: "stock" | "preferred_stock"; type_label: string; currency: string;
+  price: number | null; bid: number | null; ask: number | null; market_cap: number | null;
+  sector: string | null; metrics: Record<string, number | null>;
+  scores: Record<string, StockScoreValue>; data_timestamp: string | null;
+  data_mode: DataMode | null; source: string | null; kase_url: string | null;
+}
+export interface StockListResponse { items: StockListItem[]; total: number; limit: number; offset: number; category?: string }
+export interface StockCard extends StockListItem {
+  simple: { price: number | null; company_earning_trend: string; valuation: string; dividends: number | null; risk: StockScoreValue; liquidity: StockScoreValue; important: string };
+  pro: Record<string, number | null>; score_explanation: Array<{kind: string} & StockScoreValue>;
+  dividends: Array<{ex_date: string | null; record_date: string | null; payment_date: string | null; dividend_per_share: number; currency: string; status: string}>;
+}
+export interface StockCalculation {
+  stock_identifier: string; input_amount: number; quantity: number; unit_price: number | null;
+  calculation_price_type: string | null; principal_cost: number; commission: number;
+  total_purchase_cost: number; cash_remaining: number; current_market_value: number | null;
+  dividend_income_trailing: number | null; scenario_price: number | null;
+  scenario_profit: number | null; total_return_percent: number | null;
+  liquidity_warning: string | null; warnings: string[]; data_timestamp: string | null; source: string | null;
+}
+export interface InstrumentSearchItem { id: number; ticker: string; isin: string | null; name: string; instrument_type: "stock" | "bond"; type_label: string; href: string }
+export interface InstrumentSearchResponse { items: InstrumentSearchItem[]; total: number; query: string }
+
 /** Browser agent (§31, §49): every value carries how it was read and how much
  *  that method is worth. `method: "visual"` is qualitative by construction. */
 export interface KaseExtractedField {

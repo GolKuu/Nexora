@@ -17,6 +17,7 @@ from app.repositories.bonds import BondRepository
 from app.repositories.metrics import MetricRepository
 from app.repositories.portfolios import PortfolioRepository
 from app.repositories.scores import ScoreRepository
+from app.services.stock_service import StockService
 
 
 class PortfolioService:
@@ -34,7 +35,7 @@ class PortfolioService:
         return portfolio
 
     def valuation(self, portfolio: Portfolio) -> dict:
-        bond_ids = [p.bond_id for p in portfolio.positions]
+        bond_ids = [p.bond_id for p in portfolio.positions if p.bond_id is not None]
         metrics = self.metrics.latest_for_many(bond_ids)
         scores = self.scores.latest_investment_for_many(bond_ids)
 
@@ -43,9 +44,38 @@ class PortfolioService:
         total_value = 0.0
         total_cost = 0.0
         inflation_rates: list[float] = []
+        stock_dividends = 0.0
+        bond_coupons = 0.0
 
         for position in portfolio.positions:
+            if position.instrument_type == "stock" or position.stock_id is not None:
+                stock = position.stock
+                if stock is None:
+                    continue
+                stock_service = StockService(self.session)
+                quote = stock_service.latest_quote(stock.id)
+                current_price = (quote.last or quote.close) if quote else None
+                market_value = current_price * position.quantity if current_price is not None else None
+                purchase_price = position.purchase_price
+                cost = purchase_price * position.quantity + (position.fees or 0.0) if purchase_price is not None else None
+                if market_value is not None: total_value += market_value
+                if cost is not None: total_cost += cost
+                item = stock_service.item(stock)
+                trailing_yield = item["metrics"].get("trailing_dividend_yield")
+                dividend_income = market_value * trailing_yield if market_value is not None and trailing_yield is not None else None
+                stock_dividends += dividend_income or 0.0
+                positions.append({"id": position.id, "instrument_type": "stock", "stock_id": stock.id, "bond_id": None,
+                                  "ticker": stock.instrument.ticker, "name": stock.instrument.issuer.short_name or stock.instrument.issuer.name,
+                                  "currency": stock.instrument.currency, "quantity": position.quantity, "purchase_price": purchase_price,
+                                  "purchase_date": position.purchase_date.isoformat() if position.purchase_date else None,
+                                  "current_price": current_price, "market_value": None if market_value is None else round(market_value, 2),
+                                  "cost": None if cost is None else round(cost, 2), "unrealized_pnl": None if market_value is None or cost is None else round(market_value - cost, 2),
+                                  "dividend_income_trailing": None if dividend_income is None else round(dividend_income, 2),
+                                  "investment_score": item["scores"]["investment"]["value"], "ytm": None, "real_ytm": None, "modified_duration": None})
+                continue
             bond = position.bond
+            if bond is None:
+                continue
             metric = metrics.get(position.bond_id)
             nominal = bond.nominal or 100.0
             price_pct = metric.clean_price if metric else None
@@ -80,6 +110,7 @@ class PortfolioService:
             score = scores.get(position.bond_id)
             positions.append(
                 {
+                    "instrument_type": "bond",
                     "id": position.id,
                     "bond_id": bond.id,
                     "ticker": bond.ticker,
@@ -110,7 +141,7 @@ class PortfolioService:
         )
         weighted_score = calculate_weighted_score(
             [
-                (str(p["bond_id"]), p["investment_score"], p["market_value"] or 0.0)
+                (f'{p["instrument_type"]}:{p.get("bond_id") or p.get("stock_id")}', p["investment_score"], p["market_value"] or 0.0)
                 for p in positions
             ]
         )
@@ -137,5 +168,11 @@ class PortfolioService:
                 if weighted_score is None
                 else round(weighted_score["value"], 1),
                 "inflation_pct": None if avg_inflation is None else round(avg_inflation * 100, 2),
+                "dividends": round(stock_dividends, 2),
+                "coupons": round(bond_coupons, 2),
+                "asset_allocation": {
+                    "stocks": round(sum((p["market_value"] or 0) for p in positions if p["instrument_type"] == "stock"), 2),
+                    "bonds": round(sum((p["market_value"] or 0) for p in positions if p["instrument_type"] == "bond"), 2),
+                },
             },
         }

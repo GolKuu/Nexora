@@ -9,6 +9,8 @@ from app.models.financials import (
     IssuerMetric,
 )
 from app.models.issuer import Issuer
+from app.models.instrument import Instrument
+from app.models.stock import Dividend, Stock, StockFinancialPeriod, StockMetric, StockQuote, StockScore
 from app.models.macro import FxRate, InflationData, YieldCurve
 from app.models.market import BondQuote, BondTrade
 from app.models.market import BondQuoteCurrent
@@ -50,6 +52,7 @@ __all__ = [
     "FxRate",
     "InflationData",
     "Issuer",
+    "Instrument",
     "IssuerMetric",
     "PeerGroup",
     "Portfolio",
@@ -61,4 +64,10 @@ __all__ = [
     "UserSettings",
     "Watchlist",
     "YieldCurve",
+    "Stock",
+    "StockQuote",
+    "StockFinancialPeriod",
+    "StockMetric",
+    "StockScore",
+    "Dividend",
 ]
