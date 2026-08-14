@@ -125,6 +125,8 @@ class Settings(BaseSettings):
     #: Our inference service (ai/inference/server.py).
     KASE_AI_URL: str = "http://127.0.0.1:8100"
     KASE_AI_MODEL_VERSION: str = "kase-ai-v0.1"
+    KASE_AI_DATA_MODE: Literal["snapshot", "live"] = "snapshot"
+    KASE_AI_LIVE_TTL_SECONDS: float = 300.0
 
     # Used only when AI_PROVIDER=external.
     OPENAI_API_KEY: str | None = None

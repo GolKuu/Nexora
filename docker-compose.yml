@@ -56,6 +56,13 @@ services:
     environment:
       KASE_AI_RUNTIME: ${KASE_AI_RUNTIME:-rules}
       KASE_AI_SERVICE_MODEL_VERSION: ${KASE_AI_MODEL_VERSION:-kase-ai-v0.1}
+      # The AI may refresh facts itself, but only from the verified public
+      # JSON API on the official KASE host. No key or paid service is used.
+      KASE_AI_DATA_MODE: ${KASE_AI_DATA_MODE:-live}
+      KASE_AI_KASE_URL: ${KASE_WEBSITE_URL:-https://kase.kz}
+      KASE_AI_KASE_LANGUAGE: ${KASE_LANGUAGE:-ru}
+      KASE_AI_KASE_TIMEOUT: ${KASE_HTTP_TIMEOUT:-20}
+      KASE_AI_LIVE_TTL_SECONDS: ${KASE_AI_LIVE_TTL_SECONDS:-300}
     volumes:
       - ai_logs:/app/var/ai-logs
     expose:

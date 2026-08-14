@@ -91,6 +91,7 @@ class FeedbackRequest(BaseModel):
 @app.get("/health")
 def health() -> dict[str, Any]:
     retriever = agent.retriever
+    store_status = getattr(agent.executor.store, "status", None)
     return {
         "status": "ok",
         "service_version": __version__,
@@ -101,6 +102,7 @@ def health() -> dict[str, Any]:
         "engine": agent.engine.name,
         "engine_model": agent.engine.model,
         "uses_external_llm_api": False,
+        "market_data": store_status() if store_status else {"mode": "snapshot"},
         "tools": list(TOOL_NAMES),
         "retrieval": {
             "enabled": retriever is not None,

@@ -95,6 +95,7 @@ npm run dev
 | `APP_ENV`             | `development` / `staging` / `production` / `test`                     |
 | `DATABASE_URL`        | строка подключения SQLAlchemy к PostgreSQL                            |
 | `KASE_DATA_MODE`      | `auto` / `official_api` / `browser` / `website_structured` / `mock`   |
+| `KASE_AI_DATA_MODE`   | `live` — AI сам обновляет факты с официального KASE; `snapshot` — офлайн |
 | `KASE_API_KEY`        | ключ контрактного API KASE; нужен **только** для `official_api`        |
 | `BROWSER_ENABLED`     | браузерный агент для публичного сайта kase.kz (ключ API не нужен)      |
 | `KASE_API_URL`        | базовый URL API KASE                                                  |

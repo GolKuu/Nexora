@@ -22,6 +22,7 @@ DB_PATH = ROOT / "tests" / ".test.db"
 os.environ.setdefault("APP_ENV", "test")
 os.environ["DATABASE_URL"] = f"sqlite:///{DB_PATH.as_posix()}"
 os.environ.setdefault("KASE_DATA_MODE", "mock")
+os.environ.setdefault("KASE_AI_DATA_MODE", "snapshot")
 os.environ.setdefault("AI_ENABLED", "false")
 os.environ.setdefault("OPENAI_API_KEY", "")
 

@@ -7,14 +7,15 @@ PostgreSQL and no network (§53). The snapshot in ``data/snapshots/`` holds
 URL and fetch time preserved per record - which is exactly the provenance the
 training data is required to carry (§7).
 
-In production the inference service uses :class:`ApiStore` instead, which reads
-the same shapes from the live backend. Both satisfy :class:`DataStore`, so the
-tool executors do not know or care which one they got.
+In production the inference service uses :class:`LiveKaseStore`, which overlays
+the same shapes with fresh values from KASE's public JSON API. Both satisfy
+:class:`DataStore`, so the tool executors do not know or care which one they got.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -172,11 +173,34 @@ def _ts(row: dict) -> datetime:
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
-_DEFAULT: SnapshotStore | None = None
+_DEFAULT: DataStore | None = None
 
 
-def default_store() -> SnapshotStore:
+def default_store() -> DataStore:
     global _DEFAULT
     if _DEFAULT is None:
-        _DEFAULT = SnapshotStore()
+        # Backend settings also reads the repository .env, which makes a
+        # direct ``uvicorn ai.inference.server:app`` launch behave like Docker.
+        from app.core.config import settings
+
+        mode = os.environ.get("KASE_AI_DATA_MODE", settings.KASE_AI_DATA_MODE).strip().lower()
+        if mode == "live":
+            # Imported lazily to keep dataset building and offline tests free
+            # from provider/network initialization.
+            from ai.tools.live_kase import LiveKaseStore
+
+            _DEFAULT = LiveKaseStore(
+                base_url=os.environ.get("KASE_AI_KASE_URL", "https://kase.kz"),
+                language=os.environ.get("KASE_AI_KASE_LANGUAGE", "ru"),
+                timeout=float(os.environ.get("KASE_AI_KASE_TIMEOUT", "20")),
+                ttl_seconds=float(
+                    os.environ.get(
+                        "KASE_AI_LIVE_TTL_SECONDS", str(settings.KASE_AI_LIVE_TTL_SECONDS)
+                    )
+                ),
+            )
+        elif mode == "snapshot":
+            _DEFAULT = SnapshotStore()
+        else:
+            raise ValueError("KASE_AI_DATA_MODE must be 'snapshot' or 'live'")
     return _DEFAULT

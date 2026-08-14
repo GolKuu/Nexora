@@ -744,8 +744,8 @@ class ToolExecutor:
         """Portfolios live in the product database, not in a snapshot.
 
         In offline mode this refuses rather than inventing holdings - which is
-        exactly the behaviour §17 trains for. The production executor
-        (ApiStore) implements it against the backend.
+        exactly the behaviour §17 trains for. Market-data live access does not
+        broaden into access to authenticated user portfolios.
         """
         return ToolResult(
             tool="get_portfolio", kind="FACT", data=None,
