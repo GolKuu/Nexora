@@ -33,6 +33,7 @@ from app.services.credit_service import CreditService
 from app.services.metrics_service import MetricsService
 from app.services.peer_service import PeerService
 from app.services.scoring_service import ScoringService
+from app.services.incremental import IncrementalStateService, content_hash
 
 logger = get_logger(__name__)
 
@@ -96,6 +97,7 @@ class KaseCollector:
         self.credit = CreditService(session)
         self.scoring = ScoringService(session)
         self.peers = PeerService(session)
+        self.incremental = IncrementalStateService(session)
 
     # -- raw ---------------------------------------------------------------
 
@@ -292,15 +294,66 @@ class KaseCollector:
         # not need this simply do not accept the argument.
         quotes = await self._get_quotes(tickers)
         self._flush_raw()
-        written = 0
+        written = unchanged = anomalies = 0
+        changed_tickers: list[str] = []
         for dto in quotes:
             bond = self.bonds.get_by_ticker(dto.ticker)
             if bond is None:
                 continue
-            self.quotes.add(self._to_quote(dto, bond.id))
+            quote = self._to_quote(dto, bond.id)
+            payload = {
+                key: getattr(quote, key)
+                for key in (
+                    "bid", "ask", "bid_volume", "ask_volume", "last",
+                    "clean_price", "dirty_price", "accrued_interest", "ytm", "volume",
+                    "turnover", "number_of_trades", "data_mode",
+                )
+            }
+            result = self.incremental.process(
+                entity_type="bond", entity_id=str(bond.id), ticker=bond.ticker,
+                isin=bond.isin, section="quote", payload=payload,
+                source_url=quote.source_url or bond.kase_url or settings.KASE_WEBSITE_URL,
+                source_timestamp=quote.source_timestamp or quote.timestamp,
+            )
+            bond.last_checked_at = datetime.now(timezone.utc)
+            if result.status == "unchanged":
+                current = self.quotes.current(bond.id)
+                if current is not None:
+                    current.last_checked_at = bond.last_checked_at
+                unchanged += 1
+                continue
+            if result.status == "anomaly":
+                anomalies += 1
+                continue
+            self.quotes.add(quote)
+            now = datetime.now(timezone.utc)
+            self.quotes.upsert_current(
+                bond.id,
+                {
+                    **payload,
+                    "timestamp": quote.timestamp,
+                    "source": quote.source,
+                    "source_identifier": quote.source_identifier,
+                    "source_url": quote.source_url,
+                    "source_timestamp": quote.source_timestamp,
+                    "fetched_at": quote.fetched_at,
+                    "last_checked_at": now,
+                    "last_changed_at": now,
+                    "content_hash": content_hash(payload),
+                },
+            )
+            bond.last_changed_at = now
+            changed_tickers.append(bond.ticker)
             written += 1
         self.session.commit()
-        return {"quotes": written, "data_mode": self.provider.data_mode}
+        return {
+            "quotes": written,
+            "changed": written,
+            "unchanged": unchanged,
+            "anomalies": anomalies,
+            "changed_tickers": changed_tickers,
+            "data_mode": self.provider.data_mode,
+        }
 
     async def _get_quotes(self, tickers: list[str] | None) -> list[ProviderQuote]:
         """Call the provider, supplying nominals when it can use them."""
@@ -349,7 +402,15 @@ class KaseCollector:
         self._flush_raw()
         written = 0
         for dto in trades:
-            self.trades.add(
+            fingerprint = content_hash({
+                "ticker": dto.ticker,
+                "trade_id": dto.trade_id,
+                "timestamp": dto.timestamp,
+                "price": dto.price,
+                "quantity": dto.quantity,
+                "amount": dto.amount,
+            })
+            _, created = self.trades.add_if_new(
                 BondTrade(
                     bond_id=bond.id,
                     trade_id=dto.trade_id,
@@ -363,10 +424,11 @@ class KaseCollector:
                     data_mode=dto.provenance.data_mode
                     if dto.provenance
                     else self.provider.data_mode,
+                    fingerprint=fingerprint,
                     **_prov_fields(dto),
                 )
             )
-            written += 1
+            written += int(created)
         self.session.commit()
         return written
 
@@ -389,6 +451,29 @@ class KaseCollector:
             scored += 1
         self.session.commit()
         return {"metrics": metrics_written, "scored": scored}
+
+    def recompute_changed(
+        self,
+        tickers: list[str],
+        *,
+        score_kinds: set[str] | None = None,
+        risk_profile: str = "balanced",
+    ) -> dict:
+        """Recompute only bonds touched by the ingestion change set."""
+        metrics_written = scored = 0
+        selected = score_kinds or {"liquidity", "trade", "investment"}
+        for ticker in sorted(set(tickers)):
+            bond = self.bonds.get_by_ticker(ticker)
+            if bond is None:
+                continue
+            metric = self.metrics.compute(bond)
+            if metric is not None:
+                metrics_written += 1
+                self.peers.assign(bond, metric.years_to_maturity)
+            self.scoring.compute_selected(bond, selected, risk_profile=risk_profile)
+            scored += len(selected)
+        self.session.commit()
+        return {"metrics": metrics_written, "scores": scored, "bonds_recomputed": len(set(tickers))}
 
 
 async def sync_issuer_details(collector: KaseCollector, code: str, issuer_id: int) -> dict:

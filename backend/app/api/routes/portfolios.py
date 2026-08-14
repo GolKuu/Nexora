@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import Identity, get_identity, require_owner
@@ -9,8 +11,24 @@ from app.db.session import get_session
 from app.schemas.portfolios import PortfolioCreate, PositionCreate, PositionUpdate
 from app.services.bond_service import BondService
 from app.services.portfolio_service import PortfolioService
+from app.services.change_service import ChangeService, serialize_change
 
 router = APIRouter()
+
+
+@router.get("/{portfolio_id}/changes", summary="Изменения по бумагам портфеля")
+def portfolio_changes(
+    portfolio_id: int,
+    since: datetime | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: Session = Depends(get_session),
+    identity: Identity = Depends(get_identity),
+) -> list[dict]:
+    service = PortfolioService(session)
+    _owned(service, portfolio_id, identity)
+    return [serialize_change(row) for row in ChangeService(session).portfolio(
+        portfolio_id, since=since, limit=limit
+    )]
 
 
 def _owned(service: PortfolioService, portfolio_id: int, identity: Identity):

@@ -102,6 +102,20 @@ async def verify_on_kase(
 
 
 @router.post(
+    "/bonds/{identifier}/refresh",
+    summary="Инкрементально обновить данные выпуска",
+)
+async def refresh_bond(
+    identifier: str,
+    force: bool = Query(default=False),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Fast check by default; ``force=true`` always performs deep validation."""
+    require_browser()
+    return await BrowserAgentService(session).verify_bond(identifier, force=force)
+
+
+@router.post(
     "/bonds/{identifier}/analyze-on-kase",
     summary="Посмотреть страницу глазами пользователя и проанализировать",
     description=(

@@ -1,0 +1,84 @@
+"""Read models for bond, portfolio and daily change feeds."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.incremental import DataChangeSet, DataCurrentState
+from app.models.portfolio import PortfolioPosition
+
+
+class ChangeService:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def for_entity(
+        self, entity_id: str, *, since: datetime | None = None,
+        section: str | None = None, importance: int | None = None, limit: int = 100,
+    ) -> list[DataChangeSet]:
+        query = select(DataChangeSet).where(DataChangeSet.entity_id == entity_id)
+        if since:
+            query = query.where(DataChangeSet.detected_at >= since)
+        if section:
+            query = query.where(DataChangeSet.section == section)
+        if importance is not None:
+            query = query.where(DataChangeSet.importance >= importance)
+        return list(self.session.execute(
+            query.order_by(DataChangeSet.detected_at.desc()).limit(limit)
+        ).scalars())
+
+    def summary(self, entity_id: str, *, since: datetime | None = None) -> dict:
+        changes = self.for_entity(entity_id, since=since, limit=5000)
+        sections = {row.section for row in changes}
+        fields = {row.field.rsplit(".", 1)[-1] for row in changes}
+        return {
+            "changed": bool(changes),
+            "since": since.isoformat() if since else None,
+            "material_changes": sum(1 for row in changes if row.material),
+            "summary": {
+                "price_changed": bool(fields & {"bid", "ask", "last", "clean_price"}),
+                "yield_changed": "ytm" in fields,
+                "credit_changed": bool(fields & {"credit_score", "rating"}),
+                "new_documents": sum(1 for row in changes if row.section == "documents" and row.change_type == "created"),
+                "sections": sorted(sections),
+            },
+        }
+
+    def portfolio(self, portfolio_id: int, *, since: datetime | None = None, limit: int = 200) -> list[DataChangeSet]:
+        bond_ids = list(self.session.execute(
+            select(PortfolioPosition.bond_id).where(PortfolioPosition.portfolio_id == portfolio_id)
+        ).scalars())
+        if not bond_ids:
+            return []
+        query = select(DataChangeSet).where(DataChangeSet.entity_id.in_([str(item) for item in bond_ids]))
+        if since:
+            query = query.where(DataChangeSet.detected_at >= since)
+        return list(self.session.execute(query.order_by(DataChangeSet.detected_at.desc()).limit(limit)).scalars())
+
+    def freshness(self, entity_id: str) -> dict:
+        states = list(self.session.execute(select(DataCurrentState).where(
+            DataCurrentState.entity_id == entity_id
+        )).scalars())
+        return {
+            "last_checked_at": max((row.last_checked_at for row in states), default=None),
+            "last_changed_at": max((row.last_changed_at for row in states), default=None),
+            "source_timestamp": max((row.source_timestamp for row in states if row.source_timestamp), default=None),
+        }
+
+
+def serialize_change(row: DataChangeSet) -> dict:
+    return {
+        "id": row.id, "detected_at": row.detected_at.isoformat(), "ticker": row.ticker,
+        "isin": row.isin, "section": row.section, "field": row.field,
+        "old_value": row.old_value, "new_value": row.new_value,
+        "change_type": row.change_type, "importance": row.importance,
+        "material": row.material, "source_url": row.source_url,
+        "source_timestamp": row.source_timestamp.isoformat() if row.source_timestamp else None,
+        "parser_version": row.parser_version,
+    }
+
+
+__all__ = ["ChangeService", "serialize_change"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -29,8 +29,34 @@ from app.services.peer_service import PeerService
 from app.services.recommendation_service import RecommendationService
 from app.services.scoring_service import ScoringService
 from app.services.settings_service import SettingsService
+from app.services.change_service import ChangeService, serialize_change
 
 router = APIRouter()
+
+
+@router.get("/{identifier}/changes", summary="История реальных изменений выпуска")
+def bond_changes(
+    identifier: str,
+    since: datetime | None = Query(default=None),
+    section: str | None = Query(default=None),
+    importance: int | None = Query(default=None, ge=0, le=100),
+    limit: int = Query(default=100, ge=1, le=1000),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    bond = BondService(session).require(identifier)
+    return [serialize_change(row) for row in ChangeService(session).for_entity(
+        str(bond.id), since=since, section=section, importance=importance, limit=limit
+    )]
+
+
+@router.get("/{identifier}/change-summary", summary="Сводка изменений выпуска")
+def bond_change_summary(
+    identifier: str,
+    since: datetime | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict:
+    bond = BondService(session).require(identifier)
+    return ChangeService(session).summary(str(bond.id), since=since)
 
 MOCK_WARNING = (
     "Показаны демонстрационные данные. KASE не подключен, цифры синтетические."

@@ -135,6 +135,20 @@ class ScoringService:
             self.scores.save_all(bond.id, results)
         return results
 
+    def compute_selected(
+        self,
+        bond: Bond,
+        kinds: set[str],
+        *,
+        risk_profile: str = "balanced",
+    ) -> dict[str, ScoreResult]:
+        """Persist only score kinds affected by an incremental change."""
+        ctx = self.build_context(bond, risk_profile=risk_profile)
+        results = ScoringEngine(profile=risk_profile).compute_all(ctx)
+        selected = {kind: result for kind, result in results.items() if kind in kinds}
+        self.scores.save_all(bond.id, selected)
+        return selected
+
     def explanation(
         self, bond: Bond, kind: str = "investment", *, risk_profile: str = "balanced"
     ) -> dict:

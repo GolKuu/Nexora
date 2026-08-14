@@ -187,6 +187,9 @@ class AIChangeTask(Base, TimestampMixin):
     model_version: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), default="pending")
     dedupe_key: Mapped[str] = mapped_column(String(64))
+    result_json: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class KaseDocument(Base, TimestampMixin):
@@ -202,7 +205,12 @@ class KaseDocument(Base, TimestampMixin):
     publication_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     last_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    current_version_id: Mapped[int | None] = mapped_column(Integer)
+    current_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "document_versions.id", ondelete="SET NULL", use_alter=True,
+            name="fk_kase_documents_current_version_id_document_versions",
+        )
+    )
 
 
 class DocumentVersion(Base, TimestampMixin):
@@ -240,4 +248,3 @@ class KaseNewsItem(Base, TimestampMixin):
     url: Mapped[str] = mapped_column(String(1024))
     content_hash: Mapped[str | None] = mapped_column(String(64))
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-

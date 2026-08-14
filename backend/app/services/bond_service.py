@@ -227,6 +227,23 @@ class BondService:
             kind: type("S", (), {"value": row.value, "confidence": row.confidence})()
             for kind, row in score_rows.items()
         }
+        freshness = self.freshness(
+            quote.timestamp if quote else None,
+            (metric.data_mode if metric else None) or (quote.data_mode if quote else None),
+        )
+        from app.services.change_service import ChangeService
+
+        incremental = ChangeService(self.session).freshness(str(bond.id))
+        freshness.update({
+            key: value.isoformat() if value else None for key, value in incremental.items()
+        })
+        # Bond columns are populated even before section state exists.
+        freshness["last_checked_at"] = freshness["last_checked_at"] or (
+            bond.last_checked_at.isoformat() if bond.last_checked_at else None
+        )
+        freshness["last_changed_at"] = freshness["last_changed_at"] or (
+            bond.last_changed_at.isoformat() if bond.last_changed_at else None
+        )
         return {
             "bond": self.reference(bond),
             "simple": self.simple_view(bond, metric, scores),
@@ -241,10 +258,7 @@ class BondService:
                 }
                 for kind, row in score_rows.items()
             },
-            "freshness": self.freshness(
-                quote.timestamp if quote else None,
-                (metric.data_mode if metric else None) or (quote.data_mode if quote else None),
-            ),
+            "freshness": freshness,
         }
 
     def list_view(self, bonds: list[Bond]) -> list[dict]:

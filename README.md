@@ -187,7 +187,9 @@ python scripts/seed_demo.py
 Что реализовано и что нужно доделать под конкретный контракт — подробно
 описано в [`docs/kase-integration.md`](docs/kase-integration.md).
 Браузерный агент (вкладки, таблицы, документы, скриншоты, ограничения) —
-в [`docs/browser-agent.md`](docs/browser-agent.md).
+в [`docs/browser-agent.md`](docs/browser-agent.md). Инкрементальные snapshots,
+change detection, selective recalculation и change API описаны в
+[`docs/incremental-kase.md`](docs/incremental-kase.md).
 
 Честная проверка подключения:
 

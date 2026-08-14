@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.market import BondQuote, BondTrade
+from app.models.market import BondQuote, BondQuoteCurrent, BondTrade
 
 
 class QuoteRepository:
@@ -52,6 +52,22 @@ class QuoteRepository:
         self.session.add(quote)
         self.session.flush()
         return quote
+
+    def current(self, bond_id: int) -> BondQuoteCurrent | None:
+        return self.session.execute(
+            select(BondQuoteCurrent).where(BondQuoteCurrent.bond_id == bond_id)
+        ).scalar_one_or_none()
+
+    def upsert_current(self, bond_id: int, values: dict) -> BondQuoteCurrent:
+        row = self.current(bond_id)
+        if row is None:
+            row = BondQuoteCurrent(bond_id=bond_id, **values)
+            self.session.add(row)
+        else:
+            for key, value in values.items():
+                setattr(row, key, value)
+        self.session.flush()
+        return row
 
 
 class TradeRepository:
@@ -101,3 +117,14 @@ class TradeRepository:
         self.session.add(trade)
         self.session.flush()
         return trade
+
+    def add_if_new(self, trade: BondTrade) -> tuple[BondTrade, bool]:
+        if trade.fingerprint:
+            existing = self.session.execute(
+                select(BondTrade).where(BondTrade.fingerprint == trade.fingerprint)
+            ).scalar_one_or_none()
+            if existing is not None:
+                return existing, False
+        self.session.add(trade)
+        self.session.flush()
+        return trade, True

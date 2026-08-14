@@ -106,6 +106,26 @@ class Settings(BaseSettings):
     BROWSER_VISION_MODEL: str | None = None
     RUN_LIVE_BROWSER_TESTS: bool = False
 
+    # --- incremental ingestion ------------------------------------------
+    INCREMENTAL_ENABLED: bool = True
+    INCREMENTAL_PARSER_VERSION: str = "2.0.0"
+    INCREMENTAL_FAST_CHECK_TIMEOUT: float = 12.0
+    INCREMENTAL_FORCE_FULL_AFTER_HOURS: float = 168.0
+    INCREMENTAL_MISSING_FIELD_RATIO: float = 0.60
+    MATERIAL_YTM_ABSOLUTE_CHANGE: float = 0.005
+    MATERIAL_PRICE_PERCENT_CHANGE: float = 1.0
+    MATERIAL_SPREAD_CHANGE: float = 0.5
+    MATERIAL_CREDIT_SCORE_CHANGE: float = 5.0
+    MATERIAL_LIQUIDITY_SCORE_CHANGE: float = 5.0
+    MATERIAL_TRADE_VOLUME_CHANGE: float = 0.25
+    SCHEDULE_QUOTES_SECONDS: int = 900
+    SCHEDULE_CATALOG_SECONDS: int = 21_600
+    SCHEDULE_DOCUMENTS_SECONDS: int = 21_600
+    SCHEDULE_NEWS_SECONDS: int = 3_600
+    SCHEDULE_AI_TASKS_SECONDS: int = 60
+    SCHEDULE_BOND_TERMS_SECONDS: int = 86_400
+    RAW_SNAPSHOT_RETENTION_DAYS: int = 30
+
     # --- AI --------------------------------------------------------------
     # The product's primary intelligence is our own model, served by the
     # inference service in ai/inference on our own infrastructure. See

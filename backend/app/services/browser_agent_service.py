@@ -20,6 +20,8 @@ Two other responsibilities live here:
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 import asyncio
 from datetime import datetime, timezone
 
@@ -29,6 +31,8 @@ from app.browser.agent import BondPageResult, KaseBrowserAgent, KaseBrowsingCont
 from app.browser.pacing import RuntimeBudget
 from app.browser.session import BrowserUnavailableError, browser_service
 from app.browser.types import BrowserStatus
+from app.services.fast_check import FastCheckService
+from app.services.incremental import IncrementalStateService, section_payloads
 from app.core.config import settings
 from app.core.enums import DataMode
 from app.core.errors import NotFoundError, UpstreamError
@@ -120,6 +124,7 @@ class BrowserAgentService:
         max_tabs: int = 4,
         with_visual: bool = False,
         persist: bool = True,
+        force: bool = False,
     ) -> dict:
         """"Проверить на KASE" for one instrument (§50).
 
@@ -129,6 +134,22 @@ class BrowserAgentService:
         bond = self.bonds.get_by_identifier(identifier)
         ticker = bond.ticker if bond is not None else identifier.strip()
         known_url = bond.kase_url if bond is not None else None
+
+        if known_url:
+            fast = await FastCheckService(self.session).check(
+                entity_type="bond", entity_id=str(bond.id), url=known_url,
+                ticker=bond.ticker, isin=bond.isin, force=force,
+            )
+            if not fast.changed:
+                if persist:
+                    bond.last_checked_at = datetime.now(timezone.utc)
+                    self.session.commit()
+                return {
+                    "ticker": ticker, "url": known_url, "status": "unchanged",
+                    "changed": False, "sections_changed": [], "deep_extraction": False,
+                    "ai_analysis_started": False, "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "fast_check": asdict(fast),
+                }
 
         async def work() -> BondPageResult:
             async with KaseBrowsingContext(label=f"verify:{ticker}") as agent:
@@ -161,8 +182,16 @@ class BrowserAgentService:
             ) from exc
 
         payload = self._report(result)
-        if persist:
+        changed_sections = self._process_incremental_sections(result, bond)
+        payload.update(
+            changed=bool(changed_sections),
+            sections_changed=changed_sections,
+            deep_extraction=True,
+            ai_analysis_started=False,
+        )
+        if persist and (changed_sections or result.error or result.browser_blocked_by_captcha):
             self._persist(result, bond_ticker=ticker)
+        if persist:
             self.session.commit()
         return payload
 
@@ -175,6 +204,7 @@ class BrowserAgentService:
         with_visual: bool = False,
         use_ai: bool = True,
         persist: bool = True,
+        force: bool = False,
     ) -> dict:
         """Browse the bond's page like a user, then analyse what was seen.
 
@@ -188,6 +218,27 @@ class BrowserAgentService:
         bond = self.bonds.get_by_identifier(identifier)
         ticker = bond.ticker if bond is not None else identifier.strip()
         known_url = bond.kase_url if bond is not None else None
+
+        if known_url:
+            fast = await FastCheckService(self.session).check(
+                entity_type="bond", entity_id=str(bond.id), url=known_url,
+                ticker=bond.ticker, isin=bond.isin, force=force,
+            )
+            if not fast.changed:
+                if persist:
+                    bond.last_checked_at = datetime.now(timezone.utc)
+                    self.session.commit()
+                return {
+                    "ticker": ticker, "url": known_url, "status": "unchanged",
+                    "changed": False, "sections_changed": [], "analysis": None,
+                    "summary": "Данные на KASE не изменились; повторный AI-анализ не запускался.",
+                    "generated_by": "engine", "model": None,
+                    "ai_unavailable_reason": None, "deterministic_summary": None,
+                    "browser": {"identity_confirmed": True, "blocked_by_captcha": False,
+                                "requires_authentication": False, "navigation_steps": 0},
+                    "deep_extraction": False, "ai_analysis_started": False,
+                    "fast_check": asdict(fast),
+                }
 
         async def work() -> BondPageResult:
             async with KaseBrowsingContext(label=f"analyze:{ticker}") as agent:
@@ -219,6 +270,11 @@ class BrowserAgentService:
 
         page = result.as_dict(include_text=False)
         analysis = analyze_page(page, bond)
+        changed_sections = self._process_incremental_sections(result, bond, enqueue_tasks=False)
+        material_change = any(
+            item.get("material") or item.get("status") == "created"
+            for item in changed_sections
+        )
         fallback = deterministic_summary(analysis)
 
         narrative = {
@@ -227,11 +283,12 @@ class BrowserAgentService:
             "model": None,
             "reason": None if use_ai else "AI отключен запросом",
         }
-        if use_ai and settings.AI_ENABLED:
+        if use_ai and settings.AI_ENABLED and material_change:
             narrative = await self._narrate(analysis, fallback)
 
-        if persist:
+        if persist and (changed_sections or result.error or result.browser_blocked_by_captcha):
             self._persist(result, bond_ticker=ticker)
+        if persist:
             self.session.commit()
 
         return {
@@ -244,6 +301,10 @@ class BrowserAgentService:
             "model": narrative.get("model"),
             "ai_unavailable_reason": narrative.get("reason"),
             "deterministic_summary": fallback,
+            "changed": bool(changed_sections),
+            "sections_changed": changed_sections,
+            "deep_extraction": True,
+            "ai_analysis_started": bool(use_ai and settings.AI_ENABLED and material_change),
             "browser": {
                 "identity_confirmed": page.get("identity_confirmed"),
                 "blocked_by_captcha": page.get("browser_blocked_by_captcha"),
@@ -251,6 +312,52 @@ class BrowserAgentService:
                 "navigation_steps": len(page.get("navigation_log") or []),
             },
         }
+
+    def _process_incremental_sections(
+        self, result: BondPageResult, bond, *, enqueue_tasks: bool = True
+    ) -> list[dict]:
+        """Persist only sections whose normalized content actually changed."""
+        page = result.as_dict(include_text=False)
+        values = {
+            name: item.get("normalized_value")
+            for name, item in (page.get("values") or {}).items()
+        }
+        values["documents"] = page.get("documents") or []
+        values["cashflows"] = [
+            tab for tab in (page.get("tabs_read") or [])
+            if tab.get("section") == "payments"
+        ]
+        values["financials"] = [
+            tab for tab in (page.get("tabs_read") or [])
+            if tab.get("section") == "financials"
+        ]
+        values["news"] = [
+            tab for tab in (page.get("tabs_read") or [])
+            if tab.get("section") == "news"
+        ]
+        entity_id = str(bond.id) if bond is not None else page.get("ticker") or "unknown"
+        service = IncrementalStateService(self.session)
+        changed = []
+        for section, payload in section_payloads(values).items():
+            outcome = service.process(
+                entity_type="bond", entity_id=entity_id, ticker=page.get("ticker"),
+                isin=getattr(bond, "isin", None), section=section, payload=payload,
+                source_url=page.get("url") or settings.KASE_WEBSITE_URL,
+                source_timestamp=result.snapshot.fetched_at if result.snapshot else None,
+                enqueue_tasks=enqueue_tasks,
+            )
+            if outcome.status != "unchanged":
+                changed.append({
+                    "section": section, "status": outcome.status,
+                    "fields": [item["field"] for item in outcome.changes],
+                    "material": any(item["material"] for item in outcome.changes),
+                    "anomaly": outcome.anomaly,
+                })
+        if bond is not None:
+            bond.last_checked_at = datetime.now(timezone.utc)
+            if any(item["status"] in {"created", "updated"} for item in changed):
+                bond.last_changed_at = datetime.now(timezone.utc)
+        return changed
 
     async def _narrate(self, analysis: dict, fallback: str) -> dict:
         """Ask the model to put the findings into words. Numbers stay ours."""

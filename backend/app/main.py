@@ -35,7 +35,15 @@ async def lifespan(app: FastAPI):
             "SERVING DEMO DATA: KASE is not connected and every market figure "
             "is synthetic."
         )
+    periodic = None
+    if settings.INCREMENTAL_ENABLED and settings.APP_ENV != "test" and settings.KASE_DATA_MODE != "mock":
+        from app.jobs.scheduler import PeriodicRefresh
+
+        periodic = PeriodicRefresh()
+        periodic.start()
     yield
+    if periodic is not None:
+        await periodic.stop()
     # The browser engine is a child process; leaving it behind leaks memory.
     from app.browser.session import browser_service
 

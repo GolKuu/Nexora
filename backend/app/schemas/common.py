@@ -13,6 +13,9 @@ class Freshness(BaseModel):
     data_mode: str | None = None
     is_mock: bool = False
     label: str | None = None
+    last_checked_at: str | None = None
+    last_changed_at: str | None = None
+    source_timestamp: str | None = None
 
 
 class Page(BaseModel, Generic[T]):
