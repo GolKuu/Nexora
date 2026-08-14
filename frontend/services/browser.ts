@@ -1,5 +1,6 @@
 import { api } from "@/services/client";
 import type {
+  KaseAnalysisResponse,
   KaseTabResponse,
   KaseLinkResponse,
   KaseVerifyResponse,
@@ -12,6 +13,12 @@ import type {
  *  re-check a bond against the exchange.
  */
 export const browserService = {
+  analyze: (identifier: string) =>
+    api.post<KaseAnalysisResponse>(
+      `/bonds/${encodeURIComponent(identifier)}/analyze-on-kase`,
+      { with_views: true, with_visual: false, use_ai: true },
+    ),
+
   verify: (identifier: string, options: { withVisual?: boolean } = {}) =>
     api.post<KaseVerifyResponse>(
       `/bonds/${encodeURIComponent(identifier)}/verify-on-kase`,

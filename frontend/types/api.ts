@@ -410,6 +410,52 @@ export interface KaseVerifyResponse {
   visual: Record<string, unknown> | null;
 }
 
+export interface KaseAnalysisFinding {
+  kind: "observation" | "mismatch" | "warning" | "limitation";
+  code: string;
+  message: string;
+  detail: Record<string, unknown>;
+}
+
+export interface KaseAnalysisResponse {
+  ticker: string;
+  url: string | null;
+  status: string;
+  summary: string;
+  deterministic_summary: string;
+  generated_by: "llm" | "engine";
+  model: string | null;
+  ai_unavailable_reason: string | null;
+  analysis: {
+    identity_confirmed: boolean;
+    tabs_read: string[];
+    views_read: string[];
+    fields_extracted: number;
+    facts: Record<
+      string,
+      {
+        value: unknown;
+        label: string | null;
+        confidence: number | null;
+        method: string | null;
+      }
+    >;
+    mismatches: {
+      field: string;
+      on_page: string;
+      in_database: string;
+      page_confidence: number | null;
+    }[];
+    findings: KaseAnalysisFinding[];
+  };
+  browser: {
+    identity_confirmed: boolean;
+    blocked_by_captcha: boolean;
+    requires_authentication: boolean;
+    navigation_steps: number;
+  };
+}
+
 export interface KaseTabResponse extends KaseVerifyResponse {
   section: string;
   tab: {

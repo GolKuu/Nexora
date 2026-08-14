@@ -38,12 +38,14 @@ docker compose up --build
 |------------|--------------------------------|
 | Frontend   | http://localhost:3000          |
 | Backend    | http://localhost:8000          |
+| Local AI   | внутри Compose: `ai:8100`      |
 | Swagger    | http://localhost:8000/docs     |
 | PostgreSQL | localhost:5432                 |
 
 Контейнер бэкенда сам дожидается PostgreSQL, применяет миграции
 (`alembic upgrade head`) и, если `SEED_DEMO_DATA=true`, загружает
-демонстрационный набор данных.
+демонстрационный набор данных. Контейнер `ai` поднимает собственный локальный
+inference-сервис; backend не стартует, пока его health-check не пройдет.
 
 Проверить, что всё поднялось:
 
@@ -60,17 +62,20 @@ docker run -d --name kase-db -p 5432:5432 \
   -e POSTGRES_USER=kase -e POSTGRES_PASSWORD=kase -e POSTGRES_DB=kase_bond_ai \
   postgres:16-alpine
 
-# 2. бэкенд
+# 2. зависимости backend и локального AI
 python -m venv .venv
 .venv/Scripts/activate           # Windows
 # source .venv/bin/activate      # Linux / macOS
 pip install -r backend/requirements-dev.txt
+pip install -r ai/requirements.txt
 
 cp .env.example .env
 export DATABASE_URL=postgresql+psycopg://kase:kase@localhost:5432/kase_bond_ai
 alembic upgrade head
 python scripts/seed_demo.py      # демо-данные, см. ниже
 
+# В первом терминале — наш AI, во втором — backend.
+uvicorn ai.inference.server:app --port 8100
 uvicorn app.main:app --reload --app-dir backend
 
 # 3. фронтенд

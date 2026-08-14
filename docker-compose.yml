@@ -31,9 +31,12 @@ services:
       BROWSER_ENABLED: ${BROWSER_ENABLED:-true}
       BROWSER_HEADLESS: ${BROWSER_HEADLESS:-true}
       BROWSER_ARTIFACT_DIR: ${BROWSER_ARTIFACT_DIR:-/app/var/browser}
+      AI_PROVIDER: ${AI_PROVIDER:-local}
+      KASE_AI_URL: http://ai:8100
+      KASE_AI_MODEL_VERSION: ${KASE_AI_MODEL_VERSION:-kase-ai-v0.1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
-      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
       AI_ENABLED: ${AI_ENABLED:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Loads synthetic demo data on first start. Ignored when APP_ENV=production.
@@ -41,8 +44,28 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      ai:
+        condition: service_healthy
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+
+  ai:
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    environment:
+      KASE_AI_RUNTIME: ${KASE_AI_RUNTIME:-rules}
+      KASE_AI_SERVICE_MODEL_VERSION: ${KASE_AI_MODEL_VERSION:-kase-ai-v0.1}
+    volumes:
+      - ai_logs:/app/var/ai-logs
+    expose:
+      - "8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   frontend:
     build:
@@ -59,3 +82,4 @@ services:
 
 volumes:
   pgdata:
+  ai_logs:

@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardBody } from "@/components/ui/Card";
 import { ApiError } from "@/services/client";
 import { browserService } from "@/services/browser";
-import type { KaseVerifyResponse } from "@/types/api";
+import type { KaseAnalysisResponse, KaseVerifyResponse } from "@/types/api";
 
 interface Props {
   ticker: string;
@@ -24,6 +24,7 @@ interface Props {
 export function KaseVerify({ ticker, kaseUrl }: Props) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<KaseVerifyResponse | null>(null);
+  const [analysis, setAnalysis] = useState<KaseAnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function verify() {
@@ -46,6 +47,23 @@ export function KaseVerify({ ticker, kaseUrl }: Props) {
     }
   }
 
+  async function analyze() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setAnalysis(await browserService.analyze(ticker));
+    } catch (exc) {
+      setError(
+        exc instanceof ApiError
+          ? exc.message
+          : "Не удалось выполнить анализ страницы KASE.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const fieldCount = result ? Object.keys(result.fields ?? {}).length : 0;
 
   return (
@@ -54,6 +72,14 @@ export function KaseVerify({ ticker, kaseUrl }: Props) {
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => void verify()} disabled={busy}>
             {busy ? "Проверяем…" : "Проверить на KASE"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void analyze()}
+            disabled={busy}
+          >
+            {busy ? "Читаем KASE…" : "Анализировать на KASE"}
           </Button>
           {kaseUrl ? (
             <a
@@ -122,6 +148,49 @@ export function KaseVerify({ ticker, kaseUrl }: Props) {
                     </span>
                   </li>
                 ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+
+        {analysis ? (
+          <div className="space-y-3 rounded-xl border border-slate-200 p-3 text-sm dark:border-slate-700">
+            <div>
+              <p className="font-medium text-slate-900 dark:text-white">
+                Анализ страницы {analysis.ticker}
+              </p>
+              <p className="mt-1 text-slate-700 dark:text-slate-200">
+                {analysis.summary}
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Прочитано полей: {analysis.analysis.fields_extracted}; вкладок: {analysis.analysis.tabs_read.length}; действий в браузере: {analysis.browser.navigation_steps}. Итог: {analysis.generated_by === "llm" ? `локальный AI ${analysis.model ?? ""}` : "проверяемый расчетный движок"}.
+            </p>
+
+            {analysis.analysis.mismatches.length > 0 ? (
+              <div className="rounded-lg bg-rose-50 px-3 py-2 text-rose-900 dark:bg-rose-950 dark:text-rose-200">
+                <p className="font-medium">Расхождения с базой</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {analysis.analysis.mismatches.map((item) => (
+                    <li key={item.field}>
+                      {item.field}: KASE — {item.on_page}, база — {item.in_database}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {analysis.analysis.findings.some(
+              (item) => item.kind === "warning" || item.kind === "limitation",
+            ) ? (
+              <ul className="list-disc space-y-1 pl-5 text-amber-700 dark:text-amber-300">
+                {analysis.analysis.findings
+                  .filter(
+                    (item) =>
+                      item.kind === "warning" || item.kind === "limitation",
+                  )
+                  .map((item) => <li key={item.code}>{item.message}</li>)}
               </ul>
             ) : null}
           </div>
