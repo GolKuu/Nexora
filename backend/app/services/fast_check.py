@@ -62,7 +62,7 @@ class FastCheckService:
     ) -> FastCheckResult:
         host = (urlsplit(url).hostname or "").lower()
         if host not in {"kase.kz", "www.kase.kz"} and not host.endswith(".kase.kz"):
-            return FastCheckResult("rejected", False, url, reason="non-KASE host")
+            return FastCheckResult("rejected", True, url, reason="non-KASE host")
         previous = self.states.latest(entity_type, entity_id, "page_metadata")
         if force:
             return FastCheckResult("forced", True, url, reason="force=true")
@@ -113,6 +113,9 @@ class FastCheckService:
 
                 response = await client.get(url)
                 response.raise_for_status()
+                final_host = (response.url.host or "").lower()
+                if final_host not in {"kase.kz", "www.kase.kz"} and not final_host.endswith(".kase.kz"):
+                    raise ValueError("KASE page redirected to a non-KASE host")
                 etag = response.headers.get("etag") or etag
                 modified = response.headers.get("last-modified") or modified
                 normalized = normalize_html_for_check(response.text)
