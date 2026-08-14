@@ -507,21 +507,21 @@ def build(executor: ToolExecutor) -> list[SFTSample]:
     bonds = liquid_bonds(executor, limit=45)
     samples: list[SFTSample] = []
 
-    for bond in bonds[:30]:
+    for bond in bonds[:35]:
         sample = _bond_explanation(executor, bond)
         if sample:
             samples.append(sample)
-    for bond in bonds[:20]:
+    for bond in bonds[:28]:
         sample = _ytm_explanation(executor, bond)
         if sample:
             samples.append(sample)
-    for bond in bonds[:20]:
+    for bond in bonds[:28]:
         sample = _coupon_explanation(executor, bond)
         if sample:
             samples.append(sample)
-    for bond in bonds[:18]:
+    for bond in bonds[:26]:
         samples.extend(_risk_and_liquidity(executor, bond))
-    for bond in bonds[:22]:
+    for bond in bonds[:30]:
         amount = random.choice([300_000, 500_000, 1_000_000, 2_500_000, 5_000_000, 10_000_000])
         sample = _investment_answer(executor, bond, amount)
         if sample:

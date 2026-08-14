@@ -1,0 +1,117 @@
+{
+  "model_version": "kase-ai-v0.1",
+  "run_id": "kase-ai-v0.1-baseline",
+  "status": "production_baseline",
+  "created_at": "2026-08-14T05:35:42.224097+00:00",
+  "git_commit": "99dcbcd2cbed23ab3bc629a368195746a25df65a",
+  "base_model": null,
+  "base_model_note": "v0.1 отвечает детерминированным движком `rules`. Fine-tune Qwen/Qwen3-8B подготовлен (ai/configs/train_8b.yaml), но не запускался: в окружении нет GPU и torch.",
+  "planned_base_model": {
+    "hf_id": "Qwen/Qwen3-8B",
+    "params": 8200000000.0,
+    "context": 32768,
+    "license": "apache-2.0",
+    "verified": false
+  },
+  "prompt_version": "2.0.0",
+  "tools_version": "1.0.0",
+  "formula_version": "1.0.0",
+  "dataset": {
+    "version": "v0.1.0",
+    "train": 580,
+    "dev": 67,
+    "total": 647,
+    "synthetic_share": 0.9335394126738794,
+    "task_distribution": {
+      "tool_call": 273,
+      "bond_explanation": 65,
+      "ytm_explanation": 28,
+      "coupon_explanation": 28,
+      "risk_explanation": 26,
+      "liquidity_explanation": 26,
+      "real_return": 4,
+      "simple_language": 16,
+      "bank_analysis": 21,
+      "period_change": 21,
+      "financial_analysis": 5,
+      "issuer_analysis": 25,
+      "credit_analysis": 7,
+      "compare_two": 30,
+      "compare_many": 15,
+      "scenario": 12,
+      "portfolio": 3,
+      "refusal": 30,
+      "source_check": 12
+    },
+    "files": {
+      "train.jsonl": {
+        "sha256_16": "366aa740ba6d5561",
+        "bytes": 6077183,
+        "records": 580
+      },
+      "dev.jsonl": {
+        "sha256_16": "d772c690a1015061",
+        "bytes": 702655,
+        "records": 67
+      }
+    }
+  },
+  "retrieval_index": {
+    "version": "v0.1.0",
+    "chunks": 332,
+    "tables": 52,
+    "embedding_model": "hashing-ngram-1024",
+    "is_fallback_embedder": true
+  },
+  "snapshot": {
+    "path": "data/snapshots/kase-latest.json",
+    "captured_at": "2026-08-13T11:17:49.207940+00:00",
+    "bonds": 143,
+    "issuers": 53,
+    "statements": 1377
+  },
+  "evaluation": {
+    "label": "rules-tools-rag",
+    "run_at": "2026-08-14T05:24:57.686359+00:00",
+    "configuration": {
+      "runtime": "rules",
+      "engine": "rules",
+      "engine_model": "kase-ai-v0.1",
+      "model_version": "kase-ai-v0.1",
+      "tools": true,
+      "retrieval": true,
+      "embedding_model": "hashing-ngram-1024",
+      "golden_items": 73
+    },
+    "metrics": {
+      "items": 73,
+      "tool_selection_accuracy": 0.8904,
+      "argument_precision": 0.9714,
+      "argument_recall": 0.9571,
+      "argument_f1": 0.9642,
+      "json_validity": 1.0,
+      "refusal_accuracy": 0.8767,
+      "hallucination_rate": 0.0411,
+      "source_attribution": 0.9821,
+      "answer_correctness": 0.7073,
+      "forbidden_phrase_rate": 0.0,
+      "russian_quality": 1.0,
+      "latency_ms_mean": 2.061
+    }
+  },
+  "training": {
+    "performed": false,
+    "reason": "нет GPU и нет torch (Python 3.14); пайплайн готов к запуску",
+    "command": "python -m ai.training.train_lora --config ai/configs/train_8b.yaml",
+    "gpu": null,
+    "gpu_hours": null,
+    "tokens": null,
+    "samples": null
+  },
+  "license": {
+    "system": "проприетарная (наш код и датасет)",
+    "base_model_planned": "apache-2.0",
+    "data": "публичные данные KASE и stat.gov.kz + внутренние методические документы"
+  },
+  "notes": "Model Card: models/kase-ai-v0.1/model_card.md"
+}

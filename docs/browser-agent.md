@@ -64,10 +64,37 @@ involved. `PATHS` in `browser/agent.py` is the only place these strings live.
 
 ### Instrument page sections
 
-Discovered dynamically. On a typical bond page they are `Торги`,
-`Характеристики ценной бумаги`, and the chart selectors `чистая цена`,
-`грязная цена`, `доходность`. The tab names are **never** hardcoded as the
+Discovered dynamically. On a typical bond page the sections are `Торги` and
+`Характеристики ценной бумаги`. The tab names are **never** hardcoded as the
 means of navigation - `SECTION_VOCABULARY` only *ranks* what discovery found.
+
+### Price views
+
+`чистая цена`, `грязная цена` and `доходность` are not sections: they are
+toggles that re-render the *same* trade table with different numbers. The
+section explorer skips them, so `KaseTabExplorer.explore_views()` clicks each
+one and labels the reading (`VIEW_VOCABULARY` → `clean_price` / `dirty_price`
+/ `yield`). Without this the agent only ever sees the default view.
+
+Verified on `BRKZb14`, one quote read three ways:
+
+| View | Bid | Offer |
+|---|---|---|
+| clean_price | 83,5313 | 88,6000 |
+| dirty_price | 853,3408 | 904,0278 |
+| yield | 17,0000 | 15,0000 |
+
+This is the page-side confirmation of the scale split documented in
+[`technical/kase-sources.md`](technical/kase-sources.md): clean prices are a
+percentage of nominal, dirty prices are money per bond.
+
+### Identity is proved by the page, not the URL
+
+kase.kz is a single-page app and answers `200` for a catalog route with any
+ticker appended, rendering the *listing* rather than the instrument. A URL
+containing the ticker is therefore **not** accepted as proof: identity is
+confirmed from the page title or the identity block above the tab strip. A
+catalog route is rejected with `status=not_found`.
 
 ## 4. The rules that constrain it
 
@@ -125,6 +152,7 @@ Everything else has a working default; see `.env.example` for the full list.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/v1/bonds/{id}/verify-on-kase` | "Проверить на KASE" - controlled refresh of one instrument |
+| `POST` | `/api/v1/bonds/{id}/analyze-on-kase` | Walk the page like a user, then analyse what was seen |
 | `GET` | `/api/v1/bonds/{id}/kase-tab/{section}` | Read one section of the instrument page |
 | `GET` | `/api/v1/bonds/{id}/kase-link` | "Открыть на KASE" - the official confirmed URL |
 | `POST` | `/api/v1/browser/catalog-refresh` | Sweep the public catalogue into the database |

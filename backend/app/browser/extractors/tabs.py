@@ -219,6 +219,10 @@ class KaseTabExplorer:
             # Label the result with the view it represents, so a caller can
             # tell a yield column from a price column later.
             result.view = view
+            if tab.get("active") and result.error == "content did not change after the click":
+                # This view was already on screen, so clicking it changes
+                # nothing. That is the expected outcome, not a failure.
+                result.error = None
             results.append(result)
         return results
 

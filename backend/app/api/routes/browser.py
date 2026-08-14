@@ -41,6 +41,29 @@ class InspectRequest(BaseModel):
     with_visual: bool = False
 
 
+class AnalyzeRequest(BaseModel):
+    max_tabs: int = Field(default=6, ge=1, le=10)
+    with_views: bool = Field(
+        default=True,
+        description=(
+            "Переключать представления котировок: чистая цена, грязная цена, "
+            "доходность. Это то, что пользователь делает кликом."
+        ),
+    )
+    with_visual: bool = Field(
+        default=False,
+        description="Разобрать скриншот моделью. Только качественные выводы.",
+    )
+    use_ai: bool = Field(
+        default=True,
+        description=(
+            "Сформулировать итог языковой моделью. При false (или при "
+            "недоступности модели) возвращается детерминированный текст; "
+            "сами findings не меняются."
+        ),
+    )
+
+
 @router.get("/browser/status", summary="Состояние браузерного агента")
 def status() -> dict:
     return {
@@ -75,6 +98,34 @@ async def verify_on_kase(
         sections=payload.sections,
         max_tabs=payload.max_tabs,
         with_visual=payload.with_visual,
+    )
+
+
+@router.post(
+    "/bonds/{identifier}/analyze-on-kase",
+    summary="Посмотреть страницу глазами пользователя и проанализировать",
+    description=(
+        "Открывает официальную страницу выпуска в настоящем браузере, проходит "
+        "по вкладкам, переключает представления котировок (чистая цена / "
+        "грязная цена / доходность) и возвращает разбор увиденного: факты со "
+        "страницы, расхождения с сохраненными данными, найденные документы и "
+        "ограничения. Числа извлекает и сверяет движок; языковая модель только "
+        "формулирует итог и при недоступности заменяется детерминированным "
+        "текстом."
+    ),
+)
+async def analyze_on_kase(
+    identifier: str,
+    payload: AnalyzeRequest = Body(default=AnalyzeRequest()),
+    session: Session = Depends(get_session),
+) -> dict:
+    require_browser()
+    return await BrowserAgentService(session).analyze_bond(
+        identifier,
+        max_tabs=payload.max_tabs,
+        with_views=payload.with_views,
+        with_visual=payload.with_visual,
+        use_ai=payload.use_ai,
     )
 
 

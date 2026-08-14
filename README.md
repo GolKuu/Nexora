@@ -17,7 +17,7 @@
 - [Тесты](#тесты)
 - [Демо-режим](#демо-режим)
 - [Подключение KASE](#подключение-kase)
-- [Смена LLM-провайдера](#смена-llm-провайдера)
+- [Собственный ИИ](#собственный-ии)
 - [Архитектура](#архитектура)
 - [Правила работы с данными](#правила-работы-с-данными)
 
@@ -199,36 +199,56 @@ python scripts/refresh.py --quotes   # только котировки и про
 
 ---
 
-## Смена LLM-провайдера
+## Собственный ИИ
 
-Клиент работает с любым OpenAI-совместимым `/chat/completions`. Меняются три
-переменные:
+Интеллект продукта — свой. Датасет, обучение, веса, промпты, инструменты,
+retrieval и инференс живут в [`ai/`](ai/README.md). Закрытый внешний LLM API
+не участвует в ответе ни на одном шаге и не служит резервным вариантом.
 
-```bash
-# OpenAI
-AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o-mini
-
-# Claude-совместимый шлюз
-AI_BASE_URL=https://<ваш-шлюз>/v1
-AI_MODEL=claude-sonnet-4-5
-
-# Qwen (DashScope compatible mode)
-AI_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-AI_MODEL=qwen-plus
-
-# локальная модель
-AI_BASE_URL=http://localhost:11434/v1
-AI_MODEL=qwen2.5
+```
+Frontend → KASE Bond Backend → наш сервис инференса (127.0.0.1:8100)
 ```
 
-Если `OPENAI_API_KEY` пуст или `AI_ENABLED=false`, сервис продолжает работать:
-объяснения оценок формирует детерминированный генератор
+Запуск:
+
+```bash
+pip install -r ai/requirements.txt
+python -m ai.datasets.build --version v0.1.0     # датасет из снимка KASE
+python -m ai.retrieval.index --version v0.1.0    # индекс для retrieval
+uvicorn ai.inference.server:app --port 8100      # сервис инференса
+curl http://localhost:8100/health
+```
+
+Работает без GPU, без весов и без сети: рантайм по умолчанию — детерминированный
+движок, который маршрутизирует вопрос в инструмент и излагает результат.
+Обучение (Qwen3-8B + QLoRA) требует GPU-машины и на момент этой версии не
+запускалось — см. [model card](models/kase-ai-v0.1/model_card.md).
+
+Переменные:
+
+| Переменная | Значение |
+|---|---|
+| `AI_PROVIDER` | `local` (по умолчанию) / `external` / `off` |
+| `KASE_AI_URL` | адрес нашего сервиса инференса |
+| `KASE_AI_RUNTIME` | `rules` / `vllm` / `llama_cpp` / `transformers` |
+
+`AI_PROVIDER=external` подключает любой OpenAI-совместимый эндпоинт
+(`AI_BASE_URL` + `AI_MODEL` + `OPENAI_API_KEY`). Этот режим существует только
+для сравнительного прогона «наша модель против чужой» и пишет предупреждение в
+лог; продуктовой конфигурацией он не является.
+
+Если сервис инференса недоступен или `AI_ENABLED=false`, приложение продолжает
+работать: объяснения оценок формирует детерминированный генератор
 (`app/scoring/explain.py`), и в ответе указано `generated_by: "engine"`.
 
-**LLM не считает финансовые показатели.** Модель получает уже посчитанные
-числа и только переформулирует объяснение. Ни YTM, ни duration, ни оценки
-никогда не приходят от модели.
+**Модель не считает финансовые показатели.** YTM, дюрацию, денежные потоки и
+оценки считают инструменты; модель выбирает инструмент, получает готовые числа
+и объясняет их.
+
+Документация: [архитектура](docs/ai/architecture.md) ·
+[датасет](docs/ai/dataset.md) · [обучение](docs/ai/training.md) ·
+[оценка](docs/ai/evaluation.md) · [инференс](docs/ai/inference.md) ·
+[model card](docs/ai/model-card.md)
 
 ---
 

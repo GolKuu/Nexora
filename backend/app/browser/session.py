@@ -88,6 +88,13 @@ class BrowserUnavailableError(RuntimeError):
     """Playwright or its engine is not installed/launchable on this machine."""
 
 
+def _current_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 class BrowserService:
     """Process-wide owner of the Playwright engine.
 
@@ -100,10 +107,16 @@ class BrowserService:
         self._browser: Browser | None = None
         self._lock = asyncio.Lock()
         self._sessions: dict[str, "BrowserSession"] = {}
+        #: The loop the engine was started on. Playwright's transport belongs
+        #: to that loop, so an engine reused from another one fails deep inside
+        #: the driver with an unhelpful error instead of reconnecting.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def running(self) -> bool:
-        return self._browser is not None and self._browser.is_connected()
+        if self._browser is None or not self._browser.is_connected():
+            return False
+        return self._loop is _current_loop()
 
     async def _launch(self) -> Browser:
         if self.running:
@@ -112,7 +125,12 @@ class BrowserService:
             if self.running:
                 return self._browser  # type: ignore[return-value]
             try:
+                # A previous engine bound to a dead loop must go before a new
+                # one is started, or its subprocess is leaked.
+                if self._browser is not None or self._playwright is not None:
+                    await self._teardown()
                 self._playwright = await async_playwright().start()
+                self._loop = _current_loop()
                 engine = getattr(self._playwright, settings.BROWSER_ENGINE)
                 self._browser = await engine.launch(
                     headless=settings.BROWSER_HEADLESS,
@@ -175,6 +193,8 @@ class BrowserService:
             except Exception:
                 pass
             self._playwright = None
+        self._loop = None
+        self._sessions.clear()
 
     async def aclose(self) -> None:
         for session in list(self._sessions.values()):

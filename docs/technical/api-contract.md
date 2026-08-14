@@ -322,6 +322,75 @@
 }
 ```
 
+## `POST /bonds/{identifier}/analyze-on-kase`
+
+Открывает официальную страницу выпуска **в настоящем браузере**, проходит по
+вкладкам, переключает представления котировок и возвращает разбор увиденного.
+
+Требует включенного браузерного агента (`BROWSER_ENABLED=true`). Занимает
+30–60 секунд — это не эндпоинт для рендера списка.
+
+### Запрос
+
+```json
+{ "max_tabs": 6, "with_views": true, "with_visual": false, "use_ai": true }
+```
+
+### Ответ (проверено на живой странице)
+
+```jsonc
+{
+  "ticker": "BRKZb14",
+  "url": "https://kase.kz/ru/investors/bonds/BRKZb14",
+  "status": "ok",
+  "analysis": {
+    "identity_confirmed": true,
+    "tabs_read": ["Характеристики ценной бумаги", "Торги"],
+    "views_read": ["clean_price", "dirty_price", "yield"],
+    "fields_extracted": 23,
+    "price_views": {
+      "clean_price": { "bid": "83,5313", "offer": "88,6000", "period": "13.08.26" },
+      "dirty_price": { "bid": "853,3408", "offer": "904,0278", "period": "13.08.26" },
+      "yield":       { "bid": "17,0000",  "offer": "15,0000",  "period": "13.08.26" }
+    },
+    "facts": { "isin": { "value": "KZ2C00004273", "confidence": 0.99, "method": "dom" } },
+    "mismatches": [],
+    "documents": [{ "name": "Проспект…", "url": "https://kase.kz/files/…pdf" }],
+    "findings": [
+      { "kind": "observation", "code": "tabs_walked", "message": "Открыты вкладки: …" },
+      { "kind": "limitation",  "code": "chart_not_machine_readable", "message": "…" }
+    ]
+  },
+  "summary": "Открыта страница BRKZb14 на KASE, просмотрены вкладки…",
+  "generated_by": "engine",
+  "deterministic_summary": "…",
+  "ai_unavailable_reason": "LLM is not configured (OPENAI_API_KEY is empty)."
+}
+```
+
+### Что важно для UI
+
+**1. `mismatches` — главное.** Это расхождения между тем, что показывает
+KASE прямо сейчас, и тем, что лежит у нас в базе. Показывайте оба значения;
+backend намеренно **не решает, кто прав**.
+
+**2. `findings[].kind`** — четыре типа, их стоит различать визуально:
+`observation` (что увидели), `mismatch` (расхождение), `warning`
+(что-то подозрительное), `limitation` (чего увидеть не удалось).
+
+**3. `price_views`** — это одна котировка в трёх видах, а не три разные.
+Так и подписывайте: чистая цена в % от номинала, грязная — в деньгах за
+бумагу, доходность — в % годовых.
+
+**4. `generated_by`**: `llm` — текст написала модель, `engine` — модель
+недоступна и отдан детерминированный текст. **`analysis` в обоих случаях
+одинаковый**: модель только формулирует, числа считает движок.
+
+**5. `identity_confirmed: false`** означает, что открытая страница не
+подтвердила принадлежность выпуску — данным с неё доверять нельзя.
+
+---
+
 ## `GET /bonds/{identifier}` — карточка
 
 Возвращает `bond`, `simple`, `pro`, `scores`, `freshness`, `warning`.

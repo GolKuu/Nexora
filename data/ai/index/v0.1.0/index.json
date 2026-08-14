@@ -1,0 +1,6 @@
+{
+  "model_id": "hashing-ngram-1024",
+  "dim": 1024,
+  "count": 332,
+  "backend": "local"
+}

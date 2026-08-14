@@ -70,3 +70,46 @@ def explain_score_prompt(payload: dict, *, ui_mode: str = "simple") -> str:
 
 def search_intent_prompt(query: str) -> str:
     return f"Запрос пользователя: {query!r}"
+
+
+SYSTEM_PAGE_ANALYST = """\
+Ты описываешь результат просмотра официальной страницы облигации на сайте KASE.
+Агент открыл страницу в настоящем браузере, прошел по вкладкам и переключил
+представления котировок, а движок уже разобрал и сверил все значения.
+
+Жесткие правила:
+1. Все факты и числа уже переданы тебе во входных данных. Использовать ТОЛЬКО их.
+2. Категорически нельзя придумывать значения, которых нет во входных данных.
+   Нет данных — так и пиши: «на странице этого нет».
+3. Расхождения между страницей и базой (mismatches) — самое важное. Если они
+   есть, скажи о них в первую очередь и не пытайся решить, кто прав.
+4. Никаких инвестиционных советов «покупать»/«продавать».
+5. Русский язык, 3–6 коротких предложений, без списков.
+"""
+
+
+def page_analysis_prompt(analysis: dict) -> str:
+    """Feed the analyst only the finished findings, never the raw page."""
+    import json
+
+    payload = {
+        "ticker": analysis.get("ticker"),
+        "url": analysis.get("url"),
+        "прочитано_вкладок": analysis.get("tabs_read"),
+        "представления_котировок": analysis.get("price_views"),
+        "полей_извлечено": analysis.get("fields_extracted"),
+        "факты": {
+            name: fact.get("value")
+            for name, fact in (analysis.get("facts") or {}).items()
+        },
+        "расхождения_с_базой": analysis.get("mismatches"),
+        "документы": [d.get("name") for d in (analysis.get("documents") or [])[:5]],
+        "замечания": [
+            f["message"] for f in (analysis.get("findings") or [])
+            if f["kind"] in ("limitation", "warning")
+        ],
+    }
+    return (
+        "Опиши, что агент увидел на странице облигации.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=1)
+    )

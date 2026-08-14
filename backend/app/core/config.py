@@ -107,13 +107,29 @@ class Settings(BaseSettings):
     RUN_LIVE_BROWSER_TESTS: bool = False
 
     # --- AI --------------------------------------------------------------
-    # OpenAI-compatible: works with OpenAI, Claude-compatible gateways, Qwen, etc.
-    OPENAI_API_KEY: str | None = None
-    AI_BASE_URL: str = "https://api.openai.com/v1"
-    AI_MODEL: str = "gpt-4o-mini"
+    # The product's primary intelligence is our own model, served by the
+    # inference service in ai/inference on our own infrastructure. See
+    # docs/ai/architecture.md.
+    #
+    #   local     - KASE Bond AI (default). No external LLM API is involved.
+    #   external  - an OpenAI-compatible endpoint. Opt-in, for evaluation and
+    #               comparison only; it is not a fallback the system reaches
+    #               for on its own (§61).
+    #   off       - no model at all; every AI surface serves its deterministic
+    #               explanation instead.
+    AI_PROVIDER: str = "local"
     AI_ENABLED: bool = True
     AI_TIMEOUT: float = 30.0
     AI_MAX_TOKENS: int = 900
+
+    #: Our inference service (ai/inference/server.py).
+    KASE_AI_URL: str = "http://127.0.0.1:8100"
+    KASE_AI_MODEL_VERSION: str = "kase-ai-v0.1"
+
+    # Used only when AI_PROVIDER=external.
+    OPENAI_API_KEY: str | None = None
+    AI_BASE_URL: str = "https://api.openai.com/v1"
+    AI_MODEL: str = "gpt-4o-mini"
 
     # --- scoring ---------------------------------------------------------
     SCORING_MODEL_VERSION: str = "1.0.0"

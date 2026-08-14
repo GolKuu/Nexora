@@ -61,11 +61,17 @@ class KaseVisualAnalyzer:
 
     @property
     def available(self) -> bool:
-        return (
+        # Vision is a property of the configured client, not of any one
+        # provider's key. Our own MVP model is text-only (§51), so this is
+        # false by default and the browser agent keeps working without it.
+        if not (
             settings.BROWSER_VISUAL_ANALYSIS_ENABLED
             and getattr(self._client, "supports_vision", False)
-            and bool(settings.OPENAI_API_KEY)
-        )
+        ):
+            return False
+        if getattr(self._client, "provider", "") == "openai_compatible":
+            return bool(settings.OPENAI_API_KEY)
+        return True
 
     async def analyze_file(
         self, path: str | Path, *, page_context: str = "", task: str = ""

@@ -1,0 +1,32 @@
+# GPU training environment. Install on the training box only.
+#
+#   python -m venv .venv-train && . .venv-train/bin/activate
+#   pip install -r ai/requirements.txt -r ai/requirements-training.txt
+#
+# Install torch first, matching your CUDA version:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+#
+# Python 3.11 or 3.12. As of this writing torch has no wheels for 3.13+, which
+# is why the dataset, retrieval, evaluation and inference layers were kept
+# torch-free: they run on the repository's own interpreter, and only training
+# needs this second environment.
+
+-r requirements.txt
+
+torch>=2.4
+transformers>=4.46
+peft>=0.13
+trl>=0.12
+datasets>=3.0
+accelerate>=1.0
+bitsandbytes>=0.44        # QLoRA 4-bit
+sentencepiece>=0.2
+huggingface_hub>=0.26     # licence verification in ai/training/registry.py
+sentence-transformers>=3.3
+
+# Serving (pick one; neither is required to train)
+# vllm>=0.6               # GPU serving of merged weights
+# autoawq>=0.2            # AWQ export for vLLM
+
+# flash-attn is optional and slow to build; sdpa attention works without it.
+# flash-attn>=2.6

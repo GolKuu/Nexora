@@ -552,14 +552,21 @@ def _pick_catalog_table(content: PageContent) -> tuple[int | None, list[str]]:
 
 
 def _identity_matches(ticker: str, content: PageContent) -> bool:
-    """Does this page actually belong to the instrument we asked for? (§26)"""
+    """Does this page actually belong to the instrument we asked for? (§26)
+
+    The URL is deliberately *not* accepted as proof. kase.kz is a single-page
+    app: it answers 200 for a path with any ticker appended and then renders
+    whatever that route maps to, so a matching URL can sit above a catalog
+    listing. What counts is that the rendered page says so - in its title, or
+    in the identity block above the tab strip.
+
+    The ticker appearing somewhere further down does not count either: every
+    instrument is named in the "other securities" table of its own issuer.
+    """
     wanted = ticker.casefold()
-    if wanted in (content.snapshot.url or "").casefold():
-        return True
     if wanted in (content.snapshot.page_title or "").casefold():
         return True
-    head = content.main_text[:1500].casefold()
-    return wanted in head
+    return wanted in _identity_block(content.main_text).casefold()
 
 
 def _pairs_from_tab(tab: TabResult) -> dict[str, str]:

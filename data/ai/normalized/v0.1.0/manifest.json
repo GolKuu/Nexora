@@ -1,0 +1,53 @@
+{
+  "dataset_version": "v0.1.0",
+  "stage": "normalized",
+  "created_at": "2026-08-14T05:41:34.898277+00:00",
+  "git_commit": "99dcbcd2cbed23ab3bc629a368195746a25df65a",
+  "prompt_version": "2.0.0",
+  "formula_version": "1.0.0",
+  "schema_version": "",
+  "tools_version": "1.0.0",
+  "sources": [
+    {
+      "name": "KASE snapshot",
+      "path": "data\\snapshots\\kase-latest.json",
+      "snapshot_version": "1.0.0",
+      "captured_at": "2026-08-13T11:17:49.207940+00:00",
+      "url": "https://kase.kz/",
+      "license_status": "public"
+    },
+    {
+      "name": "stat.gov.kz inflation",
+      "url": "https://stat.gov.kz/",
+      "license_status": "public"
+    },
+    {
+      "name": "repository methodology docs",
+      "path": "docs/",
+      "license_status": "internal"
+    }
+  ],
+  "counts": {
+    "documents": 201,
+    "deduplicated_out": 0
+  },
+  "task_distribution": {},
+  "language_distribution": {
+    "ru": 201
+  },
+  "source_distribution": {
+    "kase_public_api": 195,
+    "stat.gov.kz + kase_public_api": 1,
+    "kase_bond_ai_docs": 5
+  },
+  "synthetic_share": 0.0,
+  "files": {
+    "domain.jsonl": {
+      "sha256_16": "809bb997217a99a2",
+      "bytes": 547295,
+      "records": 201
+    }
+  },
+  "quality": {},
+  "notes": "Continued-pretraining corpus generated from the KASE snapshot and repo docs."
+}

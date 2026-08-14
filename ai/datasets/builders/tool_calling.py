@@ -416,10 +416,13 @@ def _tool_sample(
 
 def build(executor: ToolExecutor) -> list[SFTSample]:
     samples: list[SFTSample] = []
-    samples += _search_samples(executor, 120)
-    samples += _yield_filter_samples(executor, 40)
+    # Kept deliberately below half the corpus: routing is the easiest task to
+    # over-represent, and a model that only ever sees tool decisions stops
+    # explaining well. Quality report §57 fails the build above 55%.
+    samples += _search_samples(executor, 70)
+    samples += _yield_filter_samples(executor, 30)
     samples += _single_bond_samples(executor, per_template=4)
-    samples += _compare_samples(executor, 60)
+    samples += _compare_samples(executor, 40)
     samples += _misc_samples()
     return samples
 

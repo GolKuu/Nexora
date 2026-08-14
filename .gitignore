@@ -40,3 +40,24 @@ var/
 dist/
 build/
 coverage/
+
+# --- AI ---------------------------------------------------------------------
+# Model weights and checkpoints: too large for git, and reproducible from the
+# dataset version + config recorded in metadata.json. The metadata and the
+# model card ARE committed - they are how a checkpoint is identified.
+models/*/adapter/
+models/*/merged/
+models/*/checkpoints/
+models/*/gguf/
+models/*/awq-*/
+!models/*/metadata.json
+!models/*/model_card.md
+
+# Retrieval vectors: rebuildable from the committed chunks in one command
+# (python -m ai.retrieval.index --version <v>).
+data/ai/index/*/vectors.npy
+data/ai/index/*/records.jsonl
+
+# Feedback queue holds user questions; it is operational data, not source.
+var/ai-logs/
+var/ai-review-queue.jsonl

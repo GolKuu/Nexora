@@ -1,0 +1,11 @@
+{
+  "index_version": "v0.1.0",
+  "built_at": "2026-08-14T05:41:36.310430+00:00",
+  "embedding_model": "hashing-ngram-1024",
+  "is_fallback_embedder": true,
+  "dim": 1024,
+  "chunks": 332,
+  "tables": 52,
+  "source_chunks_file": "data\\ai\\chunks\\v0.1.0\\chunks.jsonl",
+  "backend": "local"
+}

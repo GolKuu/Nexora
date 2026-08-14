@@ -32,7 +32,9 @@ from app.browser.types import BrowserStatus
 from app.core.config import settings
 from app.core.enums import DataMode
 from app.core.errors import NotFoundError, UpstreamError
+from app.ai.prompts import SYSTEM_PAGE_ANALYST, page_analysis_prompt
 from app.core.logging import get_logger
+from app.services.page_analysis import analyze_page, deterministic_summary
 from app.repositories.bonds import BondRepository
 from app.repositories.browser import BrowserSnapshotRepository, NavigationLogRepository
 from app.repositories.issuers import IssuerRepository
@@ -163,6 +165,120 @@ class BrowserAgentService:
             self._persist(result, bond_ticker=ticker)
             self.session.commit()
         return payload
+
+    async def analyze_bond(
+        self,
+        identifier: str,
+        *,
+        max_tabs: int = 6,
+        with_views: bool = True,
+        with_visual: bool = False,
+        use_ai: bool = True,
+        persist: bool = True,
+    ) -> dict:
+        """Browse the bond's page like a user, then analyse what was seen.
+
+        The agent opens the official page, walks its tabs and flips the
+        clean/dirty/yield toggles. The findings - including any disagreement
+        between the page and our stored record - are computed here. The
+        language model is handed those finished findings and writes the
+        summary; when it is unavailable the deterministic summary is served
+        and the findings are identical either way.
+        """
+        bond = self.bonds.get_by_identifier(identifier)
+        ticker = bond.ticker if bond is not None else identifier.strip()
+        known_url = bond.kase_url if bond is not None else None
+
+        async def work() -> BondPageResult:
+            async with KaseBrowsingContext(label=f"analyze:{ticker}") as agent:
+                target = known_url if known_url and agent.confirms_domain(known_url) else None
+                if target is None and bond is None:
+                    found = await agent.search(ticker, max_results=3)
+                    exact = next(
+                        (e for e in found if e.ticker.casefold() == ticker.casefold()), None
+                    )
+                    if exact is not None:
+                        target = exact.url
+                return await agent.open_bond(
+                    ticker,
+                    url=target,
+                    max_tabs=max_tabs,
+                    with_views=with_views,
+                    with_visual=with_visual,
+                    use_cache=False,
+                    budget=RuntimeBudget(),
+                )
+
+        try:
+            result = await refresh_registry.run(f"analyze:{ticker.casefold()}", work)
+        except BrowserUnavailableError as exc:
+            raise UpstreamError(
+                "Браузерная проверка недоступна на этом сервере.",
+                details={"error": str(exc)},
+            ) from exc
+
+        page = result.as_dict(include_text=False)
+        analysis = analyze_page(page, bond)
+        fallback = deterministic_summary(analysis)
+
+        narrative = {
+            "text": fallback,
+            "generated_by": "engine",
+            "model": None,
+            "reason": None if use_ai else "AI отключен запросом",
+        }
+        if use_ai and settings.AI_ENABLED:
+            narrative = await self._narrate(analysis, fallback)
+
+        if persist:
+            self._persist(result, bond_ticker=ticker)
+            self.session.commit()
+
+        return {
+            "ticker": ticker,
+            "url": page.get("url"),
+            "status": page.get("status"),
+            "analysis": analysis,
+            "summary": narrative["text"],
+            "generated_by": narrative["generated_by"],
+            "model": narrative.get("model"),
+            "ai_unavailable_reason": narrative.get("reason"),
+            "deterministic_summary": fallback,
+            "browser": {
+                "identity_confirmed": page.get("identity_confirmed"),
+                "blocked_by_captcha": page.get("browser_blocked_by_captcha"),
+                "requires_authentication": page.get("requires_authentication"),
+                "navigation_steps": len(page.get("navigation_log") or []),
+            },
+        }
+
+    async def _narrate(self, analysis: dict, fallback: str) -> dict:
+        """Ask the model to put the findings into words. Numbers stay ours."""
+        from app.ai.base import ChatMessage
+        from app.ai.factory import get_llm_client
+
+        client = get_llm_client()
+        try:
+            response = await client.chat(
+                [
+                    ChatMessage(role="system", content=SYSTEM_PAGE_ANALYST),
+                    ChatMessage(role="user", content=page_analysis_prompt(analysis)),
+                ],
+                temperature=0.2,
+            )
+        except Exception as exc:  # a missing model must not lose the analysis
+            logger.info("page analyst unavailable: %s", exc)
+            return {"text": fallback, "generated_by": "engine", "model": None,
+                    "reason": str(exc)}
+        if not response.ok:
+            return {"text": fallback, "generated_by": "engine", "model": None,
+                    "reason": response.error}
+        return {
+            "text": response.content,
+            "generated_by": "llm",
+            "model": response.model,
+            "reason": None,
+        }
 
     async def read_tab(self, identifier: str, section: str) -> dict:
         """"Посмотри вкладку документы" - open one named section and read it."""

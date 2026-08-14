@@ -238,3 +238,88 @@ async def test_verify_on_kase_endpoint_writes_validated_data(agent, session, api
         session.query(Bond).filter_by(ticker=entry.ticker).delete()
         session.query(Issuer).filter_by(code="LIVETEST").delete()
         session.commit()
+
+
+async def test_agent_walks_tabs_and_price_views_like_a_user():
+    """The full "look at it like a person" flow, against the live page."""
+    from app.browser.agent import KaseBrowsingContext
+
+    async with KaseBrowsingContext(label="live-analysis") as agent:
+        result = await agent.open_bond(
+            "BRKZb14", max_tabs=6, with_screenshot=False, use_cache=False
+        )
+
+    assert result.identity_confirmed is True
+    assert result.status == "ok"
+
+    # The instrument page's two real sections.
+    names = {t.tab_name for t in result.tabs_read}
+    assert any("арактеристик" in n for n in names), names
+    assert any("орги" in n for n in names), names
+
+    # The toggles a user clicks to switch what the trade table shows.
+    views = {t.view for t in result.views_read if t.view}
+    assert views == {"clean_price", "dirty_price", "yield"}, views
+
+    accepted = result.validation.accepted if result.validation else {}
+    assert len(accepted) > 10, sorted(accepted)
+
+
+async def test_page_isin_belongs_to_this_bond_not_a_sibling():
+    """The page's ISIN must match the exchange's own API for the same bond."""
+    from app.browser.agent import KaseBrowsingContext
+    from app.providers.kase_public_api import KasePublicApiProvider
+
+    async with KaseBrowsingContext(label="live-isin") as agent:
+        result = await agent.open_bond(
+            "BRKZb14", max_tabs=2, with_screenshot=False, with_views=False, use_cache=False
+        )
+    accepted = result.validation.accepted if result.validation else {}
+    from_page = accepted["isin"].normalized
+
+    provider = KasePublicApiProvider()
+    try:
+        from_api = (await provider.get_bond("BRKZb14")).isin
+    finally:
+        await provider.aclose()
+
+    # Two independent readings of the same fact must agree.
+    assert from_page == from_api, f"page={from_page} api={from_api}"
+
+
+async def test_a_catalog_route_is_refused_even_though_it_answers_200():
+    """kase.kz is a SPA: a matching URL is not proof of the right page."""
+    from app.browser.agent import KaseBrowsingContext
+
+    async with KaseBrowsingContext(label="live-identity") as agent:
+        result = await agent.open_bond(
+            "BRKZb14",
+            url="https://kase.kz/ru/investors/instruments/BRKZb14",
+            max_tabs=1, with_screenshot=False, with_views=False, use_cache=False,
+        )
+    assert result.identity_confirmed is False
+    assert result.status == "not_found"
+    assert "does not identify itself" in (result.error or "")
+
+
+async def test_analysis_reads_the_page_and_compares_with_the_database(session):
+    """End to end: browse like a user, then produce findings."""
+    from app.services.browser_agent_service import BrowserAgentService
+
+    out = await BrowserAgentService(session).analyze_bond(
+        "BRKZb14", max_tabs=6, with_views=True, use_ai=False, persist=False
+    )
+    analysis = out["analysis"]
+
+    assert analysis["identity_confirmed"] is True
+    assert analysis["fields_extracted"] > 10
+    assert set(analysis["views_read"]) == {"clean_price", "dirty_price", "yield"}
+
+    # The three views are three descriptions of one quote, not three quotes.
+    views = analysis["price_views"]
+    assert set(views) == {"clean_price", "dirty_price", "yield"}
+
+    # Without a model the findings are unchanged and the text is deterministic.
+    assert out["generated_by"] == "engine"
+    assert out["summary"] == out["deterministic_summary"]
+    assert "BRKZb14" in out["summary"]

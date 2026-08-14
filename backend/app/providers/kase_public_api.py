@@ -381,7 +381,7 @@ class KasePublicApiProvider(BondDataProvider):
             outstanding_amount=_f(row.get("volume")),
             market_segment=self._localized(row, "board"),
             bond_type=classify_bond_type(self._localized(row, "fin_sec"), None),
-            kase_url=f"{self.base_url}/{self.language}/investors/instruments/{ticker}",
+            kase_url=f"{self.base_url}/{self.language}/investors/bonds/{ticker}",
             # A bond with a maturity in the past is no longer tradable.
             is_active=maturity is None or maturity >= date.today(),
             provenance=provenance,
@@ -459,7 +459,7 @@ class KasePublicApiProvider(BondDataProvider):
             subordinated=cfi["subordinated"],
             callable=cfi["callable"],
             putable=cfi["putable"],
-            kase_url=f"{self.base_url}/{self.language}/investors/instruments/{ticker}",
+            kase_url=f"{self.base_url}/{self.language}/investors/bonds/{ticker}",
             is_active=not chars.get("excluded_at")
             and (maturity is None or maturity >= date.today()),
             provenance=provenance,

@@ -1,0 +1,53 @@
+Всего примеров: 647
+Точные дубликаты: 0.2%
+Близкие дубликаты: 5.5%
+Пустые: 0   Битый JSON: 0   Слишком длинные: 12
+Доля синтетики: 93.4%
+Длина, симв.: median 6627, p95 10314, max 14237
+
+Распределение по задачам:
+  tool_call                  273   42.2%
+  bond_explanation            65   10.0%
+  compare_two                 30    4.6%
+  refusal                     30    4.6%
+  ytm_explanation             28    4.3%
+  coupon_explanation          28    4.3%
+  risk_explanation            26    4.0%
+  liquidity_explanation       26    4.0%
+  issuer_analysis             25    3.9%
+  bank_analysis               21    3.2%
+  period_change               21    3.2%
+  simple_language             16    2.5%
+  compare_many                15    2.3%
+  scenario                    12    1.9%
+  source_check                12    1.9%
+  credit_analysis              7    1.1%
+  financial_analysis           5    0.8%
+  real_return                  4    0.6%
+  portfolio                    3    0.5%
+
+Распределение по инструментам (tool_call):
+  search_bonds                95
+  compare_bonds               40
+  calculate_investment        25
+  get_bond                    24
+  get_source                  16
+  get_quote                   15
+  get_cashflows               15
+  calculate_ytm               15
+  get_financials              13
+  None                         6
+  get_inflation                3
+  get_portfolio                3
+  calculate_real_return        3
+
+Источники:
+  kase_bond_ai_engine                386
+  kase_public_api                    194
+  kase_bond_ai_safety_set             36
+  kase_bond_ai_glossary               19
+  kase_bond_ai_credit_model           12
+
+Языки: ru=647
+
+Замечаний нет.
