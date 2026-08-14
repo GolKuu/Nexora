@@ -401,6 +401,7 @@ class KaseCollector:
         trades = await self.provider.get_trades(ticker)
         self._flush_raw()
         written = 0
+        new_trades: dict[str, dict] = {}
         for dto in trades:
             fingerprint = content_hash({
                 "ticker": dto.ticker,
@@ -429,6 +430,21 @@ class KaseCollector:
                 )
             )
             written += int(created)
+            if created:
+                new_trades[fingerprint] = {
+                    "trade_id": dto.trade_id, "timestamp": dto.timestamp,
+                    "price": dto.price, "ytm": dto.ytm,
+                    "quantity": dto.quantity, "amount": dto.amount,
+                }
+        if new_trades:
+            current = self.incremental.latest("bond", str(bond.id), "trades")
+            accumulated = dict(current.normalized_json) if current else {}
+            accumulated.update(new_trades)
+            self.incremental.process(
+                entity_type="bond", entity_id=str(bond.id), ticker=bond.ticker,
+                isin=bond.isin, section="trades", payload=accumulated,
+                source_url=bond.kase_url or settings.KASE_WEBSITE_URL,
+            )
         self.session.commit()
         return written
 

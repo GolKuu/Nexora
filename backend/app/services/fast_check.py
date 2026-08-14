@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -59,6 +60,9 @@ class FastCheckService:
         force: bool = False,
         job_id: int | None = None,
     ) -> FastCheckResult:
+        host = (urlsplit(url).hostname or "").lower()
+        if host not in {"kase.kz", "www.kase.kz"} and not host.endswith(".kase.kz"):
+            return FastCheckResult("rejected", False, url, reason="non-KASE host")
         previous = self.states.latest(entity_type, entity_id, "page_metadata")
         if force:
             return FastCheckResult("forced", True, url, reason="force=true")
@@ -131,8 +135,16 @@ class FastCheckService:
                 )
         except Exception as exc:
             # Trust rule: an unreliable cheap check must lead to a deep check.
+            elapsed = (time.perf_counter() - started) * 1000
+            self.session.add(SourceCheckLog(
+                source_url=url, entity_id=entity_id, section="page_metadata",
+                checked_at=datetime.now(timezone.utc), status="error",
+                latency_ms=elapsed, changed=False,
+                error=f"{type(exc).__name__}: {exc}", job_id=job_id,
+            ))
+            self.session.flush()
             return FastCheckResult(
-                "uncertain", True, url, latency_ms=(time.perf_counter() - started) * 1000,
+                "uncertain", True, url, latency_ms=elapsed,
                 reason=f"{type(exc).__name__}: {exc}",
             )
 

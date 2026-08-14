@@ -39,6 +39,7 @@ ingestion. Документы имеют `KaseDocument` + `DocumentVersion`: с�
   `importance`, `limit`.
 - `GET /api/v1/bonds/{identifier}/change-summary` — компактная сводка.
 - `GET /api/v1/portfolios/{id}/changes` — изменения только бумаг портфеля.
+- `GET /api/v1/meta/ingestion-metrics?hours=24` — operational counters и latency.
 
 Интервалы и materiality thresholds находятся в `.env`; DB остаётся source of
 truth. Смена parser version запускает controlled deep reparse, смена формулы

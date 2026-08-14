@@ -152,6 +152,8 @@ class ChangeImportance:
             return 75
         if section == "news" and old is None:
             return 55
+        if section == "trades" and old is None:
+            return 55
         if not isinstance(old, (int, float)) or not isinstance(new, (int, float)):
             return 45 if old != new else 0
         absolute = abs(new - old)
@@ -416,11 +418,14 @@ class RawSnapshotReprocessor:
         values["financials"] = [tab for tab in (page.get("tabs_read") or []) if tab.get("section") == "financials"]
         values["news"] = [tab for tab in (page.get("tabs_read") or []) if tab.get("section") == "news"]
         service = IncrementalStateService(self.session)
+        source_timestamp = page.get("source_timestamp")
+        if not isinstance(source_timestamp, datetime):
+            source_timestamp = None
         return [
             service.process(
                 entity_type=entity_type, entity_id=entity_id, ticker=ticker,
                 isin=isin, section=section, payload=payload,
-                source_url=snapshot.url, source_timestamp=snapshot.fetched_at,
+                source_url=snapshot.url, source_timestamp=source_timestamp,
                 snapshot_id=snapshot.id, parser_version=parser_version,
             )
             for section, payload in section_payloads(values).items()

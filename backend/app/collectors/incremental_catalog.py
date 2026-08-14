@@ -29,6 +29,7 @@ async def incremental_catalog_sync(
     catalog = await provider.get_bonds()
     collector._flush_raw()
     known = {bond.ticker.upper(): bond for bond in collector.bonds.list(active_only=False, limit=10000)}
+    known_isin = {bond.isin.upper(): bond for bond in known.values() if bond.isin}
     seen: set[str] = set()
     metrics = {
         "entities_checked": len(catalog), "entities_changed": 0, "entities_unchanged": 0,
@@ -44,7 +45,12 @@ async def incremental_catalog_sync(
     for stub in catalog:
         key = stub.ticker.upper()
         seen.add(key)
-        existing = known.get(key)
+        existing = known.get(key) or (known_isin.get(stub.isin.upper()) if stub.isin else None)
+        if existing is not None:
+            seen.add(existing.ticker.upper())
+            if existing.ticker.upper() != key and stub.isin and existing.isin == stub.isin:
+                existing.ticker = stub.ticker
+                session.flush()
         profile = {
             "ticker": stub.ticker, "name": stub.name, "issuer_code": stub.issuer_code,
             "currency": stub.currency, "maturity_date": stub.maturity_date,
@@ -139,6 +145,15 @@ async def incremental_catalog_sync(
                 metrics["inactive_records"] += 1
                 metrics["entities_changed"] += 1
 
+    metrics.update({
+        "pages_checked": metrics["entities_checked"],
+        "pages_changed": metrics["entities_changed"],
+        "skipped_unchanged": metrics["entities_unchanged"],
+        "db_updates": metrics["new_records"] + metrics["updated_records"] + metrics["inactive_records"],
+        "ai_analyses": 0,
+        "ai_calls_saved": metrics["entities_unchanged"],
+        "anomalies": metrics["entities_failed"],
+    })
     metrics["status"] = "completed" if catalog_valid else "partial"
     tracker = job.finish(metrics, None if catalog_valid else "catalog response failed validation")
     session.commit()

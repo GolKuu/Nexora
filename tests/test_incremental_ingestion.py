@@ -155,11 +155,14 @@ def test_bond_change_feed_summary_and_freshness_api(api):
     changes = api.get(f"/bonds/{ticker}/changes?section=quote&importance=0&limit=10")
     summary = api.get(f"/bonds/{ticker}/change-summary")
     detail = api.get(f"/bonds/{ticker}")
+    monitoring = api.get("/meta/ingestion-metrics?hours=24")
     assert changes.status_code == 200
     assert summary.status_code == 200
     assert {"changed", "material_changes", "summary"} <= summary.json().keys()
     assert detail.status_code == 200
     assert {"last_checked_at", "last_changed_at", "source_timestamp", "data_mode"} <= detail.json()["freshness"].keys()
+    assert monitoring.status_code == 200
+    assert {"pages_checked", "pages_changed", "AI_calls_saved", "average_check_latency_ms"} <= monitoring.json().keys()
 
 
 @pytest.mark.anyio

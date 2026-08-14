@@ -336,6 +336,9 @@ class BrowserAgentService:
             if tab.get("section") == "news"
         ]
         entity_id = str(bond.id) if bond is not None else page.get("ticker") or "unknown"
+        source_timestamp = page.get("source_timestamp")
+        if not isinstance(source_timestamp, datetime):
+            source_timestamp = None
         service = IncrementalStateService(self.session)
         changed = []
         for section, payload in section_payloads(values).items():
@@ -343,7 +346,7 @@ class BrowserAgentService:
                 entity_type="bond", entity_id=entity_id, ticker=page.get("ticker"),
                 isin=getattr(bond, "isin", None), section=section, payload=payload,
                 source_url=page.get("url") or settings.KASE_WEBSITE_URL,
-                source_timestamp=result.snapshot.fetched_at if result.snapshot else None,
+                source_timestamp=source_timestamp,
                 enqueue_tasks=enqueue_tasks,
             )
             if outcome.status != "unchanged":
