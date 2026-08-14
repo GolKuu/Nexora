@@ -1,0 +1,36 @@
+﻿{
+    "format":  1,
+    "artifact":  "kase-ai-1.7b-v0.2-checkpoint-25",
+    "source":  "models\\kase-ai-1.7b-v0.2\\checkpoints\\checkpoint-25",
+    "archive":  "kase-ai-1.7b-v0.2-checkpoint-25.archive.zip",
+    "archive_bytes":  389890436,
+    "archive_sha256":  "84ef3b9a15c879c8dcca1a8ee43b044b9d0684e9fcec95c7694ec759e8d05128",
+    "part_size_bytes":  94000000,
+    "parts":  [
+                  {
+                      "file":  "kase-ai-1.7b-v0.2-checkpoint-25.part001",
+                      "bytes":  94000000,
+                      "sha256":  "d5b6e3d295dbed56a4da5b7de78bad9342fdceb8f0061e9c2a728046ed2a2008"
+                  },
+                  {
+                      "file":  "kase-ai-1.7b-v0.2-checkpoint-25.part002",
+                      "bytes":  94000000,
+                      "sha256":  "263957653a641ac4a73638b5947f132fe3f4cc93d09fde37bcf8fc8c584868b6"
+                  },
+                  {
+                      "file":  "kase-ai-1.7b-v0.2-checkpoint-25.part003",
+                      "bytes":  94000000,
+                      "sha256":  "ac9554a6fdbcd4458a6b7cdff2d357856e3bef6dff98ff282b8d15eb07f8bcd7"
+                  },
+                  {
+                      "file":  "kase-ai-1.7b-v0.2-checkpoint-25.part004",
+                      "bytes":  94000000,
+                      "sha256":  "6c823dac5faabf31b6749d82321f11ccc45cc3dd1b20295ddeb9f7f44af1a9e4"
+                  },
+                  {
+                      "file":  "kase-ai-1.7b-v0.2-checkpoint-25.part005",
+                      "bytes":  13890436,
+                      "sha256":  "033f4128c96af0207015fa860dce0d5c1f3ed752537a5267bdf748a3e4baa086"
+                  }
+              ]
+}

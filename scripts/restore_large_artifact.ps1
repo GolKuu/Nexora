@@ -2,11 +2,24 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('venv-train-windows', 'kase-ai-1.7b-v0.2-checkpoint-25')]
-    [string]$Artifact
+    [string]$Artifact,
+
+    [string]$Destination
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$extractRoot = if ($Destination) {
+    if ([System.IO.Path]::IsPathRooted($Destination)) {
+        [System.IO.Path]::GetFullPath($Destination)
+    }
+    else {
+        [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Destination))
+    }
+}
+else {
+    $repoRoot
+}
 $artifactDir = Join-Path $repoRoot 'artifacts\multipart'
 $manifestPath = Join-Path $artifactDir "$Artifact.manifest.json"
 if (-not (Test-Path -LiteralPath $manifestPath)) {
@@ -46,7 +59,8 @@ if ($actualArchiveHash -ne $manifest.archive_sha256) {
     throw "Combined archive checksum mismatch for $Artifact"
 }
 
-Push-Location $repoRoot
+New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+Push-Location $extractRoot
 try {
     & tar.exe -xf $archivePath
     if ($LASTEXITCODE -ne 0) {
@@ -58,4 +72,4 @@ finally {
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Restored $($manifest.source) and verified SHA-256."
+Write-Host "Restored $($manifest.source) under $extractRoot and verified SHA-256."

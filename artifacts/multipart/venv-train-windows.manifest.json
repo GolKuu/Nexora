@@ -1,0 +1,131 @@
+﻿{
+    "format":  1,
+    "artifact":  "venv-train-windows",
+    "source":  ".venv-train",
+    "archive":  "venv-train-windows.archive.zip",
+    "archive_bytes":  2172875686,
+    "archive_sha256":  "c2fc6d6a288a96e0d59f25e776a7acc0880b49eb1c62b09e74f6f70dba92cd38",
+    "part_size_bytes":  94000000,
+    "parts":  [
+                  {
+                      "file":  "venv-train-windows.part001",
+                      "bytes":  94000000,
+                      "sha256":  "fbe52ae786012b4a619ce4e56f1de4d3c6592d280afc5289511aab1ba339db9e"
+                  },
+                  {
+                      "file":  "venv-train-windows.part002",
+                      "bytes":  94000000,
+                      "sha256":  "1a849b124fd28a1bf9c26a488a2fdaf4a9ce68ca461a1e49f0b761964009ed8b"
+                  },
+                  {
+                      "file":  "venv-train-windows.part003",
+                      "bytes":  94000000,
+                      "sha256":  "40a406cf235d4f73989d9107fd44f706fc982c69156a94a3f5bd5c50326a5f89"
+                  },
+                  {
+                      "file":  "venv-train-windows.part004",
+                      "bytes":  94000000,
+                      "sha256":  "b100d35889c68d8f05c8a71bdc1a04dfdfc28b5523b0590df512c8c07d3ed2cd"
+                  },
+                  {
+                      "file":  "venv-train-windows.part005",
+                      "bytes":  94000000,
+                      "sha256":  "8a17a80bd878291ff7d595841c3364c822b88c67b7325cce3a19f13a462ac7ea"
+                  },
+                  {
+                      "file":  "venv-train-windows.part006",
+                      "bytes":  94000000,
+                      "sha256":  "9361e8c17d3fdf944ca6eef2840e74bdf311606afd106318c22f53d5880f24ef"
+                  },
+                  {
+                      "file":  "venv-train-windows.part007",
+                      "bytes":  94000000,
+                      "sha256":  "8bd0f399ec2ff7ba288f72bcdd8107b5a0832779c7bae0249ed8ac59ed3fc65a"
+                  },
+                  {
+                      "file":  "venv-train-windows.part008",
+                      "bytes":  94000000,
+                      "sha256":  "1b65551813db5c3f64247e972888782816388ab29942bcd798bc55019960de08"
+                  },
+                  {
+                      "file":  "venv-train-windows.part009",
+                      "bytes":  94000000,
+                      "sha256":  "44dc5ea045a1c386d4666aaec93bfadcb0559dc0f844de356d45645592f1e963"
+                  },
+                  {
+                      "file":  "venv-train-windows.part010",
+                      "bytes":  94000000,
+                      "sha256":  "cb9a8a40d1dfe088cef174159f7489854acbf28ac688961e086df3de38664994"
+                  },
+                  {
+                      "file":  "venv-train-windows.part011",
+                      "bytes":  94000000,
+                      "sha256":  "81c16286d41de1be84650670fc00aa0b2e5b7f12831173f39eb099cad6a62902"
+                  },
+                  {
+                      "file":  "venv-train-windows.part012",
+                      "bytes":  94000000,
+                      "sha256":  "897df5e96ff73389d9c5e0cb7091e0884fcdb82beda3ef83552b9bf2c0e8c0d8"
+                  },
+                  {
+                      "file":  "venv-train-windows.part013",
+                      "bytes":  94000000,
+                      "sha256":  "fdadc28e9a0c82be9de91a744f4f780499b3eba3d5b8d2f8e4c1c2d85b0f737d"
+                  },
+                  {
+                      "file":  "venv-train-windows.part014",
+                      "bytes":  94000000,
+                      "sha256":  "1991ec314c8e22ba5d952abd7e7bde40899b6ef9b0254341f53f79e721f4ead4"
+                  },
+                  {
+                      "file":  "venv-train-windows.part015",
+                      "bytes":  94000000,
+                      "sha256":  "0e11bddf313138b049750e74552204e1510159b7b6438ede6e7a60184ff48be1"
+                  },
+                  {
+                      "file":  "venv-train-windows.part016",
+                      "bytes":  94000000,
+                      "sha256":  "931468f844031e6191deaf4266b901ed656a9482adc7654288fad61e1fd6ddbd"
+                  },
+                  {
+                      "file":  "venv-train-windows.part017",
+                      "bytes":  94000000,
+                      "sha256":  "519e3cc2115c9a2116e5682222bf14fb53a6be370963f59a2b2a00e7711fb0fc"
+                  },
+                  {
+                      "file":  "venv-train-windows.part018",
+                      "bytes":  94000000,
+                      "sha256":  "3d961fa0bd9ef8aa26e4e8ba378ea82884969db599389c3efcf344e75b110274"
+                  },
+                  {
+                      "file":  "venv-train-windows.part019",
+                      "bytes":  94000000,
+                      "sha256":  "d903f17313787ebf19def91d9a37e42f40a6cc95a836b9535acafb6488da0d86"
+                  },
+                  {
+                      "file":  "venv-train-windows.part020",
+                      "bytes":  94000000,
+                      "sha256":  "64e314d3495b48b94924762b5b42126f6f6c242e8029b8537e6f8f87418aa848"
+                  },
+                  {
+                      "file":  "venv-train-windows.part021",
+                      "bytes":  94000000,
+                      "sha256":  "2fdd4c45cd441e6f49edf2061de0a11ae666fa6c0eb6b0d06c4c3062e90a1156"
+                  },
+                  {
+                      "file":  "venv-train-windows.part022",
+                      "bytes":  94000000,
+                      "sha256":  "e00cd6961dd46753a18da22d8e0bed552a14c337d4448c1e9dfd0d70111327fb"
+                  },
+                  {
+                      "file":  "venv-train-windows.part023",
+                      "bytes":  94000000,
+                      "sha256":  "f878a1d48bd36ad32d6107fba4bc58a8566b3ff558eec43609ac407747a7d338"
+                  },
+                  {
+                      "file":  "venv-train-windows.part024",
+                      "bytes":  10875686,
+                      "sha256":  "5bd38741d410c88ab8a359099ecf807633ba284a618baa3c8d9d314fd5ae451f"
+                  }
+              ]
+}

@@ -12,6 +12,13 @@ Restore either artifact from the repository root:
 .\scripts\restore_large_artifact.ps1 -Artifact kase-ai-1.7b-v0.2-checkpoint-25
 ```
 
+For verification or extraction somewhere other than the repository root, pass
+`-Destination`, for example:
+
+```powershell
+.\scripts\restore_large_artifact.ps1 -Artifact kase-ai-1.7b-v0.2-checkpoint-25 -Destination .\tmp\model-check
+```
+
 The virtual environment is Windows/Python-version specific. For a clean or
 cross-platform setup, installing dependencies from the project's locked
 requirements remains preferable.
