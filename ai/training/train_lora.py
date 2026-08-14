@@ -41,6 +41,18 @@ def train(config_path: str, *, smoke: bool = False, resume: str | None = None) -
             + "\n  ".join(validation["blocking"])
         )
 
+    # Verify the exact upstream licence before spending GPU time, then write
+    # its hash into this run's metadata. A declared SPDX string alone is not
+    # sufficient provenance for weights we intend to ship.
+    from ai.training.registry import verify_license
+
+    license_record = verify_license(str(config.get("model.base_key")))
+    if not license_record.get("verified"):
+        raise SystemExit(
+            "Лицензия базовой модели не подтверждена — обучение отменено: "
+            + str(license_record.get("error") or license_record)
+        )
+
     require("torch")
     require("transformers")
     require("peft")
@@ -51,6 +63,7 @@ def train(config_path: str, *, smoke: bool = False, resume: str | None = None) -
         AutoModelForCausalLM,
         AutoTokenizer,
         DataCollatorForSeq2Seq,
+        EarlyStoppingCallback,
         Trainer,
         TrainingArguments,
         set_seed,
@@ -117,8 +130,11 @@ def train(config_path: str, *, smoke: bool = False, resume: str | None = None) -
     assert_template_agreement(tokenizer, train_samples[0])
 
     max_train = config.get("smoke.max_train_samples") if smoke else None
+    max_eval = config.get("smoke.max_eval_samples") if smoke else None
     if max_train:
         train_samples = train_samples[: int(max_train)]
+    if max_eval:
+        dev_samples = dev_samples[: int(max_eval)]
 
     train_rows = encode(train_samples, tokenizer, max_seq_length=max_seq_length)
     dev_rows = encode(dev_samples, tokenizer, max_seq_length=max_seq_length)
@@ -134,6 +150,7 @@ def train(config_path: str, *, smoke: bool = False, resume: str | None = None) -
         output_dir=str(output_dir / "checkpoints"),
         num_train_epochs=float(config.get("training.epochs", 3)),
         per_device_train_batch_size=int(config.get("training.per_device_train_batch_size", 2)),
+        per_device_eval_batch_size=int(config.get("training.per_device_eval_batch_size", 1)),
         gradient_accumulation_steps=int(config.get("training.gradient_accumulation_steps", 16)),
         learning_rate=float(config.get("training.learning_rate", 1e-4)),
         lr_scheduler_type=str(config.get("training.lr_scheduler_type", "cosine")),
@@ -142,21 +159,34 @@ def train(config_path: str, *, smoke: bool = False, resume: str | None = None) -
         max_grad_norm=float(config.get("training.max_grad_norm", 0.3)),
         optim=str(config.get("training.optim", "paged_adamw_8bit")),
         bf16=bool(config.get("training.bf16", True)) and torch.cuda.is_available(),
+        tf32=bool(config.get("training.tf32", True)) and torch.cuda.is_available(),
         gradient_checkpointing=bool(config.get("training.gradient_checkpointing", True)),
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=int(config.get("training.logging_steps", 10)),
         eval_strategy="steps" if len(eval_dataset) else "no",
         eval_steps=int(config.get("training.eval_steps", 100)),
         save_steps=int(config.get("training.save_steps", 100)),
         save_total_limit=int(config.get("training.save_total_limit", 5)),
+        load_best_model_at_end=bool(config.get("training.load_best_model_at_end", True)),
+        prediction_loss_only=bool(config.get("training.prediction_loss_only", True)),
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        group_by_length=True,
         seed=config.seed,
         report_to=[],
     )
+    patience = int(config.get("training.early_stopping_patience", 3))
     trainer = Trainer(
         model=model,
         args=arguments,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset if len(eval_dataset) else None,
         data_collator=DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100),
+        callbacks=[
+            EarlyStoppingCallback(
+                early_stopping_patience=patience
+            )
+        ] if patience > 0 else [],
     )
 
     started = time.time()
@@ -193,6 +223,11 @@ def train(config_path: str, *, smoke: bool = False, resume: str | None = None) -
                 "adapter_bytes": sum(f.stat().st_size for f in adapter_dir.glob("*") if f.is_file()),
             },
         },
+    )
+    metadata["license"] = license_record
+    (output_dir / "metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
     )
     print(json.dumps(metadata, ensure_ascii=False, indent=2, default=str))
     print(f"\nАдаптер сохранён: {adapter_dir}")

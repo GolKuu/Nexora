@@ -69,11 +69,15 @@ class TrainingConfig:
         smoke = self.get("smoke", {}) or {}
         for key, value in smoke.items():
             if key in ("epochs", "per_device_train_batch_size", "gradient_accumulation_steps",
-                       "save_steps", "eval_steps", "logging_steps"):
+                       "save_steps", "eval_steps", "logging_steps",
+                       "load_best_model_at_end", "early_stopping_patience"):
                 self.raw.setdefault("training", {})[key] = value
             elif key == "max_seq_length":
                 self.raw.setdefault("dataset", {})["max_seq_length"] = value
         self.raw.setdefault("run", {})["smoke"] = True
+        output = str(self.raw.setdefault("run", {}).get("output_dir", "models/kase-ai-smoke"))
+        if not output.endswith("-smoke"):
+            self.raw["run"]["output_dir"] = output + "-smoke"
 
     def run_id(self) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

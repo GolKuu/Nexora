@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-train/
 venv/
 .pytest_cache/
 .mypy_cache/
@@ -52,6 +53,8 @@ models/*/gguf/
 models/*/awq-*/
 !models/*/metadata.json
 !models/*/model_card.md
+# Smoke runs are disposable pipeline checks, not releasable model records.
+models/*-smoke/
 
 # Retrieval vectors: rebuildable from the committed chunks in one command
 # (python -m ai.retrieval.index --version <v>).

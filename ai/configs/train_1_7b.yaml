@@ -1,0 +1,81 @@
+# Максимально качественный профиль, который реально обучается локально на
+# RTX 5070 Laptop 8 GB. Основа открытая (Apache-2.0), данные и адаптер наши.
+
+run:
+  name: kase-ai-1.7b
+  seed: 20260814
+  output_dir: models/kase-ai-1.7b-v0.2
+  record_git_commit: true
+
+model:
+  base: Qwen/Qwen3-1.7B
+  base_key: qwen3-1.7b
+  trust_remote_code: false
+  attn_implementation: sdpa
+  torch_dtype: bfloat16
+  chat_template: tokenizer
+
+# 1.7B помещается в 8 GB в bf16. Отказ от QLoRA здесь намеренный: он устраняет
+# дополнительную ошибку квантизации и проблемы bitsandbytes на Windows.
+quantization:
+  enabled: false
+
+lora:
+  enabled: true
+  rank: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  modules_to_save: []
+
+dataset:
+  version: v0.1.0
+  train_file: data/ai/sft/v0.1.0/train.jsonl
+  eval_file: data/ai/sft/v0.1.0/dev.jsonl
+  contamination_guard: ai/evaluation/golden/golden.jsonl
+  max_seq_length: 4096
+  packing: false
+  train_on_completions_only: true
+
+training:
+  epochs: 4
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  max_grad_norm: 0.3
+  optim: adamw_torch_fused
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+  logging_steps: 5
+  eval_steps: 25
+  save_steps: 25
+  save_total_limit: 3
+  load_best_model_at_end: true
+  prediction_loss_only: true
+  early_stopping_patience: 3
+
+smoke:
+  max_train_samples: 8
+  max_eval_samples: 4
+  epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+  max_seq_length: 4096
+  save_steps: 1000000
+  load_best_model_at_end: false
+  early_stopping_patience: 0
+
+evaluation:
+  benchmark: ai/evaluation/golden/golden.jsonl
+  thresholds:
+    tool_selection_accuracy_min: 0.85
+    argument_f1_min: 0.80
+    json_validity_min: 0.98
+    hallucination_rate_max: 0.05
+    refusal_accuracy_min: 0.85
+    forbidden_phrase_rate_max: 0.0

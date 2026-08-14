@@ -13,6 +13,18 @@
 
 candidates:
 
+  qwen3-1.7b:
+    hf_id: Qwen/Qwen3-1.7B
+    params: 1.7e9
+    context: 32768
+    license: apache-2.0
+    commercial_use: true
+    role: local_training
+    notes: >
+      Локальный обучаемый профиль для 8 ГБ VRAM. В отличие от rules-baseline
+      создаёт настоящие LoRA-веса на нашей выборке и помещается в bf16 с
+      gradient checkpointing без нестабильной 4-bit квантизации на Windows.
+
   qwen3-4b:
     hf_id: Qwen/Qwen3-4B
     params: 4.0e9
