@@ -28,7 +28,10 @@ def top_stocks(category: str = "best", limit: int = Query(10, ge=1, le=100), ses
     payload = StockService(session).list(limit=500)
     kind = {"best": "investment", "quality": "quality", "undervalued": "valuation", "growth": "growth", "dividends": "dividend", "liquid": "liquidity", "low_risk": "risk", "momentum": "momentum"}.get(category, "investment")
     reverse = kind != "risk"
-    payload["items"].sort(key=lambda row: (row["scores"][kind]["value"] is not None, row["scores"][kind]["value"] if row["scores"][kind]["value"] is not None else (-1 if reverse else 101)), reverse=reverse)
+    if reverse:
+        payload["items"].sort(key=lambda row: (row["scores"][kind]["value"] is not None, row["scores"][kind]["value"] or -1), reverse=True)
+    else:
+        payload["items"].sort(key=lambda row: (row["scores"][kind]["value"] is None, row["scores"][kind]["value"] if row["scores"][kind]["value"] is not None else 101))
     payload.update(items=payload["items"][:limit], limit=limit, category=category)
     return payload
 

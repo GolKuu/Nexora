@@ -14,9 +14,10 @@ if TYPE_CHECKING:
 
 class Stock(Base, TimestampMixin, SourceMixin):
     __tablename__ = "stocks"
+    __table_args__ = (Index("ix_stocks_instrument_id", "instrument_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id", ondelete="CASCADE"), unique=True, index=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id", ondelete="CASCADE"), unique=True)
     share_class: Mapped[str | None] = mapped_column(String(32))
     shares_outstanding: Mapped[float | None] = mapped_column(Float)
     free_float: Mapped[float | None] = mapped_column(Float)

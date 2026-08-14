@@ -119,3 +119,24 @@ def test_incremental_stock_section_does_not_duplicate_unchanged_state(session):
     first = service.process(entity_type="stock", entity_id="999", section="dividends", payload={"dividends": [{"amount": 10}]}, source_url="https://kase.kz/test", ticker="TEST")
     second = service.process(entity_type="stock", entity_id="999", section="dividends", payload={"dividends": [{"amount": 10}]}, source_url="https://kase.kz/test", ticker="TEST")
     assert first.status == "created" and second.status == "unchanged"
+
+
+def test_portfolio_mixes_stock_and_bond_without_crossing_formulas(session, seeded):
+    from sqlalchemy import select
+    from app.models.bond import Bond
+    from app.models.portfolio import Portfolio, PortfolioPosition
+    from app.services.portfolio_service import PortfolioService
+    stock = _seed_stock(session, "MIXS")
+    bond = session.scalar(select(Bond).limit(1))
+    portfolio = Portfolio(anonymous_token="mixed-test", name="Mixed", base_currency="KZT")
+    session.add(portfolio); session.flush()
+    session.add_all([
+        PortfolioPosition(portfolio_id=portfolio.id, bond_id=bond.id, stock_id=None, instrument_type="bond", quantity=2, purchase_clean_price=100),
+        PortfolioPosition(portfolio_id=portfolio.id, bond_id=None, stock_id=stock.id, instrument_type="stock", quantity=10, purchase_price=90),
+    ])
+    session.flush(); session.expire_all()
+    result = PortfolioService(session).valuation(PortfolioService(session).require(portfolio.id))
+    assert {row["instrument_type"] for row in result["positions"]} == {"bond", "stock"}
+    stock_row = next(row for row in result["positions"] if row["instrument_type"] == "stock")
+    assert stock_row["ytm"] is None and stock_row["modified_duration"] is None
+    assert result["summary"]["asset_allocation"]["stocks"] > 0

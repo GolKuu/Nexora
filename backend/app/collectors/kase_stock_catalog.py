@@ -148,7 +148,7 @@ class KaseStockCatalogCollector:
             else:
                 digest = content_hash(quote_payload)
                 quote = StockQuote(stock_id=stock.id, timestamp=item["source_timestamp"] or now, bid=item["bid"], ask=item["ask"], last=item["price"], close=item["close"],
-                                   turnover=item["turnover"], number_of_trades=item["number_of_trades"], data_mode="delayed", content_hash=digest,
+                                   turnover=item["turnover"], number_of_trades=item["number_of_trades"], data_mode="end_of_day", content_hash=digest,
                                    source=SOURCE_NAME, source_url=CATALOG_URL, source_timestamp=item["source_timestamp"], fetched_at=now)
                 self.session.add(quote); stats["quotes_created"] += 1
             stats["created" if created else "updated"] += 1
@@ -167,10 +167,25 @@ class KaseStockCatalogCollector:
         """KASE fin-data is issuer-level; fan it out to each listed share class."""
         provider = KasePublicApiProvider(self.base_url, language="en", max_concurrency=4)
         issuer_codes = sorted(stocks_by_issuer)
-        results = await asyncio.gather(*(provider.get_financials(code) for code in issuer_codes), return_exceptions=True)
+        async def fetch_issuer(code: str):
+            return await asyncio.gather(provider.get_financials(code), provider.get_issuer(code))
+
+        results = await asyncio.gather(*(fetch_issuer(code) for code in issuer_codes), return_exceptions=True)
         periods_saved = 0; issuers_with_data = 0
-        for code, statements in zip(issuer_codes, results, strict=True):
-            if isinstance(statements, Exception) or not statements:
+        for code, result in zip(issuer_codes, results, strict=True):
+            if isinstance(result, Exception):
+                continue
+            statements, issuer_profile = result
+            if issuer_profile is not None:
+                for stock in stocks_by_issuer[code]:
+                    issuer = stock.instrument.issuer
+                    issuer.is_financial_institution = issuer_profile.is_financial_institution
+                    issuer.is_state_owned = issuer_profile.is_state_owned
+                    issuer.sector = issuer_profile.sector or issuer.sector
+                    issuer.industry = issuer_profile.industry or issuer.industry
+                    issuer.description = issuer_profile.description or issuer.description
+                    stock.sector = issuer.sector; stock.industry = issuer.industry
+            if not statements:
                 continue
             issuers_with_data += 1
             # The public feed can repeat one reporting date (for example an
