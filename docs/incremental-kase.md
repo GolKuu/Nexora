@@ -33,7 +33,7 @@ ingestion. Документы имеют `KaseDocument` + `DocumentVersion`: с�
 
 ## Управление
 
-- `POST /api/v1/browser/bonds/{identifier}/refresh?force=true` — глубокая
+- `POST /api/v1/bonds/{identifier}/refresh?force=true` — глубокая
   проверка без hash-shortcut.
 - `GET /api/v1/bonds/{identifier}/changes` — change feed с `since`, `section`,
   `importance`, `limit`.
