@@ -11,6 +11,12 @@ from app.models.financials import (
 from app.models.issuer import Issuer
 from app.models.macro import FxRate, InflationData, YieldCurve
 from app.models.market import BondQuote, BondTrade
+from app.models.market import BondQuoteCurrent
+from app.models.incremental import (
+    AIChangeTask, DataChangeSet, DataCurrentState, DataStateVersion,
+    DocumentVersion, IngestionJob, KaseDocument, KaseNewsItem,
+    RecalculationTask, SourceCheckLog,
+)
 from app.models.metrics import BondMetric
 from app.models.portfolio import Alert, Portfolio, PortfolioPosition, Watchlist
 from app.models.scores import BondScore, ScoreComponent
@@ -24,9 +30,20 @@ __all__ = [
     "BondCashFlow",
     "BondMetric",
     "BondQuote",
+    "BondQuoteCurrent",
     "BondScore",
     "BondTrade",
     "BrowserNavigationLog",
+    "AIChangeTask",
+    "DataChangeSet",
+    "DataCurrentState",
+    "DataStateVersion",
+    "DocumentVersion",
+    "IngestionJob",
+    "KaseDocument",
+    "KaseNewsItem",
+    "RecalculationTask",
+    "SourceCheckLog",
     "CreditRating",
     "DataSource",
     "FinancialStatement",

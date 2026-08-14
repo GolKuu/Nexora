@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -61,6 +61,8 @@ class Bond(Base, TimestampMixin, SourceMixin):
 
     kase_url: Mapped[str | None] = mapped_column(String(512))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     peer_group_id: Mapped[int | None] = mapped_column(
         ForeignKey("peer_groups.id", ondelete="SET NULL"), index=True
