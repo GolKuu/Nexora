@@ -56,6 +56,11 @@ models/*/awq-*/
 # Smoke runs are disposable pipeline checks, not releasable model records.
 models/*-smoke/
 
+# Temporary complete archives produced before they are split into GitHub-safe
+# multipart artifacts. The numbered parts and manifests live in artifacts/.
+artifacts/multipart/*.archive.zip
+artifacts/multipart/*.restored.zip
+
 # Retrieval vectors: rebuildable from the committed chunks in one command
 # (python -m ai.retrieval.index --version <v>).
 data/ai/index/*/vectors.npy
