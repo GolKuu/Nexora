@@ -16,6 +16,15 @@ def test_health_reports_environment_and_database(api):
     assert body["database"]["bonds"] > 0
 
 
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1"])
+def test_development_cors_accepts_both_loopback_names(client, host):
+    origin = f"http://{host}:3000"
+    response = client.get("/api/v1/health", headers={"Origin": origin})
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+
 def test_health_kase_admits_demo_data(api):
     body = api.get("/health/kase").json()
     assert body["is_mock"] is True

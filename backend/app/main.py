@@ -67,6 +67,14 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    # Developers commonly open the local UI through either loopback name.
+    # Keep this convenience development-only; production remains restricted
+    # to the explicit CORS_ORIGINS allow-list.
+    allow_origin_regex=(
+        r"^https?://(?:localhost|127\.0\.0\.1)(?::\d+)?$"
+        if not settings.is_production
+        else None
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

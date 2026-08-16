@@ -5,7 +5,7 @@ const nextConfig = {
   env: {
     // Resolved at build time; the browser talks to the backend through this.
     NEXT_PUBLIC_API_URL:
-      process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1",
+      process.env.NEXT_PUBLIC_API_URL?.trim() || "/api/v1",
   },
 };
 
