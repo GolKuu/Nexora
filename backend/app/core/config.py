@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
+        # Deployment dashboards often contain optional variables with an
+        # empty value. Treat those as unset so typed defaults remain valid
+        # instead of crashing the serverless function during import.
+        env_ignore_empty=True,
         extra="ignore",
         case_sensitive=False,
     )

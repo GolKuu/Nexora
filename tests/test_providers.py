@@ -109,3 +109,17 @@ def test_config_validation_flags_mock_in_production():
     problems = Settings(APP_ENV="production", KASE_DATA_MODE="mock").validate_runtime()
     assert problems and "mock" in problems[0].lower()
     assert Settings(APP_ENV="development", KASE_DATA_MODE="mock").validate_runtime() == []
+
+
+def test_empty_deployment_variables_fall_back_to_typed_defaults(monkeypatch):
+    monkeypatch.setenv("AI_ENABLED", "")
+    monkeypatch.setenv("AI_TIMEOUT", "")
+    monkeypatch.setenv("SCHEDULE_QUOTES_SECONDS", "")
+    monkeypatch.setenv("KASE_AI_DATA_MODE", "")
+
+    config = Settings(_env_file=None)
+
+    assert config.AI_ENABLED is True
+    assert config.AI_TIMEOUT == 30.0
+    assert config.SCHEDULE_QUOTES_SECONDS == 900
+    assert config.KASE_AI_DATA_MODE == "snapshot"
