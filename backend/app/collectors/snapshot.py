@@ -32,8 +32,16 @@ from app.core.logging import get_logger
 from app.models.bond import Bond, BondCashFlow
 from app.models.financials import FinancialStatement
 from app.models.issuer import Issuer
+from app.models.instrument import Instrument
 from app.models.macro import InflationData, YieldCurve
 from app.models.market import BondQuote
+from app.models.stock import (
+    CorporateAction,
+    Dividend,
+    Stock,
+    StockFinancialPeriod,
+    StockQuote,
+)
 
 logger = get_logger(__name__)
 
@@ -114,6 +122,42 @@ _INFLATION_FIELDS = [
     "fetched_at",
 ]
 
+_INSTRUMENT_FIELDS = [
+    "ticker", "isin", "instrument_type", "security_type", "currency",
+    "market_segment", "listing_status", "kase_url", "is_active", "source",
+    "source_identifier", "source_url", "source_timestamp", "fetched_at",
+]
+_STOCK_FIELDS = [
+    "share_class", "shares_outstanding", "free_float", "market_cap", "sector",
+    "industry", "listing_date", "dividend_frequency", "last_dividend",
+    "last_dividend_date", "next_expected_dividend_date",
+    "next_dividend_is_scenario", "lot_size", "liquidity_class", "source",
+    "source_identifier", "source_url", "source_timestamp", "fetched_at",
+]
+_STOCK_QUOTE_FIELDS = [
+    "timestamp", "bid", "ask", "bid_volume", "ask_volume", "last", "open",
+    "high", "low", "close", "previous_close", "volume", "turnover",
+    "number_of_trades", "data_mode", "content_hash", "source",
+    "source_identifier", "source_url", "source_timestamp", "fetched_at",
+]
+_STOCK_FINANCIAL_FIELDS = [
+    "period_end", "period_type", "currency", "is_audited", "revenue",
+    "ebitda", "operating_profit", "net_income", "total_assets", "total_equity",
+    "total_debt", "cash", "operating_cash_flow", "free_cash_flow", "eps",
+    "book_value", "shares_outstanding", "capital_adequacy", "npl_ratio",
+    "loans", "deposits", "net_interest_margin", "cost_to_income", "provisions",
+    "source", "source_identifier", "source_url", "source_timestamp", "fetched_at",
+]
+_DIVIDEND_FIELDS = [
+    "ex_date", "record_date", "payment_date", "dividend_per_share", "currency",
+    "status", "source", "source_identifier", "source_url", "source_timestamp",
+    "fetched_at",
+]
+_ACTION_FIELDS = [
+    "action_type", "status", "event_date", "title", "details", "source",
+    "source_identifier", "source_url", "source_timestamp", "fetched_at",
+]
+
 
 def export_snapshot(
     session: Session,
@@ -128,6 +172,53 @@ def export_snapshot(
     issuers = list(session.execute(select(Issuer)).scalars())
     bonds = list(session.execute(select(Bond)).scalars())
     issuer_code_by_id = {issuer.id: issuer.code for issuer in issuers}
+    stocks = list(session.execute(select(Stock)).scalars())
+    stock_ticker_by_id = {stock.id: stock.instrument.ticker for stock in stocks}
+
+    stock_payload = [
+        {
+            "issuer_code": issuer_code_by_id.get(stock.instrument.issuer_id),
+            "instrument": _dump(stock.instrument, _INSTRUMENT_FIELDS),
+            "stock": _dump(stock, _STOCK_FIELDS),
+        }
+        for stock in stocks
+    ]
+    stock_quotes: list[dict] = []
+    for stock in stocks:
+        newest = session.execute(
+            select(StockQuote)
+            .where(StockQuote.stock_id == stock.id)
+            .order_by(StockQuote.timestamp.desc(), StockQuote.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if newest is not None:
+            stock_quotes.append({
+                "ticker": stock.instrument.ticker,
+                **_dump(newest, _STOCK_QUOTE_FIELDS),
+            })
+    stock_financials = []
+    stock_actions = []
+    for stock in stocks:
+        for row in session.execute(
+            select(StockFinancialPeriod)
+            .where(StockFinancialPeriod.stock_id == stock.id)
+            .order_by(StockFinancialPeriod.period_end.desc())
+            .limit(8)
+        ).scalars():
+            stock_financials.append({
+                "ticker": stock.instrument.ticker,
+                **_dump(row, _STOCK_FINANCIAL_FIELDS),
+            })
+        for row in session.execute(
+            select(CorporateAction)
+            .where(CorporateAction.stock_id == stock.id)
+            .order_by(CorporateAction.event_date.desc(), CorporateAction.id.desc())
+            .limit(20)
+        ).scalars():
+            stock_actions.append({
+                "ticker": stock.instrument.ticker,
+                **_dump(row, _ACTION_FIELDS),
+            })
 
     # Only the newest quote per bond: a snapshot is a starting point, not an
     # archive of every session ever collected.
@@ -180,12 +271,25 @@ def export_snapshot(
             _dump(row, _INFLATION_FIELDS)
             for row in session.execute(select(InflationData)).scalars()
         ],
+        "stocks": stock_payload,
+        "stock_quotes": stock_quotes,
+        "stock_financials": stock_financials,
+        "dividends": [
+            {
+                "ticker": stock_ticker_by_id.get(row.stock_id),
+                **_dump(row, _DIVIDEND_FIELDS),
+            }
+            for row in session.execute(select(Dividend)).scalars()
+            if stock_ticker_by_id.get(row.stock_id)
+        ],
+        "corporate_actions": stock_actions,
     }
 
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     counts = {key: len(payload[key]) for key in
               ("issuers", "bonds", "quotes", "cashflows", "statements",
-               "yield_curve", "inflation")}
+               "yield_curve", "inflation", "stocks", "stock_quotes",
+               "stock_financials", "dividends", "corporate_actions")}
     logger.info("snapshot written to %s: %s", path, counts)
     return {"path": str(path), "captured_at": payload["captured_at"], **counts}
 
@@ -308,6 +412,60 @@ def import_snapshot(
             session.add(InflationData(**values))
             inflation += 1
 
+    stock_ids: dict[str, int] = {}
+    for row in payload.get("stocks", []):
+        issuer_id = issuer_ids.get(row.get("issuer_code"))
+        if issuer_id is None:
+            continue
+        instrument_values = _load(row.get("instrument") or {})
+        ticker = instrument_values.pop("ticker", None)
+        instrument_type = instrument_values.pop("instrument_type", "stock")
+        if not ticker:
+            continue
+        instrument = session.execute(select(Instrument).where(
+            Instrument.instrument_type == instrument_type,
+            Instrument.ticker == ticker,
+        )).scalar_one_or_none()
+        if instrument is None:
+            instrument = Instrument(
+                ticker=ticker,
+                instrument_type=instrument_type,
+                issuer_id=issuer_id,
+            )
+            session.add(instrument)
+        for key, value in instrument_values.items():
+            setattr(instrument, key, value)
+        instrument.issuer_id = issuer_id
+        session.flush()
+        stock = session.execute(select(Stock).where(
+            Stock.instrument_id == instrument.id
+        )).scalar_one_or_none()
+        if stock is None:
+            stock = Stock(instrument_id=instrument.id)
+            session.add(stock)
+        for key, value in _load(row.get("stock") or {}).items():
+            setattr(stock, key, value)
+        session.flush()
+        stock_ids[ticker] = stock.id
+
+    stock_counts = {
+        "stocks": len(stock_ids), "stock_quotes": 0, "stock_financials": 0,
+        "dividends": 0, "corporate_actions": 0,
+    }
+    for key, model in (
+        ("stock_quotes", StockQuote),
+        ("stock_financials", StockFinancialPeriod),
+        ("dividends", Dividend),
+        ("corporate_actions", CorporateAction),
+    ):
+        for row in payload.get(key, []):
+            values = _load(row)
+            stock_id = stock_ids.get(values.pop("ticker", None))
+            if stock_id is None:
+                continue
+            session.add(model(stock_id=stock_id, **values))
+            stock_counts[key] += 1
+
     session.commit()
 
     derived = {}
@@ -353,6 +511,7 @@ def import_snapshot(
         "statements": statements,
         "yield_curve": curve,
         "inflation": inflation,
+        **stock_counts,
         **derived,
     }
     logger.info("snapshot imported: %s", result)

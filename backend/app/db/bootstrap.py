@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 from sqlalchemy import func, select
 
 import app.models  # noqa: F401 - registers every ORM table
@@ -15,6 +16,10 @@ from app.db.session import SessionLocal, engine
 from app.models.bond import Bond
 
 logger = get_logger(__name__)
+SNAPSHOT_URL = (
+    "https://raw.githubusercontent.com/GolKuu/Nexora/"
+    "main/data/snapshots/kase-latest.json"
+)
 
 
 def _snapshot_candidates() -> list[Path]:
@@ -39,8 +44,17 @@ def bootstrap_serverless_database() -> dict:
             return {"status": "ready", "bonds": count}
         snapshot = next((path for path in _snapshot_candidates() if path.exists()), None)
         if snapshot is None:
-            logger.warning("serverless snapshot was not bundled; equity live refresh remains available")
-            return {"status": "empty", "bonds": 0, "snapshot": None}
+            try:
+                downloaded = Path("/tmp/kase-latest.json")
+                response = httpx.get(
+                    SNAPSHOT_URL, timeout=45.0, follow_redirects=True
+                )
+                response.raise_for_status()
+                downloaded.write_bytes(response.content)
+                snapshot = downloaded
+            except Exception as exc:
+                logger.warning("serverless snapshot download failed: %s", exc)
+                return {"status": "empty", "bonds": 0, "snapshot": None}
         result = import_snapshot(session, snapshot, recompute=True)
         session.commit()
         logger.info("serverless database initialized from %s", snapshot)

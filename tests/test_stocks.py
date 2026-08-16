@@ -36,6 +36,38 @@ def test_stock_catalog_parsing_is_dynamic_and_rejects_delisted():
     assert items[1]["instrument_type"] == "preferred_stock"
 
 
+@pytest.mark.anyio
+async def test_market_snapshot_updates_official_company_name(session):
+    from app.models.issuer import Issuer
+
+    issuer = Issuer(
+        code="TST", name="Old legal name", short_name="Old name",
+        country="KZ", is_active=True,
+    )
+    session.add(issuer)
+    session.commit()
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [catalog_row()]
+
+    class Client:
+        async def get(self, *_args, **_kwargs):
+            return Response()
+
+    result = await KaseStockCatalogCollector(session, client=Client()).collect(
+        deep=False
+    )
+
+    session.refresh(issuer)
+    assert result["depth"] == "market_snapshot"
+    assert issuer.name == "Test Company"
+    assert issuer.short_name == "Test"
+
+
 def _ranking_item(
     ticker: str,
     *,
@@ -197,6 +229,26 @@ def test_top_stock_api_returns_official_ticker_and_live_company_name(session, cl
     assert item["source"] == "kase_public_website"
     assert body["source"] == "KASE"
     assert body["latest_market_timestamp"] is not None
+
+
+def test_offline_snapshot_carries_real_equity_inputs(session, tmp_path):
+    import json
+
+    from app.collectors.snapshot import export_snapshot
+
+    _seed_stock(session, "SNAP")
+    session.commit()
+    path = tmp_path / "market.json"
+
+    result = export_snapshot(session, path, note="equity round-trip fixture")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert result["stocks"] >= 1
+    assert result["stock_quotes"] >= 1
+    assert result["stock_financials"] >= 1
+    assert any(
+        row["instrument"]["ticker"] == "SNAP" for row in payload["stocks"]
+    )
 
 
 def test_stock_peers_and_cross_asset_compare_keep_models_separate(session, client, seeded):

@@ -115,6 +115,17 @@ class KaseStockCatalogCollector:
                 issuer = Issuer(code=item["issuer_code"], name=item["issuer"], short_name=item["company_name"], country="KZ", is_active=True,
                                 source=SOURCE_NAME, source_url=CATALOG_URL, fetched_at=now)
                 self.session.add(issuer); self.session.flush()
+            else:
+                # Names are part of the live ranking too: if KASE changes the
+                # official issuer/short name, the next snapshot must update
+                # what the user sees rather than preserving an old label.
+                issuer.name = item["issuer"]
+                issuer.short_name = item["company_name"]
+                issuer.is_active = True
+                issuer.source = SOURCE_NAME
+                issuer.source_url = CATALOG_URL
+                issuer.source_timestamp = item["source_timestamp"]
+                issuer.fetched_at = now
             instrument = self.session.execute(select(Instrument).where(Instrument.instrument_type == item["instrument_type"], func.upper(Instrument.ticker) == item["ticker"].upper())).scalar_one_or_none()
             created = instrument is None
             kase_url = f"{self.base_url}/en/investors/shares/{item['ticker']}/"

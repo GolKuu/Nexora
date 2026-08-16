@@ -26,9 +26,17 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("; ".join(problems))
     if settings.is_serverless:
         from app.db.bootstrap import bootstrap_serverless_database
+        from app.db.session import SessionLocal
+        from app.services.stock_market import ensure_fresh_stock_market
 
         bootstrap = bootstrap_serverless_database()
         logger.info("serverless database bootstrap: %s", bootstrap)
+        market_session = SessionLocal()
+        try:
+            market = await ensure_fresh_stock_market(market_session)
+            logger.info("serverless KASE equity bootstrap: %s", market)
+        finally:
+            market_session.close()
     logger.info(
         "starting %s env=%s kase_mode=%s",
         settings.APP_NAME,
