@@ -10,6 +10,8 @@ from app.models.stock import Stock
 from app.schemas.stocks import StockCompareRequest, StockInvestmentRequest, StockRecommendRequest, UniversalSearchRequest
 from app.services.stock_service import StockService
 from app.services.stock_analyst import StockAnalystService
+from app.services.stock_market import ensure_fresh_stock_market
+from app.services.stock_ranking import rank_stocks
 
 router = APIRouter()
 
@@ -30,16 +32,12 @@ def interpret_stock_search(payload: UniversalSearchRequest, session: Session = D
 
 
 @router.get("/top")
-def top_stocks(category: str = "best", limit: int = Query(10, ge=1, le=100), session: Session = Depends(get_session)) -> dict:
+async def top_stocks(category: str = "best", limit: int = Query(10, ge=1, le=100), session: Session = Depends(get_session)) -> dict:
+    refresh = await ensure_fresh_stock_market(session)
     payload = StockService(session).list(limit=500)
-    kind = {"best": "investment", "quality": "quality", "undervalued": "valuation", "growth": "growth", "dividends": "dividend", "liquid": "liquidity", "low_risk": "risk", "momentum": "momentum"}.get(category, "investment")
-    reverse = kind != "risk"
-    if reverse:
-        payload["items"].sort(key=lambda row: (row["scores"][kind]["value"] is not None, row["scores"][kind]["value"] or -1), reverse=True)
-    else:
-        payload["items"].sort(key=lambda row: (row["scores"][kind]["value"] is None, row["scores"][kind]["value"] if row["scores"][kind]["value"] is not None else 101))
-    payload.update(items=payload["items"][:limit], limit=limit, category=category)
-    return payload
+    ranking = rank_stocks(payload["items"], category, limit)
+    ranking["market_refresh"] = refresh
+    return ranking
 
 
 @router.post("/recommend")

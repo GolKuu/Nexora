@@ -101,7 +101,7 @@ class KaseStockCatalogCollector:
         response.raise_for_status()
         return self.parse_catalog(response.json())
 
-    async def collect(self) -> dict:
+    async def collect(self, *, deep: bool = True) -> dict:
         rows = await self.fetch()
         if not rows:
             raise RuntimeError("KASE stock catalog is empty or failed validation")
@@ -159,14 +159,26 @@ class KaseStockCatalogCollector:
         for instrument in self.session.execute(select(Instrument).where(Instrument.instrument_type.in_(("stock", "preferred_stock")))).scalars():
             if (instrument.instrument_type, instrument.ticker.upper()) not in seen:
                 instrument.is_active = False
-        financial_stats = await self._collect_financials(stocks_by_issuer, incremental, now)
-        stats.update(financial_stats)
-        if self.client is not None:
-            action_stats = await KaseStockDocumentActionCollector(self.session, self.client).collect(stocks_by_issuer)
-        else:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": "KASE-Bond-AI/stock-actions"}) as client:
-                action_stats = await KaseStockDocumentActionCollector(self.session, client).collect(stocks_by_issuer)
-        stats.update(action_stats)
+        if deep:
+            financial_stats = await self._collect_financials(
+                stocks_by_issuer, incremental, now
+            )
+            stats.update(financial_stats)
+            if self.client is not None:
+                action_stats = await KaseStockDocumentActionCollector(
+                    self.session, self.client
+                ).collect(stocks_by_issuer)
+            else:
+                async with httpx.AsyncClient(
+                    timeout=30.0,
+                    follow_redirects=True,
+                    headers={"User-Agent": "KASE-Bond-AI/stock-actions"},
+                ) as client:
+                    action_stats = await KaseStockDocumentActionCollector(
+                        self.session, client
+                    ).collect(stocks_by_issuer)
+            stats.update(action_stats)
+        stats["depth"] = "full" if deep else "market_snapshot"
         self.session.commit()
         return stats
 

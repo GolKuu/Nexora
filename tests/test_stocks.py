@@ -9,6 +9,7 @@ from app.calculations.stock_math import Commission, calculate_stock_investment, 
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.scoring.stocks import calculate_scores
 from app.services.stock_actions import StockActionIngestionService, parse_public_kase_action
+from app.services.stock_ranking import rank_stocks
 
 
 def catalog_row(**overrides):
@@ -33,6 +34,63 @@ def test_stock_catalog_parsing_is_dynamic_and_rejects_delisted():
     assert [item["ticker"] for item in items] == ["TEST", "TESTp"]
     assert items[0]["shares_outstanding"] == 10_000_000
     assert items[1]["instrument_type"] == "preferred_stock"
+
+
+def _ranking_item(
+    ticker: str,
+    *,
+    score: float,
+    timestamp: datetime,
+    turnover: float = 0,
+    company_name: str | None = None,
+) -> dict:
+    return {
+        "ticker": ticker,
+        "company_name": company_name or f"{ticker} issuer",
+        "price": 100.0,
+        "source": "kase_public_website",
+        "data_timestamp": timestamp.isoformat(),
+        "metrics": {"turnover": turnover},
+        "scores": {
+            "investment": {"value": score, "confidence": 0.8},
+            "liquidity": {"value": score, "confidence": 0.8},
+            "risk": {"value": 100 - score, "confidence": 0.8},
+        },
+    }
+
+
+def test_stock_ranking_excludes_obsolete_quotes_and_moves_real_leader():
+    latest = datetime(2026, 8, 14, tzinfo=timezone.utc)
+    stale = _ranking_item(
+        "OLD", score=99, timestamp=latest - timedelta(days=365),
+    )
+    first = _ranking_item(
+        "KZAP", score=82, timestamp=latest, company_name="Kazatomprom",
+    )
+    second = _ranking_item(
+        "HSBK", score=75, timestamp=latest, company_name="Halyk Bank",
+    )
+
+    initial = rank_stocks([stale, first, second], "best", 10)
+    assert [item["ticker"] for item in initial["items"]] == ["KZAP", "HSBK"]
+    assert initial["items"][0]["company_name"] == "Kazatomprom"
+
+    second["scores"]["investment"]["value"] = 90
+    updated = rank_stocks([stale, first, second], "best", 10)
+    assert [item["ticker"] for item in updated["items"]] == ["HSBK", "KZAP"]
+    assert updated["items"][0]["company_name"] == "Halyk Bank"
+
+
+def test_liquidity_ranking_breaks_equal_scores_by_real_turnover():
+    latest = datetime(2026, 8, 14, tzinfo=timezone.utc)
+    quiet = _ranking_item("QUIET", score=70, timestamp=latest, turnover=10_000)
+    active = _ranking_item("ACTIVE", score=70, timestamp=latest, turnover=5_000_000)
+
+    result = rank_stocks([quiet, active], "liquid", 10)
+
+    assert [item["ticker"] for item in result["items"]] == ["ACTIVE", "QUIET"]
+    assert result["source"] == "KASE"
+    assert result["data_mode"] == "end_of_day"
 
 
 @pytest.mark.parametrize("func,args,expected", [
@@ -124,6 +182,21 @@ def test_stock_detail_calculator_recommend_and_compare_api(session, client):
     analysis = client.get("/api/v1/stocks/TSTX/analysis", params={"question": "Эта акция точно вырастет?"})
     assert analysis.status_code == 200
     assert analysis.json()["answer"] == "Точную будущую цену определить невозможно. Я могу показать текущую оценку компании и сценарии изменения цены."
+
+
+def test_top_stock_api_returns_official_ticker_and_live_company_name(session, client):
+    _seed_stock(session, "LIVE")
+    session.commit()
+
+    response = client.get("/api/v1/stocks/top?category=best&limit=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    item = next(row for row in body["items"] if row["ticker"] == "LIVE")
+    assert item["company_name"] == "Test"
+    assert item["source"] == "kase_public_website"
+    assert body["source"] == "KASE"
+    assert body["latest_market_timestamp"] is not None
 
 
 def test_stock_peers_and_cross_asset_compare_keep_models_separate(session, client, seeded):

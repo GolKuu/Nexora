@@ -7,6 +7,7 @@ mock market data is served may be hardcoded anywhere else in the codebase.
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -30,6 +31,10 @@ KaseDataMode = Literal[
 ]
 
 
+def _on_vercel() -> bool:
+    return os.getenv("VERCEL", "").strip() == "1"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
@@ -43,21 +48,37 @@ class Settings(BaseSettings):
     )
 
     # --- application -----------------------------------------------------
-    APP_ENV: AppEnv = "development"
+    APP_ENV: AppEnv = Field(
+        default_factory=lambda: "production" if _on_vercel() else "development"
+    )
     APP_NAME: str = "KASE Bond AI"
     API_PREFIX: str = "/api/v1"
     LOG_LEVEL: str = "INFO"
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = Field(
+        default_factory=lambda: (
+            "https://nexora-green-xi.vercel.app"
+            if _on_vercel()
+            else "http://localhost:3000"
+        )
+    )
 
     # --- database --------------------------------------------------------
-    DATABASE_URL: str = "postgresql+psycopg://kase:kase@localhost:5432/kase_bond_ai"
+    DATABASE_URL: str = Field(
+        default_factory=lambda: (
+            "sqlite:////tmp/nexora.db"
+            if _on_vercel()
+            else "postgresql+psycopg://kase:kase@localhost:5432/kase_bond_ai"
+        )
+    )
 
     # --- optional cache --------------------------------------------------
     # Redis is optional by design: the app degrades to an in-process TTL cache.
     REDIS_URL: str | None = None
 
     # --- KASE data -------------------------------------------------------
-    KASE_DATA_MODE: KaseDataMode = "mock"
+    KASE_DATA_MODE: KaseDataMode = Field(
+        default_factory=lambda: "public_api" if _on_vercel() else "mock"
+    )
     KASE_API_KEY: str | None = None
     KASE_API_URL: str = "https://api.kase.kz"
     KASE_WEBSITE_URL: str = "https://kase.kz"
@@ -66,11 +87,12 @@ class Settings(BaseSettings):
     #: with the site's own language control when the page renders another one.
     KASE_LANGUAGE: str = "ru"
     RUN_LIVE_KASE_TESTS: bool = False
+    STOCK_MARKET_REFRESH_SECONDS: int = 300
 
     # --- browser agent ---------------------------------------------------
     # The browser agent reads the *public* site as an ordinary visitor. It
     # never needs KASE_API_KEY and never works around a login or a CAPTCHA.
-    BROWSER_ENABLED: bool = True
+    BROWSER_ENABLED: bool = Field(default_factory=lambda: not _on_vercel())
     BROWSER_ENGINE: Literal["chromium", "firefox", "webkit"] = "chromium"
     BROWSER_HEADLESS: bool = True
     BROWSER_USER_AGENT: str = (
@@ -113,7 +135,7 @@ class Settings(BaseSettings):
     RUN_LIVE_BROWSER_TESTS: bool = False
 
     # --- incremental ingestion ------------------------------------------
-    INCREMENTAL_ENABLED: bool = True
+    INCREMENTAL_ENABLED: bool = Field(default_factory=lambda: not _on_vercel())
     INCREMENTAL_PARSER_VERSION: str = "2.0.0"
     INCREMENTAL_FAST_CHECK_TIMEOUT: float = 12.0
     INCREMENTAL_FORCE_FULL_AFTER_HOURS: float = 168.0
@@ -144,7 +166,7 @@ class Settings(BaseSettings):
     #   off       - no model at all; every AI surface serves its deterministic
     #               explanation instead.
     AI_PROVIDER: str = "local"
-    AI_ENABLED: bool = True
+    AI_ENABLED: bool = Field(default_factory=lambda: not _on_vercel())
     AI_TIMEOUT: float = 30.0
     AI_MAX_TOKENS: int = 900
 
@@ -179,6 +201,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.APP_ENV == "production"
+
+    @property
+    def is_serverless(self) -> bool:
+        return _on_vercel()
 
     @property
     def mock_allowed(self) -> bool:

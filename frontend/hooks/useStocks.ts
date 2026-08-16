@@ -6,7 +6,15 @@ import { stocksService } from "@/services/stocks";
 import type { InstrumentSearchResponse, StockCard, StockListResponse } from "@/types/api";
 
 export function useTopStocks(category = "best", limit = 12) {
-  return useSWR<StockListResponse>(["stock-top", category, limit], () => stocksService.top(category, limit), { revalidateOnFocus: false });
+  return useSWR<StockListResponse>(
+    ["stock-top", category, limit],
+    () => stocksService.top(category, limit),
+    {
+      revalidateOnFocus: true,
+      refreshInterval: 60_000,
+      dedupingInterval: 15_000,
+    },
+  );
 }
 export function useStockCard(identifier: string) {
   return useSWR<StockCard>(["stock", identifier], () => stocksService.card(identifier), { revalidateOnFocus: false });

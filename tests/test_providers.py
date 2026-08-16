@@ -123,3 +123,23 @@ def test_empty_deployment_variables_fall_back_to_typed_defaults(monkeypatch):
     assert config.AI_TIMEOUT == 30.0
     assert config.SCHEDULE_QUOTES_SECONDS == 900
     assert config.KASE_AI_DATA_MODE == "snapshot"
+
+
+def test_vercel_defaults_are_real_serverless_and_need_no_paid_database(monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    for name in (
+        "APP_ENV", "DATABASE_URL", "KASE_DATA_MODE", "BROWSER_ENABLED",
+        "INCREMENTAL_ENABLED", "AI_ENABLED",
+    ):
+        monkeypatch.setenv(name, "")
+
+    config = Settings(_env_file=None)
+
+    assert config.APP_ENV == "production"
+    assert config.KASE_DATA_MODE == "public_api"
+    assert config.DATABASE_URL == "sqlite:////tmp/nexora.db"
+    assert config.BROWSER_ENABLED is False
+    assert config.INCREMENTAL_ENABLED is False
+    assert config.AI_ENABLED is False
+    assert config.is_serverless is True
+    assert config.validate_runtime() == []

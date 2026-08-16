@@ -24,6 +24,11 @@ async def lifespan(app: FastAPI):
         for problem in problems:
             logger.error("configuration error: %s", problem)
         raise RuntimeError("; ".join(problems))
+    if settings.is_serverless:
+        from app.db.bootstrap import bootstrap_serverless_database
+
+        bootstrap = bootstrap_serverless_database()
+        logger.info("serverless database bootstrap: %s", bootstrap)
     logger.info(
         "starting %s env=%s kase_mode=%s",
         settings.APP_NAME,
@@ -36,7 +41,7 @@ async def lifespan(app: FastAPI):
             "is synthetic."
         )
     periodic = None
-    if settings.INCREMENTAL_ENABLED and settings.APP_ENV != "test" and settings.KASE_DATA_MODE != "mock":
+    if settings.INCREMENTAL_ENABLED and not settings.is_serverless and settings.APP_ENV != "test" and settings.KASE_DATA_MODE != "mock":
         from app.jobs.scheduler import PeriodicRefresh
 
         periodic = PeriodicRefresh()

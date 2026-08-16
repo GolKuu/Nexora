@@ -377,7 +377,12 @@ export interface StockListItem {
   scores: Record<string, StockScoreValue>; data_timestamp: string | null;
   data_mode: DataMode | null; source: string | null; kase_url: string | null;
 }
-export interface StockListResponse { items: StockListItem[]; total: number; limit: number; offset: number; category?: string }
+export interface StockListResponse {
+  items: StockListItem[]; total: number; limit: number; offset?: number;
+  category?: string; ranking_score?: string; source?: string;
+  data_mode?: DataMode; latest_market_timestamp?: string | null;
+  generated_at?: string;
+}
 export interface StockCard extends StockListItem {
   simple: { price: number | null; company_earning_trend: string; valuation: string; dividends: number | null; risk: StockScoreValue; liquidity: StockScoreValue; important: string };
   pro: Record<string, number | null>; score_explanation: Array<{kind: string} & StockScoreValue>;
