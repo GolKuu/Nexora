@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_session
-from app.services.health_service import app_health, kase_health
+from app.services.health_service import app_health, kase_browser_health, kase_health
 
 router = APIRouter()
 
@@ -25,3 +25,11 @@ def health(session: Session = Depends(get_session)) -> dict:
 )
 async def health_kase() -> dict:
     return await kase_health()
+
+
+@router.get(
+    "/health/kase-browser",
+    summary="Реальная проверка публичной страницы KASE через браузер",
+)
+async def health_kase_browser() -> dict:
+    return await kase_browser_health()

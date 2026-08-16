@@ -104,6 +104,12 @@ class DocumentIngestionService:
             )
             self.session.add(version)
             self.session.flush()
+            from app.services.document_analyzer import KaseDocumentAnalyzer
+
+            analysis, _sidecar = KaseDocumentAnalyzer().analyze_to_sidecar(
+                path, doc.document_type
+            )
+            version.analysis_status = analysis.status
             doc.current_version_id = version.id
             doc.last_changed_at = now
             outcome = self.states.process(

@@ -215,3 +215,21 @@ async def extract_dynamic_table(
         truncated=truncated,
         source=snapshot_ref,
     )
+
+
+class KaseTableExtractor:
+    """Bound table extractor used by the page and tab pipelines."""
+
+    def __init__(self, session: BrowserSession) -> None:
+        self.session = session
+
+    async def extract(
+        self, *, section: str | None = None, max_rows: int | None = None,
+        min_rows: int = 1,
+    ) -> list[TableData]:
+        return await extract_tables(
+            self.session, section=section, max_rows=max_rows, min_rows=min_rows
+        )
+
+    async def extract_dynamic(self, **kwargs) -> TableData:
+        return await extract_dynamic_table(self.session, **kwargs)

@@ -267,6 +267,7 @@ class BrowserSession:
                         "url": response.url,
                         "status": response.status,
                         "resource_type": response.request.resource_type,
+                        "content_type": response.headers.get("content-type"),
                     }
                 )
         except Exception:
@@ -792,11 +793,9 @@ class BrowserSession:
 
     def observed_endpoints(self) -> list[dict]:
         """Public endpoints the site itself called (§19), for documentation."""
-        seen: dict[str, dict] = {}
-        for entry in self.network_log:
-            if entry["resource_type"] in {"document", "xhr", "fetch"}:
-                seen.setdefault(entry["url"], entry)
-        return list(seen.values())
+        from app.browser.network import KaseNetworkObserver
+
+        return KaseNetworkObserver(self).observed_endpoints()
 
 
 def _prune_screenshots(directory: Path) -> None:

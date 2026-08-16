@@ -17,7 +17,9 @@ from app.models.incremental import (
 )
 from app.models.issuer import Issuer
 from app.models.bond import Bond
+from app.models.instrument import Instrument
 from app.models.market import BondTrade
+from app.models.stock import Stock
 from app.repositories.market import TradeRepository
 from app.services.incremental import IncrementalStateService, JobTracker, RecalculationPlanner, content_hash
 from app.services.incremental_documents import DocumentIngestionService, NewsIngestionService
@@ -27,6 +29,23 @@ from app.ai.base import LLMResponse
 
 def _count(session, model) -> int:
     return session.scalar(select(func.count()).select_from(model))
+
+
+def _make_stock(session, ticker: str) -> Stock:
+    issuer = Issuer(code=f"{ticker}-ISS", name=f"{ticker} issuer")
+    session.add(issuer)
+    session.flush()
+    instrument = Instrument(
+        ticker=ticker, isin=f"KZ1C{ticker[:4].upper()}0001", issuer_id=issuer.id,
+        instrument_type="stock", currency="KZT", is_active=True,
+        source="test", source_url="https://kase.kz/test",
+    )
+    session.add(instrument)
+    session.flush()
+    stock = Stock(instrument_id=instrument.id, share_class="ordinary", lot_size=1)
+    session.add(stock)
+    session.commit()
+    return stock
 
 
 def test_unchanged_section_skips_history_recalc_and_ai(session):
@@ -162,7 +181,128 @@ def test_bond_change_feed_summary_and_freshness_api(api):
     assert detail.status_code == 200
     assert {"last_checked_at", "last_changed_at", "source_timestamp", "data_mode"} <= detail.json()["freshness"].keys()
     assert monitoring.status_code == 200
-    assert {"pages_checked", "pages_changed", "AI_calls_saved", "average_check_latency_ms"} <= monitoring.json().keys()
+    assert {
+        "pages_checked", "pages_changed", "pages_unchanged",
+        "deep_extractions", "tabs_opened", "documents_discovered",
+        "documents_changed", "new_trades", "AI_calls_triggered",
+        "AI_calls_saved", "parser_errors", "captcha_blocks", "anomalies",
+        "average_check_latency_ms",
+    } <= monitoring.json().keys()
+    assert monitoring.json()["AI_calls_saved"] >= monitoring.json()["pages_unchanged"]
+
+
+def test_change_queries_are_isolated_by_instrument_type(session):
+    service = IncrementalStateService(session)
+    for entity_type, ask in (("bond", 100.0), ("stock", 200.0)):
+        service.process(
+            entity_type=entity_type, entity_id="shared-id", section="quote",
+            payload={"ask": ask}, source_url="https://kase.kz/test",
+        )
+        service.process(
+            entity_type=entity_type, entity_id="shared-id", section="quote",
+            payload={"ask": ask + 1}, source_url="https://kase.kz/test",
+        )
+
+    from app.services.change_service import ChangeService
+
+    changes = ChangeService(session)
+    bond_rows = changes.for_entity("shared-id", entity_type="bond")
+    stock_rows = changes.for_entity("shared-id", entity_type="stock")
+    assert {row.entity_type for row in bond_rows} == {"bond"}
+    assert {row.entity_type for row in stock_rows} == {"stock"}
+    assert bond_rows[0].old_value == 100.0
+    assert stock_rows[0].old_value == 200.0
+
+
+def test_universal_change_api_supports_bonds_and_stocks(api, session):
+    bond = api.get("/bonds?limit=1").json()["items"][0]
+    stock_row = _make_stock(session, "UNIV")
+    stock = {"ticker": stock_row.instrument.ticker}
+
+    for item, instrument_type in ((bond, "bond"), (stock, "stock")):
+        changes = api.get(f"/instruments/{item['ticker']}/changes")
+        summary = api.get(f"/instruments/{item['ticker']}/change-summary")
+        assert changes.status_code == 200
+        assert summary.status_code == 200
+        assert summary.json()["instrument_type"] == instrument_type
+        assert summary.json()["ticker"] == item["ticker"]
+        assert set(summary.json()["freshness"]) == {
+            "last_checked_at", "last_changed_at", "source_timestamp",
+        }
+
+
+def test_universal_bond_refresh_dispatches_force(api, monkeypatch):
+    import app.api.routes.instruments as routes
+
+    async def verify(_self, identifier, *, force=False):
+        return {"ticker": identifier, "status": "ok", "force_seen": force}
+
+    monkeypatch.setattr(routes, "require_browser", lambda: None)
+    monkeypatch.setattr(routes.BrowserAgentService, "verify_bond", verify)
+    response = api.post("/instruments/DBNKb1/refresh?force=true")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "instrument_type": "bond",
+        "ticker": "DBNKb1",
+        "status": "ok",
+        "force_seen": True,
+    }
+
+
+def test_universal_stock_refresh_uses_public_catalog(api, session, monkeypatch):
+    import app.api.routes.instruments as routes
+
+    stock_row = _make_stock(session, "REFR")
+    ticker = stock_row.instrument.ticker
+
+    async def collect(_self):
+        return {"discovered": 1, "updated": 1}
+
+    monkeypatch.setattr(routes.KaseStockCatalogCollector, "collect", collect)
+    response = api.post(f"/instruments/{ticker}/refresh")
+
+    assert response.status_code == 200
+    assert response.json()["instrument_type"] == "stock"
+    assert response.json()["ticker"] == ticker
+    assert response.json()["source"] == "kase_public_website"
+
+
+def test_universal_refresh_discovers_unknown_bond_via_kase_search(api, monkeypatch):
+    import app.api.routes.instruments as routes
+
+    calls = []
+
+    async def collect(_self):
+        calls.append("stock_catalog")
+        return {"discovered": 0, "updated": 0}
+
+    async def verify(_self, identifier, *, force=False):
+        return {
+            "ticker": identifier,
+            "source_url": "https://kase.kz/ru/bonds/NEWb1",
+            "identity_confirmed": True,
+            "status": "ok",
+            "force_seen": force,
+        }
+
+    monkeypatch.setattr(routes.KaseStockCatalogCollector, "collect", collect)
+    monkeypatch.setattr(routes, "require_browser", lambda: None)
+    monkeypatch.setattr(routes.BrowserAgentService, "verify_bond", verify)
+
+    response = api.post("/instruments/NEWb1/refresh?force=true")
+
+    assert response.status_code == 200
+    assert calls == ["stock_catalog"]
+    assert response.json() == {
+        "instrument_type": "bond",
+        "discovered": True,
+        "ticker": "NEWb1",
+        "source_url": "https://kase.kz/ru/bonds/NEWb1",
+        "identity_confirmed": True,
+        "status": "ok",
+        "force_seen": True,
+    }
 
 
 @pytest.mark.anyio

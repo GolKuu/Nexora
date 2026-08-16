@@ -374,6 +374,56 @@ async def test_document_links_are_captured_with_their_source_page(local_session)
     assert document.as_dict()["document_url"].endswith("prospectus_2024.pdf")
 
 
+async def test_named_extractors_are_the_active_page_pipeline(local_session):
+    from app.browser.extractors.documents import KaseDocumentCollector
+    from app.browser.extractors.page import KaseDomExtractor, PageExtractor
+    from app.browser.extractors.tables import KaseTableExtractor
+
+    await local_session.page.set_content(LOCAL_PAGE)
+    extractor = PageExtractor(local_session)
+    assert isinstance(extractor, KaseDomExtractor)
+    assert isinstance(extractor.table_extractor, KaseTableExtractor)
+    assert isinstance(extractor.document_collector, KaseDocumentCollector)
+    content = await extractor.extract(section="test")
+    assert content.tables and content.documents and content.label_values
+
+
+async def test_network_observer_keeps_only_safe_official_metadata(local_session):
+    from app.browser.network import KaseNetworkObserver
+
+    local_session.network_log = [
+        {
+            "method": "GET",
+            "url": "https://kase.kz/api/public/?token=must-not-be-recorded",
+            "status": 200, "resource_type": "xhr",
+            "content_type": "application/json",
+        },
+        {
+            "method": "GET", "url": "https://example.com/track",
+            "status": 200, "resource_type": "fetch",
+            "content_type": "text/plain",
+        },
+    ]
+    observed = KaseNetworkObserver(local_session).observed_endpoints()
+    assert observed == [{
+        "method": "GET", "url": "https://kase.kz/api/public/",
+        "status": 200, "content_type": "application/json",
+        "resource_type": "xhr", "auth_required": None,
+        "license_uncertainty": True,
+    }]
+
+
+def test_document_analyzer_parses_text_and_writes_a_sidecar(tmp_path):
+    from app.services.document_analyzer import KaseDocumentAnalyzer
+
+    source = tmp_path / "report.csv"
+    source.write_text("metric,value\nrevenue,125\n", encoding="utf-8")
+    result, sidecar = KaseDocumentAnalyzer().analyze_to_sidecar(source, "csv")
+    assert result.status == "completed"
+    assert result.tables == [[['metric', 'value'], ['revenue', '125']]]
+    assert sidecar.exists()
+
+
 async def test_a_captcha_is_reported_and_never_solved(local_session):
     """§21: the agent stops at the wall and says so."""
     await local_session.page.set_content(

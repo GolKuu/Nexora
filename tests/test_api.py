@@ -33,6 +33,69 @@ def test_health_kase_admits_demo_data(api):
     assert "демонстрационные" in body["warning"].lower()
 
 
+def test_browser_health_endpoint_exposes_real_probe_contract(client, monkeypatch):
+    import app.api.routes.health as health_routes
+
+    async def probe():
+        return {
+            "connected": True,
+            "last_attempt": "2026-08-16T12:00:00+00:00",
+            "last_success": "2026-08-16T12:00:00+00:00",
+            "latency_ms": 42.0,
+            "browser_status": "ok",
+            "last_error": None,
+        }
+
+    monkeypatch.setattr(health_routes, "kase_browser_health", probe)
+    response = client.get("/api/v1/health/kase-browser")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "connected": True,
+        "last_attempt": "2026-08-16T12:00:00+00:00",
+        "last_success": "2026-08-16T12:00:00+00:00",
+        "latency_ms": 42.0,
+        "browser_status": "ok",
+        "last_error": None,
+    }
+
+
+@pytest.mark.anyio
+async def test_browser_health_connects_only_after_confirmed_kase_navigation(monkeypatch):
+    import app.services.health_service as health
+
+    async def rejected_domain():
+        return {
+            "ok": True,
+            "status": "ok",
+            "url": "https://example.com/",
+            "domain_confirmed": False,
+        }
+
+    monkeypatch.setattr(health.settings, "BROWSER_ENABLED", True)
+    monkeypatch.setattr(health, "_probe_kase_browser", rejected_domain)
+    health._browser_probe_state.update(
+        last_attempt=None, last_success=None, latency_ms=None, last_error=None
+    )
+    rejected = await health.kase_browser_health()
+    assert rejected["connected"] is False
+    assert rejected["last_success"] is None
+
+    async def confirmed_domain():
+        return {
+            "ok": True,
+            "status": "ok",
+            "url": "https://kase.kz/",
+            "domain_confirmed": True,
+        }
+
+    monkeypatch.setattr(health, "_probe_kase_browser", confirmed_domain)
+    confirmed = await health.kase_browser_health()
+    assert confirmed["connected"] is True
+    assert confirmed["last_success"] is not None
+    assert confirmed["last_error"] is None
+
+
 def test_list_bonds_is_public_and_flags_mock_data(api):
     body = api.get("/bonds?limit=5").json()
     assert body["total"] > 0

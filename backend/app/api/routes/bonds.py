@@ -45,7 +45,8 @@ def bond_changes(
 ) -> list[dict]:
     bond = BondService(session).require(identifier)
     return [serialize_change(row) for row in ChangeService(session).for_entity(
-        str(bond.id), since=since, section=section, importance=importance, limit=limit
+        str(bond.id), entity_type="bond", since=since, section=section,
+        importance=importance, limit=limit
     )]
 
 
@@ -56,7 +57,9 @@ def bond_change_summary(
     session: Session = Depends(get_session),
 ) -> dict:
     bond = BondService(session).require(identifier)
-    return ChangeService(session).summary(str(bond.id), since=since)
+    return ChangeService(session).summary(
+        str(bond.id), entity_type="bond", since=since
+    )
 
 MOCK_WARNING = (
     "Показаны демонстрационные данные. KASE не подключен, цифры синтетические."

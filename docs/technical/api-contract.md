@@ -59,6 +59,36 @@
 
 ---
 
+## Browser collection control
+
+### `GET /health/kase-browser`
+
+Performs a real anonymous Chromium navigation to the configured public KASE
+home page. `connected=true` requires both successful navigation and a confirmed
+official KASE hostname. CAPTCHA, authentication and access blocks are reported
+as statuses and are never bypassed.
+
+### `POST /instruments/{identifier}/refresh?force=false`
+
+Resolves ticker/ISIN from the local database first. Bonds are verified through
+their confirmed KASE page; shares use the validated public structured catalogue.
+An unknown share triggers one catalogue discovery pass. `force=true` bypasses
+the bond fast-check and performs a deep browser extraction.
+
+### `GET /instruments/{identifier}/changes`
+
+Returns field-level changes for either a bond or a share. Supported filters:
+`since`, `section`, `importance`, and `limit`. Entity type is part of the query,
+so equal numeric IDs in the two asset tables can never leak changes across
+asset classes.
+
+### `GET /instruments/{identifier}/change-summary`
+
+Returns material change counts, affected sections, and `freshness` containing
+`last_checked_at`, `last_changed_at`, and `source_timestamp`.
+
+---
+
 ## `POST /bonds/{identifier}/investment-calculation`
 
 Главный расчет продукта. `identifier` — тикер или ISIN.

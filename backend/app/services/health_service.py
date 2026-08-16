@@ -8,6 +8,7 @@ served is real or demo.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import time
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -143,6 +144,76 @@ def _browser_health() -> dict:
         return browser_status()
     except Exception as exc:  # a missing engine is a status, not a 500
         return {"enabled": settings.BROWSER_ENABLED, "running": False, "error": str(exc)}
+
+
+_browser_probe_state: dict[str, object | None] = {
+    "last_attempt": None,
+    "last_success": None,
+    "latency_ms": None,
+    "last_error": None,
+}
+
+
+async def _probe_kase_browser() -> dict:
+    """Open the public KASE home page in Chromium and report what happened."""
+    from app.browser.agent import KaseBrowsingContext
+
+    async with KaseBrowsingContext(label="health:kase-browser") as agent:
+        navigation = await agent._goto(agent.url_for("home"), min_chars=200)
+        current_url = await agent.session.get_current_url()
+        return {
+            **navigation,
+            "url": current_url,
+            "domain_confirmed": agent.confirms_domain(current_url),
+        }
+
+
+async def kase_browser_health() -> dict:
+    """Health is green only after a real anonymous browser navigation."""
+    attempted_at = datetime.now(timezone.utc)
+    _browser_probe_state["last_attempt"] = attempted_at.isoformat()
+    started = time.perf_counter()
+
+    if not settings.BROWSER_ENABLED:
+        _browser_probe_state["last_error"] = "BROWSER_ENABLED=false"
+        return {
+            "connected": False,
+            **_browser_probe_state,
+            "browser_status": "disabled",
+        }
+
+    try:
+        result = await _probe_kase_browser()
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        connected = bool(result.get("ok") and result.get("domain_confirmed"))
+        status = str(result.get("status") or ("ok" if connected else "error"))
+        error = None if connected else str(result.get("error") or status)
+        _browser_probe_state["latency_ms"] = latency_ms
+        _browser_probe_state["last_error"] = error
+        if connected:
+            _browser_probe_state["last_success"] = attempted_at.isoformat()
+        return {
+            "connected": connected,
+            **_browser_probe_state,
+            "browser_status": status,
+            "last_error": error,
+            "url": result.get("url"),
+            "browser_blocked_by_captcha": bool(
+                result.get("browser_blocked_by_captcha")
+            ),
+            "requires_authentication": bool(result.get("requires_authentication")),
+        }
+    except Exception as exc:
+        _browser_probe_state["latency_ms"] = round(
+            (time.perf_counter() - started) * 1000, 1
+        )
+        _browser_probe_state["last_error"] = str(exc)
+        return {
+            "connected": False,
+            **_browser_probe_state,
+            "browser_status": "error",
+            "last_error": str(exc),
+        }
 
 
 def app_health(session: Session) -> dict:

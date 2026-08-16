@@ -91,3 +91,13 @@ async def extract_documents(
             )
         )
     return documents
+
+
+class KaseDocumentCollector:
+    """Find public document links; downloading/parsing remains a later stage."""
+
+    def __init__(self, session: BrowserSession) -> None:
+        self.session = session
+
+    async def collect(self, *, section: str | None = None) -> list[DocumentLink]:
+        return await extract_documents(self.session, section=section)

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.browser.extractors.documents import extract_documents
-from app.browser.extractors.tables import extract_tables
+from app.browser.extractors.documents import KaseDocumentCollector
+from app.browser.extractors.tables import KaseTableExtractor
 from app.browser.extractors.text import KaseTextExtractor, label_value_pairs
 from app.browser.session import BrowserSession
 from app.browser.types import DocumentLink, PageSnapshot, TableData
@@ -42,12 +42,16 @@ class PageContent:
         return payload
 
 
-class PageExtractor:
+class KaseDomExtractor:
+    """Read rendered DOM text, labels, links, tables and document references."""
+
     version = "1.0.0"
 
     def __init__(self, session: BrowserSession) -> None:
         self.session = session
         self.text_extractor = KaseTextExtractor()
+        self.table_extractor = KaseTableExtractor(session)
+        self.document_collector = KaseDocumentCollector(session)
 
     async def extract(
         self,
@@ -59,9 +63,13 @@ class PageExtractor:
     ) -> PageContent:
         snapshot = await self.session.snapshot(section=section, keep_html=keep_html)
         text = self.text_extractor.extract_object(snapshot.visible_text)
-        tables = await extract_tables(self.session, section=section) if with_tables else []
+        tables = (
+            await self.table_extractor.extract(section=section)
+            if with_tables else []
+        )
         documents = (
-            await extract_documents(self.session, section=section) if with_documents else []
+            await self.document_collector.collect(section=section)
+            if with_documents else []
         )
         links = await self.session.get_links()
 
@@ -88,3 +96,7 @@ class PageExtractor:
                 "removed": text.removed_reasons,
             },
         )
+
+
+# Historical public name retained for existing imports.
+PageExtractor = KaseDomExtractor

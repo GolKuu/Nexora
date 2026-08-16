@@ -2,7 +2,7 @@
 
 Run explicitly, never by accident:
 
-    RUN_LIVE_BROWSER_TESTS=true pytest -m live_browser -s
+    RUN_LIVE_KASE_BROWSER_TESTS=true pytest -m live_browser -s
 
 The scenario is one continuous session, in order:
 
@@ -28,8 +28,14 @@ pytestmark = [
     pytest.mark.live_browser,
     pytest.mark.anyio,
     pytest.mark.skipif(
-        os.getenv("RUN_LIVE_BROWSER_TESTS", "false").lower() != "true",
-        reason="RUN_LIVE_BROWSER_TESTS is not enabled",
+        not any(
+            os.getenv(name, "false").lower() == "true"
+            for name in (
+                "RUN_LIVE_KASE_BROWSER_TESTS",
+                "RUN_LIVE_BROWSER_TESTS",
+            )
+        ),
+        reason="RUN_LIVE_KASE_BROWSER_TESTS is not enabled",
     ),
 ]
 
@@ -134,6 +140,12 @@ async def test_full_public_browser_flow_on_kase(agent):
 
     # documents, when the instrument has any
     report["documents"] = [d.as_dict() for d in result.documents][:5]
+
+    # Safe network metadata: official KASE requests only, without request
+    # headers, cookies, tokens or response bodies.
+    structured_requests = agent.session.observed_endpoints()
+    assert all(agent.confirms_domain(item["url"]) for item in structured_requests)
+    report["structured_requests"] = structured_requests[:20]
 
     # 12. every value is stamped with the official page it came from.
     for value in accepted.values():

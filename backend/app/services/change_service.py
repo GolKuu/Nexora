@@ -16,10 +16,13 @@ class ChangeService:
         self.session = session
 
     def for_entity(
-        self, entity_id: str, *, since: datetime | None = None,
+        self, entity_id: str, *, entity_type: str | None = None,
+        since: datetime | None = None,
         section: str | None = None, importance: int | None = None, limit: int = 100,
     ) -> list[DataChangeSet]:
         query = select(DataChangeSet).where(DataChangeSet.entity_id == entity_id)
+        if entity_type:
+            query = query.where(DataChangeSet.entity_type == entity_type)
         if since:
             query = query.where(DataChangeSet.detected_at >= since)
         if section:
@@ -30,8 +33,13 @@ class ChangeService:
             query.order_by(DataChangeSet.detected_at.desc()).limit(limit)
         ).scalars())
 
-    def summary(self, entity_id: str, *, since: datetime | None = None) -> dict:
-        changes = self.for_entity(entity_id, since=since, limit=5000)
+    def summary(
+        self, entity_id: str, *, entity_type: str | None = None,
+        since: datetime | None = None,
+    ) -> dict:
+        changes = self.for_entity(
+            entity_id, entity_type=entity_type, since=since, limit=5000
+        )
         sections = {row.section for row in changes}
         fields = {row.field.rsplit(".", 1)[-1] for row in changes}
         return {
@@ -63,10 +71,11 @@ class ChangeService:
             query = query.where(DataChangeSet.detected_at >= since)
         return list(self.session.execute(query.order_by(DataChangeSet.detected_at.desc()).limit(limit)).scalars())
 
-    def freshness(self, entity_id: str) -> dict:
-        states = list(self.session.execute(select(DataCurrentState).where(
-            DataCurrentState.entity_id == entity_id
-        )).scalars())
+    def freshness(self, entity_id: str, *, entity_type: str | None = None) -> dict:
+        query = select(DataCurrentState).where(DataCurrentState.entity_id == entity_id)
+        if entity_type:
+            query = query.where(DataCurrentState.entity_type == entity_type)
+        states = list(self.session.execute(query).scalars())
         return {
             "last_checked_at": max((row.last_checked_at for row in states), default=None),
             "last_changed_at": max((row.last_changed_at for row in states), default=None),

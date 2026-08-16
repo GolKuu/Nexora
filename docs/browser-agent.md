@@ -158,6 +158,10 @@ Everything else has a working default; see `.env.example` for the full list.
 | `POST` | `/api/v1/browser/catalog-refresh` | Sweep the public catalogue into the database |
 | `POST` | `/api/v1/browser/inspect` | Read an arbitrary public kase.kz page |
 | `GET` | `/api/v1/browser/status` | Engine, cache and limit diagnostics |
+| `GET` | `/api/v1/health/kase-browser` | Real Chromium probe; `connected=true` only after a successful KASE navigation |
+| `POST` | `/api/v1/instruments/{id}/refresh?force=false` | Refresh a bond or share without guessing its official URL |
+| `GET` | `/api/v1/instruments/{id}/changes` | Field-level change feed for either asset class |
+| `GET` | `/api/v1/instruments/{id}/change-summary` | Change summary and source freshness |
 
 Concurrent calls for the same instrument are joined into one browser visit, so
 an impatient user clicking ten times causes one page load.
@@ -212,7 +216,7 @@ Two tables:
 
 ```bash
 pytest tests/test_browser_offline.py          # no network; skips if no engine
-RUN_LIVE_BROWSER_TESTS=true pytest -m live_browser -s
+RUN_LIVE_KASE_BROWSER_TESTS=true pytest -m live_browser -s
 ```
 
 The live test performs the full §55 scenario against kase.kz and prints what it

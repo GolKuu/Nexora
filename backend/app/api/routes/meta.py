@@ -123,14 +123,40 @@ def ingestion_metrics(
     job_metrics = [row.metrics_json or {} for row in jobs]
     checked = int(checked or 0)
     changed = int(changed or 0)
+    pages_unchanged = sum(1 for row in logs if row.status == "unchanged")
+    parser_errors = sum(1 for row in logs if row.status == "error")
+    recorded_ai_savings = sum(
+        int(m.get("ai_calls_saved", 0)) for m in job_metrics
+    )
     return {
         "since": since.isoformat(), "pages_checked": checked, "pages_changed": changed,
+        "pages_unchanged": pages_unchanged,
         "change_rate": (changed / checked) if checked else 0.0,
         "deep_extractions": sum(int(m.get("deep_extractions", 0)) for m in job_metrics),
-        "skipped_unchanged": sum(1 for row in logs if row.status == "unchanged"),
-        "AI_calls_saved": sum(int(m.get("ai_calls_saved", 0)) for m in job_metrics),
+        "tabs_opened": sum(int(m.get("tabs_opened", 0)) for m in job_metrics),
+        "documents_discovered": sum(
+            int(m.get("documents_discovered", m.get("new_documents", 0)))
+            for m in job_metrics
+        ),
+        "documents_changed": sum(
+            int(m.get("documents_changed", m.get("new_versions", 0)))
+            for m in job_metrics
+        ),
+        "new_trades": sum(int(m.get("new_trades", 0)) for m in job_metrics),
+        "AI_calls_triggered": sum(
+            int(m.get("ai_calls_triggered", m.get("ai_tasks_created", 0)))
+            for m in job_metrics
+        ),
+        "skipped_unchanged": pages_unchanged,
+        # Every unchanged fast check avoids deep extraction and the selective
+        # AI stage. Jobs may also report savings that do not have a page log.
+        "AI_calls_saved": max(recorded_ai_savings, pages_unchanged),
         "documents_skipped": sum(int(m.get("documents_skipped", 0)) for m in job_metrics),
-        "parser_failures": sum(1 for row in logs if row.status == "error"),
+        "parser_errors": parser_errors,
+        "parser_failures": parser_errors,
+        "captcha_blocks": sum(
+            1 for row in logs if row.status == "blocked_by_captcha"
+        ),
         "anomalies": sum(1 for row in logs if row.status == "anomaly"),
         "average_check_latency_ms": float(latency) if latency is not None else None,
     }

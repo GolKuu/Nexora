@@ -104,6 +104,8 @@ class Settings(BaseSettings):
     #: precise numbers (see docs/browser-agent.md).
     BROWSER_VISUAL_ANALYSIS_ENABLED: bool = True
     BROWSER_VISION_MODEL: str | None = None
+    RUN_LIVE_KASE_BROWSER_TESTS: bool = False
+    # Historical alias retained for existing developer environments.
     RUN_LIVE_BROWSER_TESTS: bool = False
 
     # --- incremental ingestion ------------------------------------------
