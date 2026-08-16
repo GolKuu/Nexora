@@ -55,7 +55,7 @@ class WatchlistRepository:
         self.session = session
 
     def list_for_owner(self, *, user_id: int | None, token: str | None) -> list[Watchlist]:
-        stmt = select(Watchlist).options(selectinload(Watchlist.bond))
+        stmt = select(Watchlist).options(selectinload(Watchlist.bond), selectinload(Watchlist.stock))
         if user_id is not None:
             stmt = stmt.where(Watchlist.user_id == user_id)
         elif token:
@@ -64,8 +64,10 @@ class WatchlistRepository:
             return []
         return list(self.session.execute(stmt).unique().scalars())
 
-    def find(self, *, user_id: int | None, token: str | None, bond_id: int) -> Watchlist | None:
-        stmt = select(Watchlist).where(Watchlist.bond_id == bond_id)
+    def find(self, *, user_id: int | None, token: str | None, bond_id: int | None = None, stock_id: int | None = None) -> Watchlist | None:
+        if (bond_id is None) == (stock_id is None):
+            return None
+        stmt = select(Watchlist).where(Watchlist.bond_id == bond_id) if bond_id is not None else select(Watchlist).where(Watchlist.stock_id == stock_id)
         if user_id is not None:
             stmt = stmt.where(Watchlist.user_id == user_id)
         elif token:

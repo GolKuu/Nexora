@@ -2,6 +2,7 @@ import { api } from "@/services/client";
 import type {
   BondListItem,
   PortfolioDetail,
+  StockListItem,
   UserSettings,
 } from "@/types/api";
 
@@ -22,14 +23,15 @@ export const settingsService = {
 
 export const watchlistService = {
   list: () =>
-    api.get<{ items: BondListItem[]; requires_identity: boolean }>("/watchlist"),
-  add: (bond: string, note?: string) =>
+    api.get<{ items: Array<(BondListItem & { instrument_type: "bond" }) | StockListItem>; requires_identity: boolean }>("/watchlist"),
+  add: (identifier: string, instrumentType: "bond" | "stock" = "bond", note?: string) =>
     api.post<{ id: number; ticker: string; already_present: boolean }>("/watchlist", {
-      bond,
+      [instrumentType]: identifier,
+      instrument_type: instrumentType,
       note,
     }),
-  remove: (identifier: string) =>
-    api.delete<void>(`/watchlist/${encodeURIComponent(identifier)}`),
+  remove: (identifier: string, instrumentType: "bond" | "stock" = "bond") =>
+    api.delete<void>(`/watchlist/${encodeURIComponent(identifier)}?instrument_type=${instrumentType}`),
 };
 
 export const portfolioService = {

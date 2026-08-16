@@ -96,6 +96,12 @@ class AlertKind(StrEnum):
     SCORE_ABOVE = "score_above"
     COUPON_DATE = "coupon_date"
     MATURITY_DATE = "maturity_date"
+    PE_BELOW = "pe_below"
+    DIVIDEND_ANNOUNCED = "dividend_announced"
+    FINANCIAL_REPORT = "financial_report"
+    PROFIT_CHANGE = "profit_change"
+    SCORE_CHANGE = "score_change"
+    COMPANY_NEWS = "company_news"
 
 
 class DayCount(StrEnum):

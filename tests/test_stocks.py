@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 import pytest
+import uuid
 
-from app.calculations.stock_math import Commission, calculate_stock_investment, dividend_yield, ev_ebitda, pb, pe, roa, roe
+from app.calculations.stock_math import Commission, calculate_stock_investment, dividend_yield, ev_ebitda, market_history_metrics, pb, pe, roa, roe
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.scoring.stocks import calculate_scores
+from app.services.stock_actions import StockActionIngestionService, parse_public_kase_action
 
 
 def catalog_row(**overrides):
@@ -82,13 +84,21 @@ def test_stock_scores_are_separate_null_aware_and_versioned():
     assert missing["data_quality"]["value"] < scores["data_quality"]["value"]
 
 
+def test_momentum_uses_observed_history_without_forecasting():
+    result = market_history_metrics([100, 110, 88, 99])
+    assert result["price_trend"] == pytest.approx(-0.01)
+    assert result["max_drawdown"] == pytest.approx(0.20)
+    assert result["volatility"] is not None
+    assert market_history_metrics([100])["price_trend"] is None
+
+
 def _seed_stock(session, ticker="TSTX"):
     from app.models.instrument import Instrument
     from app.models.issuer import Issuer
     from app.models.stock import Dividend, Stock, StockFinancialPeriod, StockQuote
     issuer = Issuer(code=f"{ticker}I", name="Test Issuer", short_name="Test", country="KZ", is_active=True)
     session.add(issuer); session.flush()
-    instrument = Instrument(ticker=ticker, isin="KZ1C00009999", issuer_id=issuer.id, instrument_type="stock", security_type="ordinary share", currency="KZT", is_active=True, kase_url=f"https://kase.kz/en/investors/instruments/shares/{ticker}")
+    instrument = Instrument(ticker=ticker, isin="KZ1C00009999", issuer_id=issuer.id, instrument_type="stock", security_type="ordinary share", currency="KZT", is_active=True, kase_url=f"https://kase.kz/en/investors/shares/{ticker}/")
     session.add(instrument); session.flush()
     stock = Stock(instrument_id=instrument.id, shares_outstanding=1_000_000, lot_size=1, liquidity_class=1)
     session.add(stock); session.flush()
@@ -113,12 +123,82 @@ def test_stock_detail_calculator_recommend_and_compare_api(session, client):
     assert compare.status_code == 200 and len(compare.json()["columns"]) == 2
 
 
+def test_stock_peers_and_cross_asset_compare_keep_models_separate(session, client, seeded):
+    from sqlalchemy import select
+    from app.models.bond import Bond
+    first = _seed_stock(session, "PEERX")
+    second = _seed_stock(session, "PEERY")
+    first.sector = second.sector = "Technology"
+    first.industry = second.industry = "Software"
+    bond = session.scalar(select(Bond).limit(1))
+    session.commit()
+    peers = client.get("/api/v1/stocks/PEERX/peers").json()
+    assert peers["peer_group"]["industry"] == "Software"
+    assert [row["ticker"] for row in peers["peers"]] == ["PEERY"]
+    result = client.post("/api/v1/instruments/compare", json={"instruments": [
+        {"identifier": "PEERX", "instrument_type": "stock"},
+        {"identifier": bond.ticker, "instrument_type": "bond"},
+    ]})
+    assert result.status_code == 200
+    rows = result.json()["items"]
+    stock_row = next(row for row in rows if row["instrument_type"] == "stock")
+    bond_row = next(row for row in rows if row["instrument_type"] == "bond")
+    assert "ytm" not in stock_row["potential_income"]
+    assert "ytm" in bond_row["potential_income"]
+
+
 def test_incremental_stock_section_does_not_duplicate_unchanged_state(session):
     from app.services.incremental import IncrementalStateService
     service = IncrementalStateService(session)
     first = service.process(entity_type="stock", entity_id="999", section="dividends", payload={"dividends": [{"amount": 10}]}, source_url="https://kase.kz/test", ticker="TEST")
     second = service.process(entity_type="stock", entity_id="999", section="dividends", payload={"dividends": [{"amount": 10}]}, source_url="https://kase.kz/test", ticker="TEST")
     assert first.status == "created" and second.status == "unchanged"
+
+
+def test_public_kase_dividend_parser_rejects_unverified_and_missing_amount():
+    assert parse_public_kase_action({"title": "Dividend announced", "url": "https://example.com/news/1", "dividend_per_share": 10}) is None
+    assert parse_public_kase_action({"title": "Дивиденды объявлены", "url": "https://kase.kz/ru/information/news/show/1"}) is None
+    parsed = parse_public_kase_action({
+        "title": "Акционеры приняли решение о выплате дивидендов",
+        "content": "Размер дивиденда на одну простую акцию – 4 268,37 тенге.",
+        "url": "https://kase.kz/ru/information/news/show/1567445",
+        "record_date": "2026-06-09", "payment_date": "2026-06-10",
+        "publication_date": "2026-05-28T15:34:00+05:00",
+    })
+    assert parsed is not None
+    assert parsed["dividend_per_share"] == pytest.approx(4268.37)
+    assert parsed["record_date"] == date(2026, 6, 9)
+    assert parsed["status"] == "announced"
+    assert parsed["source_timestamp"].isoformat() == "2026-05-28T15:34:00+05:00"
+    paid = parse_public_kase_action({
+        "title": "Информация о фактической выплате дивидендов",
+        "content": "Банк сообщает о завершении выплаты дивидендов по простым акциям за 2024 год в размере 21,00 тенге на одну простую акцию.",
+        "url": "https://kase.kz/files/emitters/HSBK/hsbk_dividends_231225_1.pdf",
+    })
+    assert paid is not None and paid["status"] == "paid"
+    assert paid["dividend_per_share"] == 21
+
+
+def test_stock_action_ingestion_is_idempotent_and_updates_incremental_sections(session):
+    stock = _seed_stock(session, "ACTX")
+    item = {"title": "Dividend per common share KZT 12.50", "url": "https://kase.kz/en/information/news/show/123",
+            "dividend_per_share": 12.5, "record_date": "2026-07-01", "publication_date": "2026-06-01T10:00:00Z"}
+    service = StockActionIngestionService(session)
+    first = service.ingest(ticker=stock.instrument.ticker, items=[item])
+    second = service.ingest(ticker=stock.instrument.ticker, items=[item])
+    assert first == {"dividends_created": 1, "corporate_actions_created": 1}
+    assert second == {"dividends_created": 0, "corporate_actions_created": 0}
+
+
+def test_stock_watchlist_is_separate_from_bond_watchlist(session, client):
+    stock = _seed_stock(session, "WSTX")
+    session.commit()
+    headers = {"X-Anon-Token": uuid.uuid4().hex}
+    created = client.post("/api/v1/watchlist", json={"stock": stock.instrument.ticker, "instrument_type": "stock"}, headers=headers)
+    assert created.status_code == 201 and created.json()["instrument_type"] == "stock"
+    items = client.get("/api/v1/watchlist", headers=headers).json()["items"]
+    assert [(item["ticker"], item["instrument_type"]) for item in items] == [("WSTX", "stock")]
+    assert client.delete("/api/v1/watchlist/WSTX?instrument_type=stock", headers=headers).status_code == 204
 
 
 def test_portfolio_mixes_stock_and_bond_without_crossing_formulas(session, seeded):

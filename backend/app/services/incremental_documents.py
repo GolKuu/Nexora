@@ -155,7 +155,9 @@ class NewsIngestionService:
             created += 1
             analyzed += len(outcome.plan.ai_tasks)
         self.session.flush()
-        return {"new_news": created, "ai_tasks_created": analyzed}
+        from app.services.stock_actions import StockActionIngestionService
+        actions = StockActionIngestionService(self.session).ingest(ticker=ticker, items=items)
+        return {"new_news": created, "ai_tasks_created": analyzed, **actions}
 
 
 def _datetime(value: Any) -> datetime | None:

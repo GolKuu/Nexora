@@ -39,6 +39,7 @@ class Stock(Base, TimestampMixin, SourceMixin):
     quotes: Mapped[list["StockQuote"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
     financials: Mapped[list["StockFinancialPeriod"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
     dividends: Mapped[list["Dividend"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
+    corporate_actions: Mapped[list["CorporateAction"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
     metrics: Mapped[list["StockMetric"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
     scores: Mapped[list["StockScore"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
 
@@ -109,7 +110,10 @@ class StockFinancialPeriod(Base, TimestampMixin, SourceMixin):
 
 class Dividend(Base, TimestampMixin, SourceMixin):
     __tablename__ = "dividends"
-    __table_args__ = (UniqueConstraint("stock_id", "record_date", "dividend_per_share", name="uq_dividend_event"),)
+    __table_args__ = (
+        UniqueConstraint("stock_id", "record_date", "dividend_per_share", name="uq_dividend_event"),
+        UniqueConstraint("stock_id", "source_url", name="uq_dividend_source_url"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"), index=True)
@@ -121,6 +125,26 @@ class Dividend(Base, TimestampMixin, SourceMixin):
     status: Mapped[str] = mapped_column(String(16), default="unknown", index=True)
 
     stock: Mapped["Stock"] = relationship(back_populates="dividends")
+
+
+class CorporateAction(Base, TimestampMixin, SourceMixin):
+    """A verified issuer action. Unconfirmed scenarios never belong here."""
+
+    __tablename__ = "corporate_actions"
+    __table_args__ = (
+        UniqueConstraint("stock_id", "action_type", "source_url", name="uq_stock_corporate_action_source"),
+        Index("ix_corporate_actions_stock_date", "stock_id", "event_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"), index=True)
+    action_type: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="announced", index=True)
+    event_date: Mapped[date | None] = mapped_column(Date)
+    title: Mapped[str] = mapped_column(String(1024))
+    details: Mapped[dict | None] = mapped_column(JSON)
+
+    stock: Mapped["Stock"] = relationship(back_populates="corporate_actions")
 
 
 class StockMetric(Base, TimestampMixin, ComputedMixin):

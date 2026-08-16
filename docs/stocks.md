@@ -12,7 +12,10 @@
   число сделок, дата данных и класс ликвидности.
 - `GET https://kase.kz/api/companies/fin-data/{issuer_code}/` — опубликованные
   KASE агрегаты отчетности: revenue, net income, assets, equity и liabilities.
-- Публичные страницы `https://kase.kz/{lang}/investors/instruments/shares/{ticker}`
+- `GET https://kase.kz/api/companies/documents/?org_code={issuer_code}&language=ru` — официальный
+  каталог документов эмитента. Только новые корпоративные PDF разбираются через `pypdf`;
+  dividend amount сохраняется лишь при явной сумме на одну акцию в тексте.
+- Публичные страницы `https://kase.kz/{lang}/investors/shares/{ticker}/`
   — проверяемая ссылка инструмента и browser fallback для документов, новостей,
   дивидендов и corporate actions.
 
@@ -38,10 +41,22 @@ debt breakdown для большинства эмитентов. Поэтому 
 ## API
 
 - `GET /stocks`, `/stocks/search`, `/stocks/top`
-- `GET /stocks/{identifier}`, `/stocks/{identifier}/analysis`
+- `GET /stocks/{identifier}`, `/stocks/{identifier}/analysis`, `/stocks/{identifier}/peers`
 - `POST /stocks/recommend`, `/stocks/compare`
 - `POST /stocks/{identifier}/investment-calculation`
 - `POST /stocks/refresh`
+- `POST /instruments/compare` — cross-asset comparison without mixing bond YTM and stock scenarios
+- `POST /watchlist` accepts either `bond` or `stock`; stock deletion uses `?instrument_type=stock`
+
+Public KASE news obtained by the existing Browser Agent passes through strict
+`StockActionIngestionService` validation. Only KASE-hosted URLs are accepted,
+and a Dividend is created only when a positive per-share amount is explicit.
+Dates absent from the publication remain `null`. The paid KASE Corporate Events
+feed is not connected automatically.
+
+Momentum describes accumulated `StockQuote` history only: price trend,
+annualized volatility, and maximum drawdown. With insufficient observations
+the values remain `null`; none of these metrics is a price forecast.
 - `GET /instruments/search` — общий результат с типом «Акция»/«Облигация»
 
 CLI: `python scripts/kase.py sync-kase-stocks`. Планировщик обновляет stock

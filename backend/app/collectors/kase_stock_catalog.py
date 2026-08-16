@@ -15,6 +15,7 @@ from app.models.issuer import Issuer
 from app.models.stock import Stock, StockFinancialPeriod, StockQuote
 from app.providers.kase_public_api import KasePublicApiProvider
 from app.services.incremental import IncrementalStateService, content_hash
+from app.services.stock_actions import KaseStockDocumentActionCollector
 
 CATALOG_URL = "https://kase.kz/api/instruments/securities/"
 SOURCE_NAME = "kase_public_website"
@@ -116,7 +117,7 @@ class KaseStockCatalogCollector:
                 self.session.add(issuer); self.session.flush()
             instrument = self.session.execute(select(Instrument).where(Instrument.instrument_type == item["instrument_type"], func.upper(Instrument.ticker) == item["ticker"].upper())).scalar_one_or_none()
             created = instrument is None
-            kase_url = f"{self.base_url}/en/investors/instruments/shares/{item['ticker']}"
+            kase_url = f"{self.base_url}/en/investors/shares/{item['ticker']}/"
             if instrument is None:
                 instrument = Instrument(ticker=item["ticker"], isin=item["isin"], issuer_id=issuer.id, instrument_type=item["instrument_type"])
                 self.session.add(instrument)
@@ -160,6 +161,12 @@ class KaseStockCatalogCollector:
                 instrument.is_active = False
         financial_stats = await self._collect_financials(stocks_by_issuer, incremental, now)
         stats.update(financial_stats)
+        if self.client is not None:
+            action_stats = await KaseStockDocumentActionCollector(self.session, self.client).collect(stocks_by_issuer)
+        else:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": "KASE-Bond-AI/stock-actions"}) as client:
+                action_stats = await KaseStockDocumentActionCollector(self.session, client).collect(stocks_by_issuer)
+        stats.update(action_stats)
         self.session.commit()
         return stats
 

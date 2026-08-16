@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PortfolioCreate(BaseModel):
@@ -38,5 +38,15 @@ class PositionUpdate(BaseModel):
 
 
 class WatchlistCreate(BaseModel):
-    bond: str
+    bond: str | None = None
+    stock: str | None = None
+    instrument_type: str = Field(default="bond", pattern="^(bond|stock)$")
     note: str | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_instrument(self):
+        if (self.bond is None) == (self.stock is None):
+            raise ValueError("Specify exactly one of bond or stock")
+        if self.stock is not None:
+            self.instrument_type = "stock"
+        return self

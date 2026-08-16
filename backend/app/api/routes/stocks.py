@@ -71,6 +71,11 @@ def get_stock(identifier: str, profile: str = "balanced", session: Session = Dep
     return StockService(session).card(identifier, profile)
 
 
+@router.get("/{identifier}/peers")
+def stock_peers(identifier: str, limit: int = Query(8, ge=1, le=20), session: Session = Depends(get_session)) -> dict:
+    return StockService(session).peers(identifier, limit)
+
+
 @router.get("/{identifier}/analysis")
 def stock_analysis(identifier: str, session: Session = Depends(get_session)) -> dict:
     card = StockService(session).card(identifier)

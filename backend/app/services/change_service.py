@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.incremental import DataChangeSet, DataCurrentState
@@ -48,12 +48,17 @@ class ChangeService:
         }
 
     def portfolio(self, portfolio_id: int, *, since: datetime | None = None, limit: int = 200) -> list[DataChangeSet]:
-        bond_ids = list(self.session.execute(
-            select(PortfolioPosition.bond_id).where(PortfolioPosition.portfolio_id == portfolio_id)
-        ).scalars())
-        if not bond_ids:
+        positions = list(self.session.execute(select(PortfolioPosition).where(PortfolioPosition.portfolio_id == portfolio_id)).scalars())
+        bond_ids = [str(row.bond_id) for row in positions if row.bond_id is not None]
+        stock_ids = [str(row.stock_id) for row in positions if row.stock_id is not None]
+        filters = []
+        if bond_ids:
+            filters.append(and_(DataChangeSet.entity_type == "bond", DataChangeSet.entity_id.in_(bond_ids)))
+        if stock_ids:
+            filters.append(and_(DataChangeSet.entity_type == "stock", DataChangeSet.entity_id.in_(stock_ids)))
+        if not filters:
             return []
-        query = select(DataChangeSet).where(DataChangeSet.entity_id.in_([str(item) for item in bond_ids]))
+        query = select(DataChangeSet).where(or_(*filters))
         if since:
             query = query.where(DataChangeSet.detected_at >= since)
         return list(self.session.execute(query.order_by(DataChangeSet.detected_at.desc()).limit(limit)).scalars())

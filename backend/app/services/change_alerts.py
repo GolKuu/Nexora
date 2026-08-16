@@ -14,6 +14,11 @@ class ChangeAlertEngine:
         "ytm_above": ("ytm", "above"), "ytm_below": ("ytm", "below"),
         "price_above": ("last", "above"), "price_below": ("last", "below"),
         "score_above": ("investment_score", "above"),
+        "pe_below": ("pe", "below"),
+    }
+    EVENTS = {
+        "dividend_announced": "dividends", "financial_report": "financials",
+        "company_news": "news", "score_change": "scores",
     }
 
     def evaluate_since(self, since: datetime) -> int:
@@ -24,13 +29,23 @@ class ChangeAlertEngine:
         triggered = 0
         for change in changes:
             try:
-                bond_id = int(change.entity_id)
+                entity_id = int(change.entity_id)
             except (TypeError, ValueError):
                 continue
-            alerts = self.session.scalars(select(Alert).where(
-                Alert.bond_id == bond_id, Alert.is_active.is_(True)
-            )).all()
+            identity_filter = Alert.stock_id == entity_id if change.entity_type == "stock" else Alert.bond_id == entity_id
+            alerts = self.session.scalars(select(Alert).where(identity_filter, Alert.is_active.is_(True))).all()
             for alert in alerts:
+                event_section = self.EVENTS.get(alert.kind)
+                if event_section and change.section == event_section:
+                    alert.last_triggered_at = datetime.now(timezone.utc)
+                    alert.message = f"Новое изменение в разделе {change.section}: {change.field}"
+                    triggered += 1
+                    continue
+                if alert.kind == "profit_change" and change.field.rsplit(".", 1)[-1] in {"net_income", "earnings_growth"}:
+                    alert.last_triggered_at = datetime.now(timezone.utc)
+                    alert.message = f"Изменилась прибыль: {change.old_value} → {change.new_value}"
+                    triggered += 1
+                    continue
                 spec = self.FIELDS.get(alert.kind)
                 if not spec or change.field.rsplit(".", 1)[-1] != spec[0] or alert.threshold is None:
                     continue

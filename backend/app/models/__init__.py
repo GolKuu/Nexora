@@ -10,7 +10,7 @@ from app.models.financials import (
 )
 from app.models.issuer import Issuer
 from app.models.instrument import Instrument
-from app.models.stock import Dividend, Stock, StockFinancialPeriod, StockMetric, StockQuote, StockScore
+from app.models.stock import CorporateAction, Dividend, Stock, StockFinancialPeriod, StockMetric, StockQuote, StockScore
 from app.models.macro import FxRate, InflationData, YieldCurve
 from app.models.market import BondQuote, BondTrade
 from app.models.market import BondQuoteCurrent
@@ -70,4 +70,5 @@ __all__ = [
     "StockMetric",
     "StockScore",
     "Dividend",
+    "CorporateAction",
 ]

@@ -6,6 +6,7 @@ SQLAlchemy>=2.0.36
 alembic>=1.14
 psycopg[binary]>=3.2
 httpx>=0.28
+pypdf>=5.1
 selectolax>=0.3.27
 tenacity>=9.0
 # Browser agent. The engine itself is downloaded separately:

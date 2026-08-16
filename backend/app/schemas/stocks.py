@@ -46,3 +46,12 @@ class StockCompareRequest(BaseModel):
 class UniversalSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     limit: int = Field(default=20, ge=1, le=100)
+
+
+class CrossAssetItem(BaseModel):
+    identifier: str = Field(min_length=1)
+    instrument_type: str = Field(pattern="^(bond|stock)$")
+
+
+class CrossAssetCompareRequest(BaseModel):
+    instruments: list[CrossAssetItem] = Field(min_length=2, max_length=10)

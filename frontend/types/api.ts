@@ -364,7 +364,8 @@ export interface StockListResponse { items: StockListItem[]; total: number; limi
 export interface StockCard extends StockListItem {
   simple: { price: number | null; company_earning_trend: string; valuation: string; dividends: number | null; risk: StockScoreValue; liquidity: StockScoreValue; important: string };
   pro: Record<string, number | null>; score_explanation: Array<{kind: string} & StockScoreValue>;
-  dividends: Array<{ex_date: string | null; record_date: string | null; payment_date: string | null; dividend_per_share: number; currency: string; status: string}>;
+  dividends: Array<{ex_date: string | null; record_date: string | null; payment_date: string | null; dividend_per_share: number; currency: string; status: string; source_url?: string | null}>;
+  corporate_actions: Array<{action_type: string; status: string; event_date: string | null; title: string; source_url: string | null}>;
 }
 export interface StockCalculation {
   stock_identifier: string; input_amount: number; quantity: number; unit_price: number | null;

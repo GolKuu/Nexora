@@ -75,6 +75,8 @@ class Watchlist(Base, TimestampMixin):
         UniqueConstraint(
             "anonymous_token", "bond_id", name="uq_watchlist_anon_bond"
         ),
+        UniqueConstraint("user_id", "stock_id", name="uq_watchlist_user_stock"),
+        UniqueConstraint("anonymous_token", "stock_id", name="uq_watchlist_anon_stock"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -82,26 +84,38 @@ class Watchlist(Base, TimestampMixin):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     anonymous_token: Mapped[str | None] = mapped_column(String(64), index=True)
-    bond_id: Mapped[int] = mapped_column(
+    bond_id: Mapped[int | None] = mapped_column(
         ForeignKey("bonds.id", ondelete="CASCADE"), index=True
     )
+    stock_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stocks.id", ondelete="CASCADE"), index=True
+    )
+    instrument_type: Mapped[str] = mapped_column(String(16), default="bond", index=True)
     note: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped["User | None"] = relationship(back_populates="watchlist")
-    bond: Mapped["Bond"] = relationship()
+    bond: Mapped["Bond | None"] = relationship()
+    stock: Mapped["Stock | None"] = relationship()
 
 
 class Alert(Base, TimestampMixin):
     __tablename__ = "alerts"
-    __table_args__ = (Index("ix_alerts_active", "is_active", "bond_id"),)
+    __table_args__ = (
+        Index("ix_alerts_active", "is_active", "bond_id"),
+        Index("ix_alerts_stock_active", "is_active", "stock_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    bond_id: Mapped[int] = mapped_column(
+    bond_id: Mapped[int | None] = mapped_column(
         ForeignKey("bonds.id", ondelete="CASCADE"), index=True
     )
+    stock_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stocks.id", ondelete="CASCADE"), index=True
+    )
+    instrument_type: Mapped[str] = mapped_column(String(16), default="bond", index=True)
     kind: Mapped[str] = mapped_column(String(32))
     threshold: Mapped[float | None] = mapped_column(Float)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -109,4 +123,5 @@ class Alert(Base, TimestampMixin):
     message: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped["User"] = relationship(back_populates="alerts")
-    bond: Mapped["Bond"] = relationship()
+    bond: Mapped["Bond | None"] = relationship()
+    stock: Mapped["Stock | None"] = relationship()
