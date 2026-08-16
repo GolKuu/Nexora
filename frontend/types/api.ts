@@ -288,18 +288,35 @@ export interface PortfolioSummary {
   portfolio_duration: number | null;
   average_investment_score: number | null;
   inflation_pct: number | null;
+  dividends: number | null;
+  coupons: number | null;
+  asset_allocation: { stocks: number; bonds: number };
+  currency_allocation: Record<string, number>;
+  issuer_concentration: Array<{
+    issuer_id: number;
+    issuer_name: string;
+    market_value: number;
+    percent: number | null;
+  }>;
 }
 
 export interface PortfolioPosition {
   id: number;
-  bond_id: number;
+  instrument_type: "bond" | "stock";
+  bond_id: number | null;
+  stock_id?: number | null;
   ticker: string;
   name: string;
+  issuer_id: number;
+  issuer_name: string;
   currency: string;
   quantity: number;
   purchase_clean_price: number | null;
+  purchase_price?: number | null;
   purchase_date: string | null;
   clean_price: number | null;
+  current_price?: number | null;
+  dividend_income_trailing?: number | null;
   market_value: number | null;
   cost: number | null;
   unrealized_pnl: number | null;
@@ -377,6 +394,13 @@ export interface StockCalculation {
 }
 export interface InstrumentSearchItem { id: number; ticker: string; isin: string | null; name: string; instrument_type: "stock" | "bond"; type_label: string; href: string }
 export interface InstrumentSearchResponse { items: InstrumentSearchItem[]; total: number; query: string }
+export interface CrossAssetItem {
+  instrument_type: "stock" | "bond"; ticker: string; name: string;
+  risk: { value: number | null }; liquidity: { value: number | null };
+  potential_income: { ytm?: number | null; dividend_yield_trailing?: number | null; price_change?: string };
+  payment_income: string; horizon: string | null; volatility: number | null; cashflow_predictability: string;
+}
+export interface CrossAssetCompareResponse { items: CrossAssetItem[]; comparison_type: "cross_asset"; explanation: string; warning: string }
 
 /** Browser agent (§31, §49): every value carries how it was read and how much
  *  that method is worth. `method: "visual"` is qualitative by construction. */

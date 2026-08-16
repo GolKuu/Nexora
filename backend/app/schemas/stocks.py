@@ -34,6 +34,7 @@ class StockRecommendRequest(BaseModel):
     min_roe: float | None = None
     min_quality_score: float | None = None
     min_liquidity_score: float | None = None
+    max_net_debt_to_equity: float | None = None
     sector: str | None = None
 
 

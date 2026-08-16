@@ -106,9 +106,10 @@ class Alert(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    anonymous_token: Mapped[str | None] = mapped_column(String(64), index=True)
     bond_id: Mapped[int | None] = mapped_column(
         ForeignKey("bonds.id", ondelete="CASCADE"), index=True
     )
@@ -122,6 +123,6 @@ class Alert(Base, TimestampMixin):
     last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     message: Mapped[str | None] = mapped_column(Text)
 
-    user: Mapped["User"] = relationship(back_populates="alerts")
+    user: Mapped["User | None"] = relationship(back_populates="alerts")
     bond: Mapped["Bond | None"] = relationship()
     stock: Mapped["Stock | None"] = relationship()

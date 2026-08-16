@@ -40,13 +40,26 @@ debt breakdown для большинства эмитентов. Поэтому 
 
 ## API
 
-- `GET /stocks`, `/stocks/search`, `/stocks/top`
+- `GET /stocks`, `GET /stocks/search`, `/stocks/top`
+- `POST /stocks/search` — естественный запрос преобразуется только в проверенные,
+  явно возвращаемые фильтры; неоднозначные слова сопровождаются assumptions.
 - `GET /stocks/{identifier}`, `/stocks/{identifier}/analysis`, `/stocks/{identifier}/peers`
+- `GET /stocks/{identifier}/financial-changes` — текущий период против предыдущего
+  и год к году без повторного анализа всей истории.
+- `GET /stocks/{identifier}/history` — котировки, метрики, scores и дивиденды с provenance.
 - `POST /stocks/recommend`, `/stocks/compare`
 - `POST /stocks/{identifier}/investment-calculation`
 - `POST /stocks/refresh`
 - `POST /instruments/compare` — cross-asset comparison without mixing bond YTM and stock scenarios
 - `POST /watchlist` accepts either `bond` or `stock`; stock deletion uses `?instrument_type=stock`
+- `GET|POST|PUT|DELETE /alerts` — анонимные и пользовательские stock/bond alerts;
+  для акций доступны цена, P/E, дивиденды, отчетность, изменение прибыли,
+  изменение score и новости.
+
+Stock Analyst получает только сформированную backend-карточку с проверенными
+данными. Если локальная AI-модель не настроена, используется детерминированное
+объяснение. Вопрос о гарантированном росте всегда получает policy-ответ без
+прогноза цены.
 
 Public KASE news obtained by the existing Browser Agent passes through strict
 `StockActionIngestionService` validation. Only KASE-hosted URLs are accepted,
@@ -57,6 +70,10 @@ feed is not connected automatically.
 Momentum describes accumulated `StockQuote` history only: price trend,
 annualized volatility, and maximum drawdown. With insufficient observations
 the values remain `null`; none of these metrics is a price forecast.
+
+Portfolio API сохраняет раздельные stock/bond позиции и выплаты, а также
+возвращает asset allocation, currency allocation и issuer concentration.
+Для смешанных валют доля эмитента не вычисляется без подтвержденного FX-курса.
 - `GET /instruments/search` — общий результат с типом «Акция»/«Облигация»
 
 CLI: `python scripts/kase.py sync-kase-stocks`. Планировщик обновляет stock

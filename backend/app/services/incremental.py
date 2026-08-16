@@ -49,6 +49,8 @@ SECTION_FIELDS: dict[str, set[str]] = {
     "financials": {"financials", "statements"},
     "dividends": {"dividends"},
     "corporate_actions": {"corporate_actions"},
+    "metrics": {"pe", "pb", "ev_ebitda", "roe", "roa", "trailing_dividend_yield", "volatility", "max_drawdown"},
+    "scores": {"investment", "quality", "valuation", "growth", "dividend", "liquidity", "momentum", "risk", "data_quality"},
 }
 
 

@@ -34,6 +34,14 @@ export const watchlistService = {
     api.delete<void>(`/watchlist/${encodeURIComponent(identifier)}?instrument_type=${instrumentType}`),
 };
 
+export interface UserAlert { id: number; ticker: string; instrument_type: "bond" | "stock"; kind: string; threshold: number | null; is_active: boolean; last_triggered_at: string | null; message: string | null }
+export const alertsService = {
+  list: () => api.get<{items: UserAlert[]; requires_identity: boolean}>("/alerts"),
+  addStock: (stock: string, kind: string, threshold?: number) => api.post<UserAlert>("/alerts", { stock, instrument_type: "stock", kind, threshold }),
+  update: (id: number, is_active: boolean) => api.put<UserAlert>(`/alerts/${id}`, { is_active }),
+  remove: (id: number) => api.delete<void>(`/alerts/${id}`),
+};
+
 export const portfolioService = {
   list: () =>
     api.get<{
@@ -45,10 +53,14 @@ export const portfolioService = {
   addPosition: (
     id: number,
     payload: {
-      bond: string;
+      bond?: string;
+      stock?: string;
+      instrument_type: "bond" | "stock";
       quantity: number;
       purchase_clean_price?: number;
+      purchase_price?: number;
       purchase_date?: string;
+      fees?: number;
     },
   ) => api.post<{ id: number; ticker: string }>(`/portfolios/${id}/positions`, payload),
   updatePosition: (id: number, positionId: number, payload: { quantity?: number }) =>

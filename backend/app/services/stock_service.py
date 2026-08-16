@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
@@ -11,6 +12,7 @@ from app.models.instrument import Instrument
 from app.models.issuer import Issuer
 from app.models.stock import CorporateAction, Dividend, Stock, StockFinancialPeriod, StockMetric, StockQuote, StockScore
 from app.scoring.stocks import VERSION, calculate_scores
+from app.services.incremental import IncrementalStateService
 
 
 class StockService:
@@ -34,6 +36,102 @@ class StockService:
 
     def latest_financials(self, stock_id: int, limit: int = 2) -> list[StockFinancialPeriod]:
         return list(self.session.execute(select(StockFinancialPeriod).where(StockFinancialPeriod.stock_id == stock_id).order_by(StockFinancialPeriod.period_end.desc()).limit(limit)).scalars())
+
+    def financial_change_analysis(self, identifier: str) -> dict:
+        stock = self.require(identifier)
+        periods = list(self.session.execute(select(StockFinancialPeriod).where(
+            StockFinancialPeriod.stock_id == stock.id
+        ).order_by(StockFinancialPeriod.period_end.desc())).scalars())
+        current = periods[0] if periods else None
+        previous = periods[1] if len(periods) > 1 else None
+        year_ago = None
+        if current:
+            year_ago = next((row for row in periods[1:] if 300 <= (current.period_end - row.period_end).days <= 430), None)
+
+        def snapshot(row: StockFinancialPeriod | None) -> dict | None:
+            if row is None:
+                return None
+            margin = safe_div(row.net_income, row.revenue)
+            return {"period_end": row.period_end, "period_type": row.period_type, "revenue": row.revenue,
+                    "net_income": row.net_income, "net_margin": margin, "total_debt": row.total_debt,
+                    "cash": row.cash, "operating_cash_flow": row.operating_cash_flow,
+                    "free_cash_flow": row.free_cash_flow, "roe": roe(row.net_income, row.total_equity),
+                    "source": row.source, "source_url": row.source_url}
+
+        def comparison(base: StockFinancialPeriod | None) -> dict | None:
+            if current is None or base is None:
+                return None
+            current_margin = safe_div(current.net_income, current.revenue)
+            base_margin = safe_div(base.net_income, base.revenue)
+            current_roe = roe(current.net_income, current.total_equity)
+            base_roe = roe(base.net_income, base.total_equity)
+            return {"revenue_change": growth(current.revenue, base.revenue),
+                    "profit_change": growth(current.net_income, base.net_income),
+                    "margin_change": (current_margin - base_margin) if current_margin is not None and base_margin is not None else None,
+                    "debt_change": growth(current.total_debt, base.total_debt),
+                    "cash_flow_change": growth(current.operating_cash_flow, base.operating_cash_flow),
+                    "free_cash_flow_change": growth(current.free_cash_flow, base.free_cash_flow),
+                    "roe_change": (current_roe - base_roe) if current_roe is not None and base_roe is not None else None}
+        return {"ticker": stock.instrument.ticker, "current": snapshot(current), "previous": snapshot(previous),
+                "year_ago": snapshot(year_ago), "vs_previous": comparison(previous), "vs_year_ago": comparison(year_ago),
+                "warning": "Missing report lines remain null; only newly stored periods are compared."}
+
+    def history(self, identifier: str, limit: int = 252) -> dict:
+        stock = self.require(identifier)
+        quotes = list(reversed(list(self.session.execute(select(StockQuote).where(StockQuote.stock_id == stock.id)
+            .order_by(StockQuote.timestamp.desc(), StockQuote.id.desc()).limit(limit)).scalars())))
+        metrics = list(reversed(list(self.session.execute(select(StockMetric).where(StockMetric.stock_id == stock.id)
+            .order_by(StockMetric.as_of.desc(), StockMetric.id.desc()).limit(limit)).scalars())))
+        scores = list(reversed(list(self.session.execute(select(StockScore).where(StockScore.stock_id == stock.id, StockScore.user_id.is_(None))
+            .order_by(StockScore.calculated_at.desc(), StockScore.id.desc()).limit(limit * 10)).scalars())))
+        return {"ticker": stock.instrument.ticker,
+                "quotes": [{"timestamp": row.timestamp, "bid": row.bid, "ask": row.ask, "last": row.last, "close": row.close,
+                            "volume": row.volume, "turnover": row.turnover, "source": row.source, "data_mode": row.data_mode} for row in quotes],
+                "metrics": [{"as_of": row.as_of, "pe": row.pe, "pb": row.pb, "ev_ebitda": row.ev_ebitda,
+                             "roe": row.roe, "trailing_dividend_yield": row.trailing_dividend_yield,
+                             "volatility": row.volatility, "max_drawdown": row.max_drawdown,
+                             "formula_version": row.formula_version} for row in metrics],
+                "scores": [{"calculated_at": row.calculated_at, "kind": row.kind, "value": row.value,
+                            "confidence": row.confidence, "version": row.version} for row in scores],
+                "dividends": [{"source_timestamp": row.source_timestamp, "payment_date": row.payment_date,
+                               "record_date": row.record_date, "amount": row.dividend_per_share,
+                               "currency": row.currency, "status": row.status, "source_url": row.source_url}
+                              for row in self.latest_dividends(stock.id)]}
+
+    def interpret_search(self, query: str, limit: int = 20) -> dict:
+        text = " ".join(query.casefold().split())
+        filters: dict = {}
+        assumptions: list[str] = []
+
+        def number(pattern: str, percent: bool = False):
+            match = re.search(pattern, text, re.I)
+            if not match:
+                return None
+            value = float(match.group(1).replace(",", "."))
+            return value / 100.0 if percent else value
+
+        filters["max_pe"] = number(r"p\s*/?\s*e\s*(?:ниже|меньше|до|<)\s*(\d+(?:[.,]\d+)?)")
+        filters["min_roe"] = number(r"roe\s*(?:выше|больше|от|>)\s*(\d+(?:[.,]\d+)?)\s*%?", percent=True)
+        filters["min_dividend_yield"] = number(r"дивиденд\w*[^\d]{0,20}(?:выше|больше|от|>)\s*(\d+(?:[.,]\d+)?)\s*%", percent=True)
+        if filters["max_pe"] is None and any(word in text for word in ("недорог", "привлекательн по оценке", "дешев")):
+            filters["max_pe"] = 12.0; assumptions.append("Недорогие: P/E <= 12, если P/E доступен.")
+        if filters["min_roe"] is None and "высок" in text and "roe" in text:
+            filters["min_roe"] = 0.15; assumptions.append("Высокий ROE: ROE >= 15%.")
+        if filters["min_dividend_yield"] is None and "дивиденд" in text:
+            filters["min_dividend_yield"] = 0.000001; assumptions.append("С дивидендами: trailing dividend yield > 0.")
+        if any(phrase in text for phrase in ("низк долг", "низким долг", "мало долг")):
+            filters["max_net_debt_to_equity"] = 0.5; assumptions.append("Низкий долг: Net Debt / Equity <= 0.5.")
+        sectors = [value for value in self.session.scalars(select(Stock.sector).where(Stock.sector.is_not(None)).distinct()) if value]
+        matched_sector = next((value for value in sectors if value.casefold() in text), None)
+        if matched_sector:
+            filters["sector"] = matched_sector
+        filters = {key: value for key, value in filters.items() if value is not None}
+        from app.schemas.stocks import StockRecommendRequest
+        request = StockRecommendRequest(amount=1.0, currency="KZT", profile="balanced", limit=limit, **filters)
+        result = self.recommend(request)
+        return {"query": query, "validated_filters": filters, "assumptions": assumptions,
+                "items": result["items"], "total": len(result["items"]),
+                "warning": "Запрос преобразован только в показанные validated filters; неизвестные условия не применялись."}
 
     def latest_dividends(self, stock_id: int) -> list[Dividend]:
         return list(self.session.execute(select(Dividend).where(Dividend.stock_id == stock_id).order_by(Dividend.record_date.desc(), Dividend.id.desc())).scalars())
@@ -95,6 +193,13 @@ class StockService:
             previous = self.session.execute(select(StockScore).where(StockScore.stock_id == stock.id, StockScore.kind == kind, StockScore.user_id.is_(None)).order_by(StockScore.calculated_at.desc()).limit(1)).scalar_one_or_none()
             if previous is None or previous.value != result["value"] or previous.confidence != result["confidence"]:
                 self.session.add(StockScore(stock_id=stock.id, kind=kind, value=result["value"], confidence=result["confidence"], version=VERSION, calculated_at=now, inputs=metrics))
+        states = IncrementalStateService(self.session)
+        source_url = stock.instrument.kase_url or "https://kase.kz/"
+        states.process(entity_type="stock", entity_id=str(stock.id), ticker=stock.instrument.ticker, isin=stock.instrument.isin,
+                       section="metrics", payload=metric_fields, source_url=source_url, parser_version="stock-metrics-v1")
+        states.process(entity_type="stock", entity_id=str(stock.id), ticker=stock.instrument.ticker, isin=stock.instrument.isin,
+                       section="scores", payload={kind: result["value"] for kind, result in scores.items()},
+                       source_url=source_url, parser_version=VERSION)
 
     def item(self, stock: Stock, profile: str = "balanced") -> dict:
         metrics, scores = self.computed(stock, profile)
@@ -184,6 +289,7 @@ class StockService:
             if payload.min_dividend_yield is not None and (m.get("trailing_dividend_yield") is None or m["trailing_dividend_yield"] < payload.min_dividend_yield): continue
             if payload.min_quality_score is not None and (s["quality"]["value"] is None or s["quality"]["value"] < payload.min_quality_score): continue
             if payload.min_liquidity_score is not None and (s["liquidity"]["value"] is None or s["liquidity"]["value"] < payload.min_liquidity_score): continue
+            if payload.max_net_debt_to_equity is not None and (m.get("net_debt_to_equity") is None or m["net_debt_to_equity"] > payload.max_net_debt_to_equity): continue
             filtered.append(item)
         filtered.sort(key=lambda x: (x["scores"]["personal"]["value"] is not None, x["scores"]["personal"]["value"] or -1), reverse=True)
         return {"items": filtered[:payload.limit], "amount": payload.amount, "profile": payload.profile, "warning": "Оценки являются модельными, а не обещанием роста цены."}

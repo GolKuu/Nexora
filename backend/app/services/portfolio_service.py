@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from sqlalchemy.orm import Session
 
 from app.calculations.portfolio import (
@@ -46,6 +48,7 @@ class PortfolioService:
         inflation_rates: list[float] = []
         stock_dividends = 0.0
         bond_coupons = 0.0
+        coupon_data_available = False
 
         for position in portfolio.positions:
             if position.instrument_type == "stock" or position.stock_id is not None:
@@ -66,6 +69,8 @@ class PortfolioService:
                 stock_dividends += dividend_income or 0.0
                 positions.append({"id": position.id, "instrument_type": "stock", "stock_id": stock.id, "bond_id": None,
                                   "ticker": stock.instrument.ticker, "name": stock.instrument.issuer.short_name or stock.instrument.issuer.name,
+                                  "issuer_id": stock.instrument.issuer_id,
+                                  "issuer_name": stock.instrument.issuer.short_name or stock.instrument.issuer.name,
                                   "currency": stock.instrument.currency, "quantity": position.quantity, "purchase_price": purchase_price,
                                   "purchase_date": position.purchase_date.isoformat() if position.purchase_date else None,
                                   "current_price": current_price, "market_value": None if market_value is None else round(market_value, 2),
@@ -100,6 +105,13 @@ class PortfolioService:
             if metric and metric.inflation_rate_used is not None:
                 inflation_rates.append(metric.inflation_rate_used)
 
+            eligible_coupons = [flow for flow in bond.cashflows if not flow.is_estimated and flow.coupon_amount is not None
+                                and date.today() - timedelta(days=365) <= flow.payment_date <= date.today()
+                                and (position.purchase_date is None or flow.payment_date >= position.purchase_date)]
+            if eligible_coupons:
+                coupon_data_available = True
+                bond_coupons += sum(flow.coupon_amount * position.quantity for flow in eligible_coupons)
+
             inputs.append(
                 PositionInput(
                     market_value=market_value,
@@ -115,6 +127,8 @@ class PortfolioService:
                     "bond_id": bond.id,
                     "ticker": bond.ticker,
                     "name": bond.name,
+                    "issuer_id": bond.issuer_id,
+                    "issuer_name": bond.issuer.short_name or bond.issuer.name,
                     "currency": bond.currency,
                     "quantity": position.quantity,
                     "purchase_clean_price": position.purchase_clean_price,
@@ -146,6 +160,33 @@ class PortfolioService:
             ]
         )
 
+        currency_allocation: dict[str, float] = {}
+        issuer_values: dict[tuple[int, str], float] = {}
+        for item in positions:
+            value = item["market_value"]
+            if value is None:
+                continue
+            currency = item.get("currency") or portfolio.base_currency
+            currency_allocation[currency] = currency_allocation.get(currency, 0.0) + value
+            issuer_key = (item["issuer_id"], item["issuer_name"])
+            issuer_values[issuer_key] = issuer_values.get(issuer_key, 0.0) + value
+
+        issuer_concentration = [
+            {
+                "issuer_id": issuer_id,
+                "issuer_name": issuer_name,
+                "market_value": round(value, 2),
+                # Do not invent FX conversion: percentages are comparable only
+                # when every valued position uses a single currency.
+                "percent": round(value / total_value * 100, 2)
+                if total_value and len(currency_allocation) <= 1
+                else None,
+            }
+            for (issuer_id, issuer_name), value in sorted(
+                issuer_values.items(), key=lambda pair: pair[1], reverse=True
+            )
+        ]
+
         return {
             "id": portfolio.id,
             "name": portfolio.name,
@@ -169,10 +210,15 @@ class PortfolioService:
                 else round(weighted_score["value"], 1),
                 "inflation_pct": None if avg_inflation is None else round(avg_inflation * 100, 2),
                 "dividends": round(stock_dividends, 2),
-                "coupons": round(bond_coupons, 2),
+                "coupons": round(bond_coupons, 2) if coupon_data_available else None,
                 "asset_allocation": {
                     "stocks": round(sum((p["market_value"] or 0) for p in positions if p["instrument_type"] == "stock"), 2),
                     "bonds": round(sum((p["market_value"] or 0) for p in positions if p["instrument_type"] == "bond"), 2),
                 },
+                "currency_allocation": {
+                    currency: round(value, 2)
+                    for currency, value in sorted(currency_allocation.items())
+                },
+                "issuer_concentration": issuer_concentration,
             },
         }

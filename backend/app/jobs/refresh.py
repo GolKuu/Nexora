@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from uuid import uuid4
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 
@@ -68,12 +69,14 @@ async def refresh_catalog_incremental(*, force: bool = False, idempotency_key: s
 async def refresh_stocks() -> dict:
     session = SessionLocal()
     try:
+        started_at = datetime.now(timezone.utc)
         result = await KaseStockCatalogCollector(session).collect()
         from app.models.stock import Stock
         from app.services.stock_service import StockService
         service = StockService(session)
         for stock in session.execute(select(Stock)).scalars():
             service.persist_metrics_and_scores(stock)
+        result["alerts_triggered"] = ChangeAlertEngine(session).evaluate_since(started_at)
         session.commit()
         return result
     finally:

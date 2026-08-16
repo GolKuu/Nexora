@@ -50,3 +50,29 @@ class WatchlistCreate(BaseModel):
         if self.stock is not None:
             self.instrument_type = "stock"
         return self
+
+
+class AlertCreate(BaseModel):
+    bond: str | None = None
+    stock: str | None = None
+    instrument_type: str = Field(default="bond", pattern="^(bond|stock)$")
+    kind: str = Field(pattern="^(price_below|price_above|ytm_above|ytm_below|score_above|coupon_date|maturity_date|pe_below|dividend_announced|financial_report|profit_change|score_change|company_news)$")
+    threshold: float | None = None
+
+    @model_validator(mode="after")
+    def validate_alert(self):
+        if (self.bond is None) == (self.stock is None):
+            raise ValueError("Specify exactly one of bond or stock")
+        if self.stock is not None:
+            self.instrument_type = "stock"
+            if self.kind in {"ytm_above", "ytm_below", "coupon_date", "maturity_date"}:
+                raise ValueError("Bond alert kind cannot be used for a stock")
+        elif self.kind in {"pe_below", "dividend_announced", "financial_report", "profit_change", "company_news"}:
+            raise ValueError("Stock alert kind cannot be used for a bond")
+        if self.kind in {"price_below", "price_above", "ytm_above", "ytm_below", "score_above", "pe_below"} and self.threshold is None:
+            raise ValueError("This alert kind requires threshold")
+        return self
+
+
+class AlertUpdate(BaseModel):
+    is_active: bool

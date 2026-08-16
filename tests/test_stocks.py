@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import uuid
@@ -121,6 +121,9 @@ def test_stock_detail_calculator_recommend_and_compare_api(session, client):
     _seed_stock(session, "TSTY"); session.commit()
     compare = client.post("/api/v1/stocks/compare", json={"identifiers": ["TSTX", "TSTY"], "amount": 500_000})
     assert compare.status_code == 200 and len(compare.json()["columns"]) == 2
+    analysis = client.get("/api/v1/stocks/TSTX/analysis", params={"question": "Эта акция точно вырастет?"})
+    assert analysis.status_code == 200
+    assert analysis.json()["answer"] == "Точную будущую цену определить невозможно. Я могу показать текущую оценку компании и сценарии изменения цены."
 
 
 def test_stock_peers_and_cross_asset_compare_keep_models_separate(session, client, seeded):
@@ -201,6 +204,65 @@ def test_stock_watchlist_is_separate_from_bond_watchlist(session, client):
     assert client.delete("/api/v1/watchlist/WSTX?instrument_type=stock", headers=headers).status_code == 204
 
 
+def test_stock_alert_lifecycle_for_anonymous_owner(session, client):
+    stock = _seed_stock(session, "ALRX")
+    session.commit()
+    headers = {"X-Anon-Token": uuid.uuid4().hex}
+    created = client.post("/api/v1/alerts", json={"stock": stock.instrument.ticker, "kind": "price_above", "threshold": 120}, headers=headers)
+    assert created.status_code == 201
+    body = created.json()
+    assert body["instrument_type"] == "stock" and body["threshold"] == 120
+    assert client.get("/api/v1/alerts", headers=headers).json()["items"][0]["ticker"] == "ALRX"
+    assert client.put(f"/api/v1/alerts/{body['id']}", json={"is_active": False}, headers=headers).json()["is_active"] is False
+    assert client.delete(f"/api/v1/alerts/{body['id']}", headers=headers).status_code == 204
+
+
+def test_stock_price_alert_triggers_from_incremental_change(session):
+    from app.models.portfolio import Alert
+    from app.services.change_alerts import ChangeAlertEngine
+    from app.services.incremental import IncrementalStateService
+    stock = _seed_stock(session, "TRGX")
+    alert = Alert(user_id=None, anonymous_token="trigger-test", bond_id=None, stock_id=stock.id,
+                  instrument_type="stock", kind="price_above", threshold=120, is_active=True)
+    session.add(alert); session.flush()
+    states = IncrementalStateService(session)
+    states.process(entity_type="stock", entity_id=str(stock.id), ticker="TRGX", section="quote",
+                   payload={"price": 100}, source_url="https://kase.kz/api/instruments/securities/")
+    states.process(entity_type="stock", entity_id=str(stock.id), ticker="TRGX", section="quote",
+                   payload={"price": 130}, source_url="https://kase.kz/api/instruments/securities/")
+    assert ChangeAlertEngine(session).evaluate_since(datetime.now(timezone.utc) - timedelta(minutes=1)) == 1
+    assert alert.last_triggered_at is not None
+
+
+def test_natural_language_filters_are_explicit_and_validated(session, client):
+    _seed_stock(session, "NLTX")
+    session.commit()
+    response = client.post("/api/v1/stocks/search", json={"query": "P/E ниже 5, ROE выше 10% и с дивидендами", "limit": 10})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["validated_filters"] == {"max_pe": 5.0, "min_roe": 0.1, "min_dividend_yield": 0.000001}
+    assert any(item["ticker"] == "NLTX" for item in body["items"])
+
+
+def test_stock_history_and_financial_change_analysis(session, client):
+    from app.models.stock import StockFinancialPeriod, StockQuote
+    stock = _seed_stock(session, "HSTX")
+    session.add_all([
+        StockFinancialPeriod(stock_id=stock.id, period_end=date(2025, 6, 30), period_type="Q2", revenue=300, net_income=30, total_equity=200, total_debt=80, operating_cash_flow=25),
+        StockFinancialPeriod(stock_id=stock.id, period_end=date(2026, 3, 31), period_type="Q1", revenue=350, net_income=35, total_equity=220, total_debt=75, operating_cash_flow=30),
+        StockFinancialPeriod(stock_id=stock.id, period_end=date(2026, 6, 30), period_type="Q2", revenue=420, net_income=50, total_equity=250, total_debt=70, operating_cash_flow=45),
+        StockQuote(stock_id=stock.id, timestamp=datetime(2026, 8, 15, tzinfo=timezone.utc), last=105, close=105, data_mode="end_of_day", source="kase_public_website"),
+    ])
+    session.commit()
+    changes = client.get("/api/v1/stocks/HSTX/financial-changes")
+    assert changes.status_code == 200
+    body = changes.json()
+    assert body["vs_previous"]["revenue_change"] == pytest.approx(0.2)
+    assert body["vs_year_ago"]["profit_change"] == pytest.approx(2 / 3)
+    history = client.get("/api/v1/stocks/HSTX/history").json()
+    assert len(history["quotes"]) == 2 and {row["last"] for row in history["quotes"]} == {100, 105}
+
+
 def test_portfolio_mixes_stock_and_bond_without_crossing_formulas(session, seeded):
     from sqlalchemy import select
     from app.models.bond import Bond
@@ -220,3 +282,5 @@ def test_portfolio_mixes_stock_and_bond_without_crossing_formulas(session, seede
     stock_row = next(row for row in result["positions"] if row["instrument_type"] == "stock")
     assert stock_row["ytm"] is None and stock_row["modified_duration"] is None
     assert result["summary"]["asset_allocation"]["stocks"] > 0
+    assert result["summary"]["currency_allocation"]["KZT"] > 0
+    assert result["summary"]["issuer_concentration"][0]["issuer_name"]

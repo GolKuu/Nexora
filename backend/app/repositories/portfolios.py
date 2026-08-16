@@ -91,15 +91,32 @@ class AlertRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def list_for_user(self, user_id: int) -> list[Alert]:
-        return list(
-            self.session.execute(
-                select(Alert).where(Alert.user_id == user_id)
-            ).scalars()
-        )
+    def list_for_owner(self, *, user_id: int | None, token: str | None) -> list[Alert]:
+        stmt = select(Alert).options(selectinload(Alert.bond), selectinload(Alert.stock))
+        if user_id is not None:
+            stmt = stmt.where(Alert.user_id == user_id)
+        elif token:
+            stmt = stmt.where(Alert.anonymous_token == token)
+        else:
+            return []
+        return list(self.session.execute(stmt.order_by(Alert.id)).scalars())
+
+    def get_for_owner(self, alert_id: int, *, user_id: int | None, token: str | None) -> Alert | None:
+        stmt = select(Alert).where(Alert.id == alert_id)
+        if user_id is not None:
+            stmt = stmt.where(Alert.user_id == user_id)
+        elif token:
+            stmt = stmt.where(Alert.anonymous_token == token)
+        else:
+            return None
+        return self.session.execute(stmt).scalar_one_or_none()
 
     def add(self, **values) -> Alert:
         alert = Alert(**values)
         self.session.add(alert)
         self.session.flush()
         return alert
+
+    def remove(self, alert: Alert) -> None:
+        self.session.delete(alert)
+        self.session.flush()

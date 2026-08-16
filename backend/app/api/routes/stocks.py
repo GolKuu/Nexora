@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_session
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.models.stock import Stock
-from app.schemas.stocks import StockCompareRequest, StockInvestmentRequest, StockRecommendRequest
+from app.schemas.stocks import StockCompareRequest, StockInvestmentRequest, StockRecommendRequest, UniversalSearchRequest
 from app.services.stock_service import StockService
+from app.services.stock_analyst import StockAnalystService
 
 router = APIRouter()
 
@@ -21,6 +22,11 @@ def list_stocks(q: str | None = None, limit: int = Query(100, ge=1, le=500), off
 @router.get("/search")
 def search_stocks(q: str = Query(min_length=1), limit: int = Query(20, ge=1, le=100), session: Session = Depends(get_session)) -> dict:
     return StockService(session).list(query=q, limit=limit)
+
+
+@router.post("/search")
+def interpret_stock_search(payload: UniversalSearchRequest, session: Session = Depends(get_session)) -> dict:
+    return StockService(session).interpret_search(payload.query, payload.limit)
 
 
 @router.get("/top")
@@ -76,9 +82,19 @@ def stock_peers(identifier: str, limit: int = Query(8, ge=1, le=20), session: Se
     return StockService(session).peers(identifier, limit)
 
 
+@router.get("/{identifier}/financial-changes")
+def stock_financial_changes(identifier: str, session: Session = Depends(get_session)) -> dict:
+    return StockService(session).financial_change_analysis(identifier)
+
+
+@router.get("/{identifier}/history")
+def stock_history(identifier: str, limit: int = Query(252, ge=1, le=2000), session: Session = Depends(get_session)) -> dict:
+    return StockService(session).history(identifier, limit)
+
+
 @router.get("/{identifier}/analysis")
-def stock_analysis(identifier: str, session: Session = Depends(get_session)) -> dict:
+async def stock_analysis(identifier: str, question: str | None = None, session: Session = Depends(get_session)) -> dict:
     card = StockService(session).card(identifier)
+    explanation = await StockAnalystService().explain(card, question)
     return {"ticker": card["ticker"], "role": "Stock Analyst", "facts": {"metrics": card["metrics"], "scores": card["scores"], "data_timestamp": card["data_timestamp"], "source": card["source"]},
-            "answer": "Точную будущую цену определить невозможно. Я могу показать текущую оценку компании и сценарии изменения цены.",
-            "rules": ["Только проверенные backend-данные", "Отсутствующие показатели не выдумываются", "Сценарий не является прогнозом"]}
+            **explanation, "rules": ["Только проверенные backend-данные", "Отсутствующие показатели не выдумываются", "Сценарий не является прогнозом"]}

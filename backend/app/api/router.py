@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    alerts,
     bonds,
     browser,
     compare,
@@ -24,3 +25,4 @@ api_router.include_router(compare.router, tags=["compare"])
 api_router.include_router(settings_routes.router, prefix="/settings", tags=["settings"])
 api_router.include_router(portfolios.router, prefix="/portfolios", tags=["portfolios"])
 api_router.include_router(watchlist.router, prefix="/watchlist", tags=["watchlist"])
+api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
