@@ -1,8 +1,11 @@
 # Stock Forecast AI — model validation report
 
-Status: **production release not yet eligible on the bundled KASE dataset**  
-Report date: 2026-08-17  
-Feature version: `stock-features-v1`  
+Status: **production release not yet eligible on the bundled KASE dataset**
+
+Report date: 2026-08-17
+
+Feature version: `stock-features-v1`
+
 Model family: `kase-quantile-ensemble-v1`
 
 This report deliberately contains no invented win rate. The bundled verified
@@ -76,4 +79,3 @@ history refusal. The full project suite currently passes.
 The training job will replace the empty metric cells only after every number is
 computed from stored out-of-sample forecasts. Until then the UI shows history,
 the minimum-observation reason and no future band.
-
