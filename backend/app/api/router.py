@@ -10,6 +10,7 @@ from app.api.routes import (
     instruments,
     meta,
     portfolios,
+    scoring,
     settings as settings_routes,
     stocks,
     watchlist,
@@ -18,6 +19,7 @@ from app.api.routes import (
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(meta.router, tags=["meta"])
+api_router.include_router(scoring.router, tags=["scoring"])
 api_router.include_router(bonds.router, prefix="/bonds", tags=["bonds"])
 api_router.include_router(stocks.router, prefix="/stocks", tags=["stocks"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])

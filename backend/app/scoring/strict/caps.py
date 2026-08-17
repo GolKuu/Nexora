@@ -176,7 +176,7 @@ BANK_CAPS: tuple[CapRule, ...] = (
     CapRule(
         "LIQUIDITY_BELOW_15", 65.0,
         "Практически нет ликвидности: из позиции трудно выйти.",
-        lambda s: _score(s, "liquidity") < 15.0,
+        lambda s: _score(s, "market_liquidity") < 15.0,
     ),
 )
 

@@ -22,6 +22,7 @@ from app.models.incremental import (
 from app.models.metrics import BondMetric
 from app.models.portfolio import Alert, Portfolio, PortfolioPosition, Watchlist
 from app.models.scores import BondScore, ScoreComponent
+from app.models.strict_scores import StrictScoreSnapshot
 from app.models.source import DataSource, RawKaseData
 from app.models.user import User, UserSettings
 from app.models.news import (CompanyAlias, EventCluster, EventMarketReaction, MarketEvent,
@@ -63,6 +64,7 @@ __all__ = [
     "RawBrowserSnapshot",
     "RawKaseData",
     "ScoreComponent",
+    "StrictScoreSnapshot",
     "User",
     "UserSettings",
     "Watchlist",

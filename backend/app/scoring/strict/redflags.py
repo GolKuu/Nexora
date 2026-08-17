@@ -21,7 +21,13 @@ from app.scoring.strict.versions import RED_FLAG_VERSION
 #: Ceiling on the combined penalty. Beyond this the hard caps, not the running
 #: subtraction, are what keeps the score honest - and stacking every penalty
 #: linearly would double-count the same underlying problem.
-MAX_TOTAL_PENALTY = 45.0
+MAX_TOTAL_PENALTY = 25.0
+
+#: Flags whose signal is *also* a weighted component (leverage, coverage, cash
+#: flow) carry a deliberately small penalty: the component already moved the
+#: score, and the flag's job is to make the reason visible and to add a nudge,
+#: not to punish the same fact twice. Flags for facts no component measures -
+#: credit events, dead order books, source conflicts - carry the real weight.
 
 CRITICAL = "critical"
 HIGH = "high"
@@ -124,7 +130,7 @@ class RedFlagEngine:
                     "NEGATIVE_FCF",
                     HIGH if years >= 3 else MEDIUM,
                     f"Отрицательный свободный денежный поток ({years} г.).",
-                    4.0 + 2.0 * min(years, 3),
+                    2.0 + 1.0 * min(years, 3),
                     free_cash_flow=f.free_cash_flow,
                     years=years,
                 )
@@ -136,7 +142,7 @@ class RedFlagEngine:
                     "HIGH_LEVERAGE",
                     HIGH,
                     f"Долговая нагрузка {leverage:.1f}x EBITDA.",
-                    min(6.0 + (leverage - 5.0) * 2.0, 14.0),
+                    min(3.0 + (leverage - 5.0), 8.0),
                     leverage=leverage,
                 )
             )
@@ -146,7 +152,7 @@ class RedFlagEngine:
                     "WEAK_INTEREST_COVERAGE",
                     HIGH,
                     f"Прибыли хватает лишь на {f.interest_coverage:.1f}x процентных платежей.",
-                    14.0 if f.interest_coverage < 1.0 else 8.0,
+                    8.0 if f.interest_coverage < 1.0 else 5.0,
                     interest_coverage=f.interest_coverage,
                 )
             )
@@ -169,7 +175,7 @@ class RedFlagEngine:
                     "RISING_DEBT",
                     MEDIUM,
                     f"Долг вырос на {f.debt_change_1y * 100:.0f}% за год.",
-                    5.0,
+                    4.0,
                     debt_change_1y=f.debt_change_1y,
                 )
             )
