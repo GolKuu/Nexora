@@ -244,14 +244,24 @@ def infer_coupon_frequency(
 def classify_bond_type(fin_sec: str | None, is_financial: bool | None) -> str:
     """Map KASE's ``fin_sec_ru`` sector label onto our bond taxonomy."""
     text = (fin_sec or "").lower()
-    if "государственн" in text or "мео" in text or "министерств" in text:
-        return BondType.GOVERNMENT.value
-    if "международн" in text:
-        return BondType.INTERNATIONAL.value
-    if "муниципальн" in text or "местных исполнительных" in text:
-        return BondType.MUNICIPAL.value
-    if "квазигосударств" in text:
+    if (
+        "квазигосударств" in text
+        or "quasi-sovereign" in text
+        or "quasi sovereign" in text
+        or "quasi-government" in text
+    ):
         return BondType.QUASI_SOVEREIGN.value
+    if (
+        "государственн" in text
+        or "government securit" in text
+        or "мео" in text
+        or "министерств" in text
+    ):
+        return BondType.GOVERNMENT.value
+    if "международн" in text or "international financial" in text:
+        return BondType.INTERNATIONAL.value
+    if "муниципальн" in text or "местных исполнительных" in text or "municipal" in text:
+        return BondType.MUNICIPAL.value
     if is_financial:
         return BondType.BANK.value
     return BondType.CORPORATE.value

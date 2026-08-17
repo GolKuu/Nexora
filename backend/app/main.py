@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI):
     if settings.is_serverless:
         from app.db.bootstrap import bootstrap_serverless_database
         from app.db.session import SessionLocal
+        from app.services.government_market import ensure_government_market
         from app.services.stock_market import ensure_fresh_stock_market
 
         bootstrap = bootstrap_serverless_database()
@@ -35,6 +36,8 @@ async def lifespan(app: FastAPI):
         try:
             market = await ensure_fresh_stock_market(market_session)
             logger.info("serverless KASE equity bootstrap: %s", market)
+            government = await ensure_government_market(market_session)
+            logger.info("serverless KASE government bootstrap: %s", government)
         finally:
             market_session.close()
     logger.info(

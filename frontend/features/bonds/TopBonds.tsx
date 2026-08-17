@@ -58,8 +58,12 @@ export function TopBonds({ limit = 10 }: { limit?: number }) {
         />
       ) : !data?.items.length ? (
         <EmptyState
-          title="Пока нет оцененных выпусков"
-          description="Загрузите данные: python scripts/seed_demo.py"
+          title={category ? "В этой категории пока нет выпусков" : "Пока нет оцененных выпусков"}
+          description={
+            category
+              ? "Выберите другую категорию или повторите проверку после обновления данных KASE."
+              : "Рейтинг появится после получения и оценки рыночных данных KASE."
+          }
         />
       ) : (
         <div>
