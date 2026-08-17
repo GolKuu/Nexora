@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.collectors.kase_history_importer import SOURCE as LICENSED_SOURCE
 from app.core.enums import DataMode
-from app.forecast.calendar import kase_date, kase_holidays
+from app.forecast.calendar import KASE_TZ, kase_date, kase_holidays
 from app.models.incremental import DataChangeSet
 from app.models.market import BondQuote, BondTrade
 from app.models.stock import StockQuote
@@ -61,6 +61,18 @@ def _expected_sessions(first: date, last: date) -> int:
             count += 1
         cursor += timedelta(days=1)
     return count
+
+
+def _aware(value: datetime) -> datetime:
+    """Make a stored timestamp comparable.
+
+    Postgres returns these tz-aware, but a SQLite deployment can hand back a
+    naive value for a row written before the column carried an offset. A naive
+    reading is exchange-local (that is what ``kase_date`` assumes too), so it is
+    stamped with the exchange offset rather than with UTC - stamping UTC would
+    move late-session snapshots onto the wrong trading day.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=KASE_TZ)
 
 
 def _positive(value: float | None) -> float | None:
@@ -264,8 +276,9 @@ class PublicSeriesService:
             if not include_licensed and (row.source or "") in LICENSED_SOURCES:
                 excluded += 1
                 continue
-            bar = self._bar_for(bars, row.timestamp)
-            bar.touch(row.timestamp, row.source, row.data_mode)
+            timestamp = _aware(row.timestamp)
+            bar = self._bar_for(bars, timestamp)
+            bar.touch(timestamp, row.source, row.data_mode)
             native_open, native_high = _positive(row.open), _positive(row.high)
             native_low, native_close = _positive(row.low), _positive(row.close)
             if native_open is not None and native_close is not None:
@@ -273,8 +286,8 @@ class PublicSeriesService:
             else:
                 # The public catalogue publishes only a last price and the
                 # previous session's close, so the bar is what we sampled.
-                bar.observe_price(row.timestamp, _positive(row.last) or native_close)
-            bar.observe_book(row.timestamp, _positive(row.bid), _positive(row.ask))
+                bar.observe_price(timestamp, _positive(row.last) or native_close)
+            bar.observe_book(timestamp, _positive(row.bid), _positive(row.ask))
             bar.observe_cumulative(
                 _non_negative(row.volume), _non_negative(row.turnover), row.number_of_trades
             )
@@ -289,11 +302,12 @@ class PublicSeriesService:
             if not include_licensed and (row.source or "") in LICENSED_SOURCES:
                 excluded += 1
                 continue
-            bar = self._bar_for(bars, row.timestamp)
-            bar.touch(row.timestamp, row.source, row.data_mode)
-            bar.observe_price(row.timestamp, _positive(row.clean_price) or _positive(row.last))
-            bar.observe_ytm(row.timestamp, row.ytm)
-            bar.observe_book(row.timestamp, _positive(row.bid), _positive(row.ask))
+            timestamp = _aware(row.timestamp)
+            bar = self._bar_for(bars, timestamp)
+            bar.touch(timestamp, row.source, row.data_mode)
+            bar.observe_price(timestamp, _positive(row.clean_price) or _positive(row.last))
+            bar.observe_ytm(timestamp, row.ytm)
+            bar.observe_book(timestamp, _positive(row.bid), _positive(row.ask))
             bar.observe_cumulative(
                 _non_negative(row.volume), _non_negative(row.turnover), row.number_of_trades
             )
@@ -313,13 +327,13 @@ class PublicSeriesService:
             if not include_licensed and (row.source or "") in LICENSED_SOURCES:
                 excluded += 1
                 continue
-            day = kase_date(row.timestamp)
-            known = day in bars
-            bar = self._bar_for(bars, row.timestamp)
+            timestamp = _aware(row.timestamp)
+            known = kase_date(timestamp) in bars
+            bar = self._bar_for(bars, timestamp)
             if not known:
-                bar.touch(row.timestamp, row.source, row.data_mode)
-                bar.observe_price(row.timestamp, _positive(row.clean_price) or _positive(row.price))
-                bar.observe_ytm(row.timestamp, row.ytm)
+                bar.touch(timestamp, row.source, row.data_mode)
+                bar.observe_price(timestamp, _positive(row.clean_price) or _positive(row.price))
+                bar.observe_ytm(timestamp, row.ytm)
             bar.observe_cumulative(
                 _non_negative(row.quantity), _non_negative(row.amount), None
             )
@@ -386,6 +400,11 @@ class PublicSeriesService:
         first = bars[0].day if bars else None
         last = bars[-1].day if bars else None
         expected = _expected_sessions(first, last) if first and last else 0
+        # A session can land on a day our holiday table calls closed - the
+        # exchange traded, or the table drifted. Counting those against the
+        # expected total would push coverage above 100%, so they are reported
+        # separately instead of inflating the ratio.
+        on_calendar = sum(1 for bar in bars if _is_trading_day(bar.day))
         longest_gap = 0
         for previous, current in zip(bars, bars[1:]):
             gap = _expected_sessions(previous.day + timedelta(days=1), current.day) - 1
@@ -397,7 +416,8 @@ class PublicSeriesService:
             "first_session": first.isoformat() if first else None,
             "last_session": last.isoformat() if last else None,
             "expected_sessions": expected,
-            "coverage_ratio": (len(bars) / expected) if expected else None,
+            "sessions_outside_calendar": len(bars) - on_calendar,
+            "coverage_ratio": (on_calendar / expected) if expected else None,
             "longest_gap_sessions": longest_gap,
             "native_bars": sum(1 for bar in bars if bar.native),
             "sampled_bars": sum(1 for bar in bars if not bar.native),
@@ -421,8 +441,10 @@ class PublicSeriesService:
         """
         if not session_days:
             return []
+        # Exchange-local midnight: the stored values are session timestamps, so
+        # the window has to be expressed on the same clock the sessions use.
         window_start = datetime.combine(
-            session_days[0], datetime.min.time(), tzinfo=timezone.utc
+            session_days[0], datetime.min.time(), tzinfo=KASE_TZ
         )
         rows = list(
             self.session.execute(
@@ -439,7 +461,7 @@ class PublicSeriesService:
         known = set(session_days)
         grouped: dict[date, list[DataChangeSet]] = {}
         for row in rows:
-            day = kase_date(row.detected_at)
+            day = kase_date(_aware(row.detected_at))
             if day in known:
                 grouped.setdefault(day, []).append(row)
         markers = []

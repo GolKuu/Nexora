@@ -7,6 +7,8 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { ScoreBar, ScoreDial } from "@/components/ui/ScoreDial";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { WatchButton } from "@/features/bonds/WatchButton";
+import { ChangeHistoryPanel } from "@/features/charts/ChangeHistoryPanel";
+import { SeriesPanel } from "@/features/charts/SeriesPanel";
 import { NewsImpactPanel } from "@/features/stocks/NewsImpactPanel";
 import { ForecastPanel } from "@/features/stocks/ForecastPanel";
 import { StockAlerts } from "@/features/stocks/StockAlerts";
@@ -26,6 +28,8 @@ export default function StockPage({params}:{params:Promise<{identifier:string}>}
     <ForecastPanel ticker={data.ticker} currency={data.currency}/>
     <div className="grid gap-4 lg:grid-cols-3"><div className="space-y-4 lg:col-span-2">
       <Card><CardBody className="grid gap-5 sm:grid-cols-[auto_1fr]"><ScoreDial value={data.scores.investment?.value} label="из 100" caption="Общая оценка"/><div><p className="text-3xl font-semibold tabular">{formatMoney(data.price,data.currency,2)}</p><p className="mt-1 text-sm text-slate-500">{data.simple.valuation}. {data.simple.important}</p><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">{Object.entries(SCORE_LABELS).map(([kind,label])=><ScoreBar key={kind} label={label} value={data.scores[kind]?.value}/>)}</div></div></CardBody></Card>
+      <SeriesPanel kind="stock" identifier={data.ticker}/>
+      <ChangeHistoryPanel kind="stock" identifier={data.ticker}/>
       <NewsImpactPanel ticker={data.ticker}/>
       <Card><CardHeader title="Почему такая оценка?" subtitle="Недоступные показатели не получают ноль — они снижают Data Quality."/><CardBody className="grid gap-3 sm:grid-cols-2">{data.score_explanation.filter(s=>SCORE_LABELS[s.kind]).map(score=><div key={score.kind} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800"><div className="flex justify-between"><span>{SCORE_LABELS[score.kind]}</span><strong>{score.value==null?"нет данных":`${Math.round(score.value)}/100`}</strong></div><p className="mt-1 text-xs text-slate-500">Покрытие данных: {Math.round(score.confidence*100)}%</p></div>)}</CardBody></Card>
       {uiMode==="pro"?<Card><CardHeader title="Pro показатели" subtitle="Для банков EV/EBITDA не используется как основной показатель."/><CardBody className="grid grid-cols-2 gap-4 sm:grid-cols-3"><Metric label="P/E" value={formatNumber(data.metrics.pe)}/><Metric label="P/B" value={formatNumber(data.metrics.pb)}/><Metric label="EV/EBITDA" value={formatNumber(data.metrics.ev_ebitda)}/><Metric label="Dividend Yield" value={formatRate(data.metrics.trailing_dividend_yield)}/><Metric label="ROE" value={formatRate(data.metrics.roe)}/><Metric label="ROA" value={formatRate(data.metrics.roa)}/><Metric label="Revenue Growth" value={formatRate(data.metrics.revenue_growth)}/><Metric label="Profit Growth" value={formatRate(data.metrics.earnings_growth)}/><Metric label="Net margin" value={formatRate(data.metrics.net_margin)}/><Metric label="Net debt" value={formatCompact(data.metrics.net_debt)}/><Metric label="Bid / Ask" value={`${formatMoney(data.bid,data.currency,2)} / ${formatMoney(data.ask,data.currency,2)}`}/></CardBody></Card>:null}

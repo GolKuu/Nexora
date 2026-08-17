@@ -647,6 +647,7 @@ export interface SeriesCoverage {
   first_session: string | null;
   last_session: string | null;
   expected_sessions: number;
+  sessions_outside_calendar: number;
   coverage_ratio: number | null;
   longest_gap_sessions: number;
   native_bars: number;

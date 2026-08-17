@@ -4,8 +4,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -14,10 +13,10 @@ import {
 
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
-import { useCashflows, useHistory } from "@/hooks/useBonds";
+import { useCashflows } from "@/hooks/useBonds";
 import { formatDate, formatMoney, formatNumber } from "@/utils/format";
 
-const AXIS = { fontSize: 11, fill: "#94a3b8" };
+const AXIS = { fontSize: 11, fill: "var(--viz-ink-muted)" };
 
 export function CashflowChart({
   ticker,
@@ -34,6 +33,8 @@ export function CashflowChart({
     principal: flow.principal_amount ?? 0,
   }));
 
+  const LABELS: Record<string, string> = { coupon: "Купон", principal: "Номинал" };
+
   return (
     <Card>
       <CardHeader
@@ -46,11 +47,17 @@ export function CashflowChart({
         ) : rows.length === 0 ? (
           <EmptyState title="Нет предстоящих выплат" />
         ) : (
-          <div className="h-56 w-full">
+          <div className="viz h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="date" tick={AXIS} tickLine={false} axisLine={false} />
+              <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} accessibilityLayer>
+                <CartesianGrid stroke="var(--viz-grid)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={AXIS}
+                  tickLine={false}
+                  axisLine={{ stroke: "var(--viz-axis)" }}
+                  minTickGap={24}
+                />
                 <YAxis
                   tick={AXIS}
                   tickLine={false}
@@ -59,70 +66,37 @@ export function CashflowChart({
                   tickFormatter={(v: number) => formatNumber(v, 0)}
                 />
                 <Tooltip
+                  cursor={{ fill: "var(--viz-grid)", fillOpacity: 0.4 }}
                   formatter={(value: number, name) => [
                     formatMoney(value, currency, 2),
-                    name === "coupon" ? "Купон" : "Номинал",
+                    LABELS[String(name)] ?? String(name),
                   ]}
                   contentStyle={{ fontSize: 12, borderRadius: 12 }}
                 />
-                <Bar dataKey="coupon" stackId="a" fill="#14b8a6" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="principal" stackId="a" fill="#6366f1" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </CardBody>
-    </Card>
-  );
-}
-
-export function PriceHistoryChart({ ticker }: { ticker: string }) {
-  const { data, isLoading } = useHistory(ticker, 365);
-
-  const rows = (data ?? [])
-    .filter((point) => point.clean_price !== null)
-    .map((point) => ({
-      date: formatDate(point.timestamp),
-      price: point.clean_price,
-      ytm: point.ytm === null ? null : point.ytm * 100,
-    }));
-
-  return (
-    <Card>
-      <CardHeader title="История цены" subtitle="Чистая цена, % от номинала" />
-      <CardBody>
-        {isLoading ? (
-          <Skeleton className="h-56 w-full" />
-        ) : rows.length < 2 ? (
-          <EmptyState
-            title="Истории пока нет"
-            description="Данные появятся после нескольких обновлений котировок."
-          />
-        ) : (
-          <div className="h-56 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="date" tick={AXIS} tickLine={false} axisLine={false} />
-                <YAxis
-                  tick={AXIS}
-                  tickLine={false}
-                  axisLine={false}
-                  width={50}
-                  domain={["auto", "auto"]}
+                <Legend
+                  formatter={(name) => LABELS[String(name)] ?? String(name)}
+                  wrapperStyle={{ fontSize: 12 }}
                 />
-                <Tooltip
-                  formatter={(value: number) => formatNumber(value, 2)}
-                  contentStyle={{ fontSize: 12, borderRadius: 12 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="price"
-                  stroke="#0ea5e9"
+                {/* The 2px stroke in the surface colour is the gap that keeps
+                    the two stacked segments apart without a border. */}
+                <Bar
+                  dataKey="coupon"
+                  stackId="a"
+                  fill="var(--viz-series-1)"
+                  stroke="var(--viz-surface)"
                   strokeWidth={2}
-                  dot={false}
+                  maxBarSize={24}
                 />
-              </LineChart>
+                <Bar
+                  dataKey="principal"
+                  stackId="a"
+                  fill="var(--viz-series-2)"
+                  stroke="var(--viz-surface)"
+                  strokeWidth={2}
+                  maxBarSize={24}
+                  radius={[4, 4, 0, 0]}
+                />
+              </BarChart>
             </ResponsiveContainer>
           </div>
         )}

@@ -124,6 +124,30 @@ def test_coverage_reports_gaps_and_session_to_session_change(session, public_sto
     assert coverage["chartable"] is True
 
 
+def test_session_on_a_calendar_holiday_never_pushes_coverage_above_full(session, public_stock):
+    from datetime import date, datetime as dt
+
+    from app.forecast.calendar import kase_holidays
+
+    holiday = next(day for day in sorted(kase_holidays(date.today().year)) if day.weekday() < 5)
+    session.add_all([
+        _quote(public_stock.id, _session_at(3, 15), last=100.0),
+        _quote(public_stock.id, _session_at(1, 15), last=101.0),
+        _quote(
+            public_stock.id,
+            dt.combine(holiday, dt.min.time().replace(hour=12), tzinfo=KASE_TZ),
+            last=99.0,
+        ),
+    ])
+    session.commit()
+
+    coverage = PublicSeriesService(session).stock(
+        public_stock.instrument.ticker, days=400
+    )["coverage"]
+    assert coverage["sessions_outside_calendar"] == 1
+    assert coverage["coverage_ratio"] is not None and coverage["coverage_ratio"] <= 1
+
+
 def test_single_session_is_honestly_not_chartable(session, public_stock):
     session.add(_quote(public_stock.id, _session_at(1, 15), last=100.0))
     session.commit()

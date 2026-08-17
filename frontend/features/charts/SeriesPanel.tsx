@@ -545,17 +545,20 @@ function CoverageNote({ data }: { data: SeriesResponse }) {
     <Card>
       <CardBody className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
         <p>
-          Сессий: <strong className="tabular">{coverage.sessions}</strong> из{" "}
-          <span className="tabular">{coverage.expected_sessions}</span> торговых дней периода
+          Сессий с данными: <strong className="tabular">{coverage.sessions}</strong>; торговых
+          дней в периоде: <span className="tabular">{coverage.expected_sessions}</span>
           {coverage.coverage_ratio !== null
-            ? ` (покрытие ${formatPercent(coverage.coverage_ratio * 100, 0)})`
+            ? `, покрытие ${formatPercent(coverage.coverage_ratio * 100, 0)}`
             : ""}
           {coverage.first_session
-            ? `; с ${coverage.first_session} по ${coverage.last_session}`
+            ? `; период с ${coverage.first_session} по ${coverage.last_session}`
             : ""}
           . Наблюдений: <span className="tabular">{coverage.observations}</span>
           {coverage.longest_gap_sessions
             ? `; максимальный пропуск — ${coverage.longest_gap_sessions} сессий`
+            : ""}
+          {coverage.sessions_outside_calendar
+            ? `; вне торгового календаря — ${coverage.sessions_outside_calendar}`
             : ""}
           .
         </p>
