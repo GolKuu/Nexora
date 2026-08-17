@@ -326,7 +326,9 @@ class BondService:
         limit: int = 10,
         *,
         category: str | None = None,
+        exclude_government: bool = False,
         currency: str | None = None,
+        min_maturity_years: float | None = None,
         max_maturity_years: float | None = None,
         min_ytm: float | None = None,
         min_real_ytm: float | None = None,
@@ -344,6 +346,14 @@ class BondService:
         rows = self.list_view(bonds)
         if category:
             rows = [r for r in rows if r["bond_type"] == category]
+        if exclude_government:
+            rows = [r for r in rows if r["bond_type"] != "government"]
+        if min_maturity_years is not None:
+            rows = [
+                r for r in rows
+                if r.get("years_to_maturity") is not None
+                and r["years_to_maturity"] >= min_maturity_years
+            ]
         if min_ytm is not None:
             rows = [
                 r for r in rows

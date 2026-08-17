@@ -22,9 +22,18 @@ export const bondsService = {
     return api.get<BondListResponse>(`/bonds${suffix ? `?${suffix}` : ""}`);
   },
 
-  top: (limit = 10, category?: string) => {
+  top: (
+    limit = 10,
+    category?: string,
+    excludeGovernment = false,
+    minMaturityYears?: number,
+  ) => {
     const query = new URLSearchParams({ limit: String(limit) });
     if (category) query.set("category", category);
+    if (excludeGovernment) query.set("exclude_government", "true");
+    if (minMaturityYears !== undefined) {
+      query.set("min_maturity_years", String(minMaturityYears));
+    }
     return api.get<BondListResponse>(`/bonds/top?${query}`);
   },
 

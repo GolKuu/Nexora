@@ -118,6 +118,15 @@ def test_top_can_be_filtered_by_category(api):
     assert all(i["bond_type"] == "government" for i in items)
 
 
+def test_top_can_exclude_government_and_filter_minimum_maturity(api):
+    items = api.get(
+        "/bonds/top?limit=10&exclude_government=true&min_maturity_years=3"
+    ).json()["items"]
+    assert items
+    assert all(item["bond_type"] != "government" for item in items)
+    assert all(item["years_to_maturity"] >= 3 for item in items)
+
+
 def test_search_matches_ticker_and_name(api):
     assert api.get("/bonds/search?q=DBNK").json()["items"]
     assert api.get("/bonds/search?q=демо").json()["total"] >= 0

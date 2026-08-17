@@ -13,10 +13,15 @@ import type {
   PeersResponse,
 } from "@/types/api";
 
-export function useTopBonds(limit = 10, category?: string) {
+export function useTopBonds(
+  limit = 10,
+  category?: string,
+  excludeGovernment = false,
+  minMaturityYears?: number,
+) {
   return useSWR<BondListResponse>(
-    ["top", limit, category ?? ""],
-    () => bondsService.top(limit, category),
+    ["top", limit, category ?? "", excludeGovernment, minMaturityYears ?? ""],
+    () => bondsService.top(limit, category, excludeGovernment, minMaturityYears),
     { revalidateOnFocus: false },
   );
 }

@@ -123,7 +123,12 @@ def top_bonds(
     session: Session = Depends(get_session),
     limit: int = Query(default=10, ge=1, le=50),
     category: str | None = Query(default=None, description="Тип выпуска"),
+    exclude_government: bool = Query(
+        default=False,
+        description="Исключить государственные ценные бумаги",
+    ),
     currency: str | None = Query(default=None),
+    min_maturity_years: float | None = Query(default=None, ge=0),
     max_maturity_years: float | None = Query(default=None, gt=0),
     min_ytm: float | None = Query(default=None, description="Доходность в %, минимум"),
     min_real_ytm: float | None = Query(default=None, description="Реальная доходность в %"),
@@ -139,7 +144,9 @@ def top_bonds(
     items = service.top(
         limit=limit,
         category=category,
+        exclude_government=exclude_government,
         currency=currency,
+        min_maturity_years=min_maturity_years,
         max_maturity_years=max_maturity_years,
         min_ytm=min_ytm,
         min_real_ytm=min_real_ytm,
