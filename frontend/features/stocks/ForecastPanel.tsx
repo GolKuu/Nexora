@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
-import { useStockForecast } from "@/hooks/useStocks";
+import { useStockForecast, useStockForecastPerformance } from "@/hooks/useStocks";
 import { formatDate, formatMoney, formatRate } from "@/utils/format";
 
 const HORIZONS = [{key: "1d", label: "1Д"}, {key: "5d", label: "5Д"}, {key: "20d", label: "1М"}, {key: "60d", label: "3М"}];
@@ -19,13 +19,19 @@ const FACTORS: Record<string, string> = {
 };
 
 function pct(value?: number) { return value == null ? "—" : formatRate(value, 1); }
+function numeric(value: unknown): number | null { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function dayLabel(value: string) { return new Intl.DateTimeFormat("ru-RU", {day: "2-digit", month: "short"}).format(new Date(value)); }
 
 export function ForecastPanel({ticker, currency}: {ticker: string; currency: string}) {
   const [horizon, setHorizon] = useState("20d");
   const {data, isLoading, error} = useStockForecast(ticker, horizon);
+  const {data: performance} = useStockForecastPerformance(ticker);
   const selected = data?.horizons?.[horizon];
   const available = HORIZONS.filter((item) => data?.horizons?.[item.key]?.forecast_available);
+  const realizedTrack = performance?.horizons?.[horizon];
+  const validationTrack = data?.validation?.[horizon];
+  const quality = realizedTrack?.evaluated_forecasts ? realizedTrack : validationTrack;
+  const qualitySource = realizedTrack?.evaluated_forecasts ? `${realizedTrack.evaluated_forecasts} завершённых прогнозов` : "untouched temporal test";
   const chart = useMemo(() => {
     if (!data) return [];
     const history = data.history.map((point) => ({date: point.date, history: point.price, volume: point.volume}));
@@ -78,6 +84,12 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
         <div className="h-[86px] w-full border-t border-slate-100 dark:border-slate-800"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chart} margin={{top: 8, right: 70, bottom: 4, left: 2}}><XAxis dataKey="date" hide/><YAxis hide/><Tooltip content={<VolumeTooltip/>}/><Bar dataKey="volume" fill="#22c55e" opacity={0.65} radius={[2,2,0,0]} /></ComposedChart></ResponsiveContainer></div>
       </div>
 
+      {quality ? <div className="border-t border-slate-100 p-5 dark:border-slate-800">
+        <div className="flex flex-wrap items-end justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Качество модели на исторических данных</p><p className="mt-1 text-xs text-slate-500">Только out-of-sample · {qualitySource}</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{String(validationTrack?.selected_model ?? selected?.selected_model ?? "production")}</span></div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-4"><QualityStat label="Direction accuracy" value={pct(numeric(quality.direction_accuracy) ?? undefined)} /><QualityStat label="80% coverage" value={pct(numeric(quality.interval_80_coverage) ?? undefined)} /><QualityStat label="Brier score" value={numeric(quality.brier_score)?.toFixed(3) ?? "—"} /><QualityStat label="Calibration error" value={pct(numeric(quality.calibration_error) ?? undefined)} /></div>
+        {realizedTrack?.calibration_bins?.some((bin) => bin.count > 0) ? <div className="mt-4"><p className="mb-2 text-[11px] text-slate-500">Калибровка: прогнозная вероятность / фактическая частота роста</p><div className="grid h-20 grid-cols-5 items-end gap-2">{realizedTrack.calibration_bins.map((bin) => <div key={bin.lower} className="flex h-full items-end justify-center gap-1 rounded-md bg-slate-50 px-1 pt-1 dark:bg-slate-800/60" title={`${Math.round(bin.lower * 100)}–${Math.round(bin.upper * 100)}% · n=${bin.count}`}><span className="w-2 rounded-t bg-blue-400" style={{height: `${Math.max(2, (bin.mean_probability ?? 0) * 100)}%`}}/><span className="w-2 rounded-t bg-emerald-500" style={{height: `${Math.max(2, (bin.observed_frequency ?? 0) * 100)}%`}}/></div>)}</div><div className="mt-1 flex gap-4 text-[10px] text-slate-500"><span>■ модель</span><span className="text-emerald-600">■ факт</span></div></div> : null}
+      </div> : null}
+
       <div className="grid gap-4 border-t border-slate-100 p-5 md:grid-cols-[1.3fr_1fr] dark:border-slate-800">
         <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Что связано с оценкой модели</p><div className="mt-2 flex flex-wrap gap-2">{(data.explanation ?? []).slice(0, 5).map((factor) => <span key={factor.feature} className={`rounded-full px-2.5 py-1 text-xs ${factor.association === "positive" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300"}`}>{factor.association === "positive" ? "↗" : "↘"} {FACTORS[factor.feature] ?? factor.feature}</span>)}</div><p className="mt-2 text-[11px] text-slate-500">Факторы показывают статистическую связь, а не доказанную причинность.</p></div>
         <div className="text-xs text-slate-500"><p>Модель: <span className="font-mono text-slate-700 dark:text-slate-300">{data.model_version}</span></p><p className="mt-1">Данные: {data.data_mode} · {formatDate(data.source_timestamp)}</p>{data.warnings.map((warning) => <p key={warning} className="mt-1 text-amber-700 dark:text-amber-300">⚠ {warning}</p>)}</div>
@@ -87,6 +99,7 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
 }
 
 function ForecastStat({label, value, accent}: {label: string; value: string; accent?: boolean}) { return <div className="bg-white px-5 py-3 dark:bg-slate-900"><p className="text-[11px] uppercase tracking-wide text-slate-500">{label}</p><p className={`mt-1 text-lg font-semibold tabular ${accent ? "text-emerald-600" : ""}`}>{value}</p></div>; }
+function QualityStat({label, value}: {label: string; value: string}) { return <div className="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/70"><p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 font-semibold tabular">{value}</p></div>; }
 function Legend({color, label, dashed}: {color: string; label: string; dashed?: boolean}) { return <span className="flex items-center gap-1.5"><span className="h-0 w-5" style={{borderTop: `2px ${dashed ? "dashed" : "solid"} ${color}`}} />{label}</span>; }
 function ForecastTooltip({active, payload, label, currency}: any) { if (!active || !payload?.length) return null; const row = payload[0]?.payload ?? {}; return <div className="rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"><p className="mb-2 font-semibold">{formatDate(label)}</p>{row.history != null ? <p>Фактическая цена: <b>{formatMoney(row.history, currency, 2)}</b></p> : null}{row.forecast != null ? <><p>Медиана: <b>{formatMoney(row.forecast, currency, 2)}</b></p><p>50%: {formatMoney(row.q25, currency, 2)} — {formatMoney(row.q75, currency, 2)}</p><p>80%: {formatMoney(row.q10, currency, 2)} — {formatMoney(row.q90, currency, 2)}</p></> : null}</div>; }
 function VolumeTooltip({active, payload}: any) { if (!active || !payload?.length || payload[0]?.value == null) return null; return <div className="rounded-lg bg-slate-950 px-2 py-1 text-xs text-white">Объём: {Number(payload[0].value).toLocaleString("ru-RU", {notation: "compact"})}</div>; }

@@ -4,13 +4,13 @@ Status: **production release not yet eligible on the bundled KASE dataset**
 
 Report date: 2026-08-17
 
-Feature version: `stock-features-v1`
+Feature version: `stock-features-v2`
 
-Model family: `kase-quantile-ensemble-v1`
+Model family: `kase-quantile-ensemble-v2`
 
 This report deliberately contains no invented win rate. The bundled verified
 snapshot contains 87 KASE stocks and 87 stock quote rows: one observation per
-instrument. Therefore no instrument satisfies the minimum 100/110/140/200
+instrument. Therefore no instrument satisfies the minimum 120/125/150/210
 daily observations for the 1d/5d/20d/60d horizons, and there is no honest
 production metric table to publish yet.
 
@@ -40,10 +40,12 @@ For every eligible instrument and horizon the training job compares:
 3. market-return proxy baseline;
 4. regularised linear quantitative model.
 
-The split is expanding-window only. Random train/test splitting is not used.
-The candidate report records MAE return, RMSE, direction and balanced accuracy,
-Brier score, log loss, calibration error, quantile loss, and 50%/80% interval
-coverage. A complex candidate is not promoted when it fails the baseline gate.
+Selection uses expanding-window folds. The final chronological 15% is an
+untouched temporal test; random train/test splitting is not used. The candidate
+report records MAE return, RMSE, direction and balanced accuracy, Brier score,
+log loss, calibration bins/ECE, quantile loss, Spearman rank correlation,
+information coefficient, and 50%/80% interval coverage. A complex candidate is
+not promoted when it fails the baseline gate.
 
 ## Metrics by horizon
 

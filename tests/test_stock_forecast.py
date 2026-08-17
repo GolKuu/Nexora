@@ -12,7 +12,8 @@ from app.models.forecast import ForecastModelVersion, ForecastSnapshot
 from app.models.instrument import Instrument
 from app.models.issuer import Issuer
 from app.models.news import MarketEvent, NewsArticle
-from app.models.stock import Stock, StockQuote
+from app.models.macro import InflationData
+from app.models.stock import Stock, StockMetric, StockQuote
 from app.services.stock_forecast import StockForecastService
 
 
@@ -67,10 +68,19 @@ def test_walk_forward_quantiles_calibration_and_baselines():
     ordered = [prediction[key] for key in ("q05", "q10", "q25", "q50", "q75", "q90", "q95")]
     assert ordered == sorted(ordered)
     assert model.validation["walk_forward_folds"] >= 2
+    assert model.validation["test_start"] == samples[-model.validation["observations_oos"]].timestamp.isoformat()
     assert all(f"rmse_{name}" in model.validation for name in ("naive_no_change", "historical_mean", "market_return_baseline", "ridge"))
     assert 0 <= model.validation["interval_50_coverage"] <= 1
     assert 0 <= model.validation["interval_80_coverage"] <= 1
     assert 0 <= prediction["probability_up"] <= 1
+    assert len(model.validation["calibration_bins"]) == 5
+    assert -1 <= model.validation["rank_correlation"] <= 1
+
+
+def test_market_baseline_uses_peer_market_feature_at_inference():
+    model = QuantileForecastModel(20)
+    model.selected_model = "market_return_baseline"
+    assert model._center({"market_return_20d": 0.03, "return_20d": 0.70}) == pytest.approx(0.03)
 
 
 def test_monte_carlo_path_is_reproducible_and_uses_trading_days():
@@ -165,3 +175,52 @@ def test_news_feature_waits_for_publication_timestamp(session):
     context, _, _ = StockForecastService(session)._context_builder(stock)
     assert context(as_of)["event_count_5d"] == 0
     assert context(as_of + timedelta(days=2))["event_count_5d"] == 1
+
+
+def test_macro_feature_waits_for_source_timestamp(session):
+    stock = _seed_forecast_stock(session, "MACROTEST")
+    as_of = datetime.now(timezone.utc)
+    row = InflationData(country="KZ", period_end=(as_of + timedelta(days=1)).date(), kind="official",
+                        annual_rate=0.777, source="test", source_timestamp=as_of + timedelta(days=1))
+    session.add(row); session.flush()
+    context, _, _ = StockForecastService(session)._context_builder(stock)
+    assert context(as_of)["inflation_rate"] != pytest.approx(0.777)
+    assert context(as_of + timedelta(days=2))["inflation_rate"] == pytest.approx(0.777)
+
+
+def test_financial_metric_waits_for_actual_availability(session):
+    stock = _seed_forecast_stock(session, "REPORTTEST")
+    as_of = datetime.now(timezone.utc)
+    session.add(StockMetric(stock_id=stock.id, as_of=as_of - timedelta(days=30), pe=11.0, roe=0.12,
+                            formula_version="test", calculated_at=as_of - timedelta(days=30)))
+    session.add(StockMetric(stock_id=stock.id, as_of=as_of + timedelta(days=1), pe=99.0, roe=0.77,
+                            formula_version="test", calculated_at=as_of + timedelta(days=1)))
+    session.flush()
+    context, _, _ = StockForecastService(session)._context_builder(stock)
+    assert context(as_of)["valuation_pe"] == pytest.approx(11.0)
+    assert context(as_of)["fundamental_roe"] == pytest.approx(0.12)
+    assert context(as_of + timedelta(days=2))["valuation_pe"] == pytest.approx(99.0)
+
+
+def test_snapshot_evaluation_and_track_record_are_realized(session):
+    stock = _seed_forecast_stock(session, "TRACKTEST")
+    service = StockForecastService(session)
+    assert service.retrain(stock.instrument.ticker)["status"] == "promoted"
+    quotes = list(session.execute(select(StockQuote).where(StockQuote.stock_id == stock.id).order_by(StockQuote.timestamp)).scalars())
+    origin = quotes[-30]
+    snapshot = ForecastSnapshot(
+        instrument_id=stock.instrument_id, model_version="track-test-v1", generated_at=origin.timestamp,
+        as_of_market_time=origin.timestamp, source_timestamp=origin.timestamp, data_mode="delayed",
+        features_hash="f" * 64, horizon=20, current_price=float(origin.close), confidence=0.7, warnings=[],
+        prediction={"expected_return": 0.02, "median_return": 0.02, "probability_up": 0.65,
+                    "q10": -0.12, "q25": -0.04, "q50": 0.02, "q75": 0.08, "q90": 0.16},
+    )
+    session.add(snapshot); session.flush()
+    assert service.evaluate_due(stock) == 1
+    session.flush()
+    performance = service.performance(stock.instrument.ticker)
+    track = performance["horizons"]["20d"]
+    assert track["evaluated_forecasts"] == 1
+    assert track["mae_return"] is not None
+    assert track["brier_score"] is not None
+    assert sum(bin_["count"] for bin_ in track["calibration_bins"]) == 1

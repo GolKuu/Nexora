@@ -6,19 +6,22 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
+import statistics
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.errors import NotFoundError
+from app.core.config import settings
 from app.forecast.path import ForecastPathGenerator
 from app.forecast.pipeline import FEATURES_VERSION, HORIZONS, MIN_HISTORY, FeaturePipeline, Observation, QuantileForecastModel
 from app.models.forecast import ForecastChange, ForecastEvaluation, ForecastModelVersion, ForecastSnapshot
 from app.models.instrument import Instrument
 from app.models.news import MarketEvent, NewsArticle
+from app.models.macro import FxRate, InflationData, YieldCurve
 from app.models.stock import CorporateAction, Stock, StockMetric, StockQuote
 
-MODEL_FAMILY = "kase-quantile-ensemble-v1"
+MODEL_FAMILY = "kase-quantile-ensemble-v2"
 _MODEL_CACHE: dict[tuple[str, int], QuantileForecastModel] = {}
 KASE_TZ = timezone(timedelta(hours=5))
 
@@ -94,6 +97,51 @@ class StockForecastService:
         ).all())
         events = [event for event, _ in event_rows]
         availability = {event.id: max(_aware(event.event_timestamp), _aware(published_at)) for event, published_at in event_rows}
+        inflation = list(self.session.execute(select(InflationData).where(InflationData.country == "KZ").order_by(InflationData.period_end)).scalars())
+        curves = list(self.session.execute(select(YieldCurve).where(
+            YieldCurve.currency == stock.instrument.currency, YieldCurve.curve_code == "KZ_GOV"
+        ).order_by(YieldCurve.as_of_date, YieldCurve.tenor_years)).scalars())
+        fx_rates = list(self.session.execute(select(FxRate).where(
+            FxRate.base_currency == "USD", FxRate.quote_currency == "KZT"
+        ).order_by(FxRate.as_of_date)).scalars())
+
+        # Point-in-time cross-sectional market and sector series. Each daily
+        # return is formed only after both of its real closes exist.
+        market_rows = list(self.session.execute(select(
+            StockQuote.stock_id, StockQuote.timestamp, StockQuote.close, StockQuote.last, Stock.sector
+        ).join(Stock, Stock.id == StockQuote.stock_id).where(
+            or_(StockQuote.close.is_not(None), StockQuote.last.is_not(None))
+        ).order_by(StockQuote.stock_id, StockQuote.timestamp, StockQuote.id)).all())
+        closes: dict[int, dict[object, tuple[float, str | None]]] = {}
+        for stock_id, timestamp, close, last, sector in market_rows:
+            closes.setdefault(stock_id, {})[_aware(timestamp).astimezone(KASE_TZ).date()] = (float(close or last), sector)
+        market_by_day: dict[object, list[tuple[int, float]]] = {}
+        sector_by_day: dict[tuple[object, str], list[tuple[int, float]]] = {}
+        for series_stock_id, series in closes.items():
+            ordered = sorted(series.items())
+            for (day_before, (price_before, _)), (day, (price, sector)) in zip(ordered, ordered[1:]):
+                if price_before <= 0 or price <= 0:
+                    continue
+                value = math.log(price / price_before)
+                market_by_day.setdefault(day, []).append((series_stock_id, value))
+                if sector:
+                    sector_by_day.setdefault((day, sector), []).append((series_stock_id, value))
+        market_daily: dict[object, float] = {}
+        for day, values in market_by_day.items():
+            peers = [value for other_stock_id, value in values if other_stock_id != stock.id]
+            if peers:
+                market_daily[day] = sum(peers) / len(peers)
+
+        sector_daily: dict[tuple[object, str], float] = {}
+        for day_sector, values in sector_by_day.items():
+            peers = [value for other_stock_id, value in values if other_stock_id != stock.id]
+            if peers:
+                sector_daily[day_sector] = sum(peers) / len(peers)
+
+        def source_available(row, date_value) -> datetime:
+            timestamp = getattr(row, "source_timestamp", None) or getattr(row, "created_at", None)
+            dated = datetime.combine(date_value, datetime.min.time(), tzinfo=KASE_TZ)
+            return max(dated, _aware(timestamp)) if timestamp else dated
 
         def context(as_of: datetime) -> dict[str, float]:
             available_metrics = [row for row in metrics if _aware(row.as_of) <= _aware(as_of)]
@@ -102,9 +150,30 @@ class StockForecastService:
             weights = [max(event.importance, 0.0) * max(event.relevance, 0.0) for event in recent_events]
             denominator = sum(weights)
             weighted = lambda field: (sum((getattr(event, field) or 0.0) * weight for event, weight in zip(recent_events, weights)) / denominator) if denominator else 0.0
+            as_of_date = _aware(as_of).astimezone(KASE_TZ).date()
+            market_values = [value for day, value in sorted(market_daily.items()) if day <= as_of_date][-20:]
+            sector_values = [value for (day, sector), value in sorted(sector_daily.items())
+                             if day <= as_of_date and sector == (stock.sector or "")][-20:]
+            known_inflation = [row for row in inflation if source_available(row, row.period_end) <= _aware(as_of)]
+            known_curves = [row for row in curves if source_available(row, row.as_of_date) <= _aware(as_of)]
+            known_fx = [row for row in fx_rates if source_available(row, row.as_of_date) <= _aware(as_of)]
+            fx_change = math.log(known_fx[-1].rate / known_fx[-21].rate) if len(known_fx) >= 21 and known_fx[-21].rate > 0 else 0.0
+            market_return = sum(market_values)
             return {
+                "market_return_20d": market_return,
+                "sector_return_20d": sum(sector_values),
+                "market_regime": market_return / max((statistics.pstdev(market_values) if len(market_values) > 1 else 0.0) * math.sqrt(20), 1e-8) if market_values else 0.0,
+                "inflation_rate": float(known_inflation[-1].annual_rate) if known_inflation else 0.0,
+                "risk_free_rate": float(min((row for row in known_curves if row.as_of_date == known_curves[-1].as_of_date),
+                                               key=lambda row: abs(row.tenor_years - 1.0)).yield_rate) if known_curves else 0.0,
+                "usdkzt_change_20d": fx_change,
                 "valuation_pe": float(metric.pe or 0.0) if metric else 0.0,
                 "fundamental_roe": float(metric.roe or 0.0) if metric else 0.0,
+                "fundamental_revenue_growth": float(metric.revenue_growth or 0.0) if metric else 0.0,
+                "fundamental_earnings_growth": float(metric.earnings_growth or 0.0) if metric else 0.0,
+                "dividend_yield": float(metric.trailing_dividend_yield or 0.0) if metric else 0.0,
+                "fundamentals_available": 1.0 if metric else 0.0,
+                "macro_available": float(sum(bool(values) for values in (known_inflation, known_curves, known_fx)) / 3),
                 "event_count_5d": float(len(recent_events)),
                 "event_sentiment": weighted("sentiment"), "event_importance": weighted("importance"),
                 "event_surprise": weighted("surprise"),
@@ -132,7 +201,9 @@ class StockForecastService:
                     prediction: dict, features: dict[str, float]) -> tuple[float, dict[str, float], list[str]]:
         now, market_time = datetime.now(timezone.utc), _aware(row.timestamp)
         age_days = max(0.0, (now - market_time).total_seconds() / 86400)
-        completeness = sum(value is not None for value in (row.close or row.last, row.volume, row.turnover, row.bid, row.ask, row.number_of_trades)) / 6
+        quote_completeness = sum(value is not None for value in (row.close or row.last, row.volume, row.turnover, row.bid, row.ask, row.number_of_trades)) / 6
+        context_completeness = (features.get("fundamentals_available", 0.0) + features.get("macro_available", 0.0)) / 2
+        completeness = quote_completeness * 0.7 + context_completeness * 0.3
         spread = features.get("spread_pct", 0.0)
         liquidity = max(0.05, min(1.0, (1.0 - min(spread / 0.10, 0.8)) * (1.0 if (row.number_of_trades or 0) >= 5 else 0.55)))
         if (stock.liquidity_class or 1) >= 3:
@@ -243,7 +314,10 @@ class StockForecastService:
             expected_change = new["expected_return"] - old.get("expected_return", 0.0)
             width_change = (new["q90"] - new["q10"]) - (old.get("q90", 0.0) - old.get("q10", 0.0))
             confidence_change = confidence - previous.confidence
-            if abs(probability_change) >= 0.08 or abs(expected_change) >= 0.04 or abs(width_change) >= 0.06 or abs(confidence_change) >= 0.15:
+            if (abs(probability_change) >= settings.FORECAST_MATERIAL_PROBABILITY_CHANGE
+                    or abs(expected_change) >= settings.FORECAST_MATERIAL_EXPECTED_RETURN_CHANGE
+                    or abs(width_change) >= settings.FORECAST_MATERIAL_INTERVAL_WIDTH_CHANGE
+                    or abs(confidence_change) >= settings.FORECAST_MATERIAL_CONFIDENCE_CHANGE):
                 self.session.add(ForecastChange(
                     instrument_id=stock.instrument_id, previous_snapshot_id=previous.id, current_snapshot_id=snapshot.id,
                     horizon=horizon, probability_change=probability_change, expected_return_change=expected_change,
@@ -264,8 +338,6 @@ class StockForecastService:
         context, events, event_availability = self._context_builder(stock)
         transformed = self.features.transform(observations)
         latest_features = ({**transformed[-1].values, **context(transformed[-1].timestamp)} if transformed else {})
-        if latest_features:
-            latest_features["market_regime"] = latest_features.get("return_20d", 0.0)
         dataset_version = self._dataset_version(stock, rows)
         registry = self.session.execute(select(ForecastModelVersion).where(
             ForecastModelVersion.instrument_id == stock.instrument_id,
@@ -388,16 +460,73 @@ class StockForecastService:
         rows = list(self.session.execute(select(ForecastEvaluation, ForecastSnapshot).join(
             ForecastSnapshot, ForecastSnapshot.id == ForecastEvaluation.snapshot_id
         ).where(ForecastSnapshot.instrument_id == stock.instrument_id)).all())
+
+        def correlation(left: list[float], right: list[float]) -> float | None:
+            if len(left) < 2:
+                return None
+            left_mean, right_mean = sum(left) / len(left), sum(right) / len(right)
+            numerator = sum((a - left_mean) * (b - right_mean) for a, b in zip(left, right))
+            denominator = math.sqrt(sum((a - left_mean) ** 2 for a in left) * sum((b - right_mean) ** 2 for b in right))
+            return numerator / denominator if denominator else 0.0
+
+        def ranks(values: list[float]) -> list[float]:
+            ordered = sorted(range(len(values)), key=lambda index: values[index])
+            result = [0.0] * len(values)
+            for rank, index in enumerate(ordered, start=1):
+                result[index] = float(rank)
+            return result
+
         by_horizon: dict[str, dict] = {}
         for horizon in HORIZONS:
             group = [(evaluation, snapshot) for evaluation, snapshot in rows if snapshot.horizon == horizon]
+            probabilities = [float(snapshot.prediction["probability_up"]) for _, snapshot in group]
+            outcomes = [evaluation.realized_return > 0 for evaluation, _ in group]
+            calibration: list[dict] = []
+            calibration_error = None
+            if group:
+                ece = 0.0
+                for index in range(5):
+                    lower, upper = index / 5, (index + 1) / 5
+                    members = [(probability, outcome) for probability, outcome in zip(probabilities, outcomes)
+                               if lower <= probability <= upper and (index == 4 or probability < upper)]
+                    if members:
+                        mean_probability = sum(value for value, _ in members) / len(members)
+                        observed = sum(float(value) for _, value in members) / len(members)
+                        ece += len(members) / len(group) * abs(mean_probability - observed)
+                        calibration.append({"lower": lower, "upper": upper, "count": len(members),
+                                            "mean_probability": mean_probability, "observed_frequency": observed})
+                    else:
+                        calibration.append({"lower": lower, "upper": upper, "count": 0,
+                                            "mean_probability": None, "observed_frequency": None})
+                calibration_error = ece
+            positive = sum(outcomes)
+            negative = len(outcomes) - positive
+            true_positive = sum(probability >= 0.5 and outcome for probability, outcome in zip(probabilities, outcomes))
+            true_negative = sum(probability < 0.5 and not outcome for probability, outcome in zip(probabilities, outcomes))
+            medians = [float(snapshot.prediction["median_return"]) for _, snapshot in group]
+            realized = [float(evaluation.realized_return) for evaluation, _ in group]
             by_horizon[f"{horizon}d"] = {
                 "evaluated_forecasts": len(group),
                 "mae_return": (sum(row.absolute_error for row, _ in group) / len(group)) if group else None,
+                "rmse": (math.sqrt(sum((snapshot.prediction["median_return"] - row.realized_return) ** 2
+                                       for row, snapshot in group) / len(group))) if group else None,
                 "direction_accuracy": (sum(row.direction_correct for row, _ in group) / len(group)) if group else None,
+                "balanced_accuracy": (((true_positive / positive if positive else 0.0) +
+                                         (true_negative / negative if negative else 0.0)) / 2) if group else None,
                 "brier_score": (sum(row.brier_score for row, _ in group) / len(group)) if group else None,
+                "log_loss": (-sum(float(outcome) * math.log(min(0.999, max(0.001, probability))) +
+                                  (1.0 - float(outcome)) * math.log(1.0 - min(0.999, max(0.001, probability)))
+                                  for probability, outcome in zip(probabilities, outcomes)) / len(group)) if group else None,
+                "calibration_error": calibration_error, "calibration_bins": calibration,
                 "interval_50_coverage": (sum(row.interval_50_hit for row, _ in group) / len(group)) if group else None,
                 "interval_80_coverage": (sum(row.interval_80_hit for row, _ in group) / len(group)) if group else None,
+                "quantile_loss": (sum(
+                    max(quantile * (row.realized_return - snapshot.prediction[key]),
+                        (quantile - 1.0) * (row.realized_return - snapshot.prediction[key]))
+                    for row, snapshot in group for quantile, key in ((0.1, "q10"), (0.25, "q25"), (0.5, "q50"), (0.75, "q75"), (0.9, "q90"))
+                ) / (len(group) * 5)) if group else None,
+                "rank_correlation": correlation(ranks(medians), ranks(realized)) if group else None,
+                "information_coefficient": correlation(medians, realized) if group else None,
             }
         latest_model = self.session.execute(select(ForecastModelVersion).where(
             ForecastModelVersion.instrument_id == stock.instrument_id,

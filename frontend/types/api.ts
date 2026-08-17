@@ -434,7 +434,23 @@ export interface StockForecastResponse {
   path: Array<{date: string; median: number; q10: number; q25: number; q75: number; q90: number}>;
   confidence?: number; warnings: string[]; label?: string; disclaimer?: string;
   explanation?: Array<{feature: string; association: "positive" | "negative"; contribution: number}>;
-  validation?: Record<string, Record<string, number | string>>;
+  validation?: Record<string, Record<string, unknown>>;
+}
+export interface ForecastCalibrationBin {
+  lower: number; upper: number; count: number; mean_probability: number | null; observed_frequency: number | null;
+}
+export interface ForecastPerformanceHorizon {
+  evaluated_forecasts: number; mae_return: number | null; rmse: number | null;
+  direction_accuracy: number | null; balanced_accuracy: number | null; brier_score: number | null;
+  log_loss: number | null; calibration_error: number | null; calibration_bins: ForecastCalibrationBin[];
+  interval_50_coverage: number | null; interval_80_coverage: number | null; quantile_loss: number | null;
+  rank_correlation: number | null; information_coefficient: number | null;
+}
+export interface StockForecastPerformanceResponse {
+  instrument: string; metrics_are_out_of_sample: true;
+  horizons: Record<string, ForecastPerformanceHorizon>;
+  walk_forward_validation: Record<string, Record<string, unknown>>;
+  warning: string;
 }
 export interface InstrumentSearchItem { id: number; ticker: string; isin: string | null; name: string; instrument_type: "stock" | "bond"; type_label: string; href: string }
 export interface InstrumentSearchResponse { items: InstrumentSearchItem[]; total: number; query: string }

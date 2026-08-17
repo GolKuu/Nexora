@@ -109,8 +109,11 @@ def stock_history(identifier: str, limit: int = Query(252, ge=1, le=2000), sessi
 
 
 @router.get("/{identifier}/forecast")
-def stock_forecast(identifier: str, horizon: str = Query("20d", pattern=r"^(1|5|20|60)d$"), session: Session = Depends(get_session)) -> dict:
-    return StockForecastService(session).forecast(identifier, int(horizon[:-1]))
+async def stock_forecast(identifier: str, horizon: str = Query("20d", pattern=r"^(1|5|20|60)d$"), session: Session = Depends(get_session)) -> dict:
+    market_refresh = await ensure_fresh_stock_market(session)
+    payload = StockForecastService(session).forecast(identifier, int(horizon[:-1]))
+    payload["market_refresh"] = market_refresh
+    return payload
 
 
 @router.get("/{identifier}/forecast-performance")

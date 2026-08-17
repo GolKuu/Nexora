@@ -9,7 +9,7 @@ probability or a price path.
 ```text
 KASE quotes + reports + corporate actions + MarketEvent
                     |
-          point-in-time FeaturePipeline
+      point-in-time FeaturePipeline v2
                     |
     expanding-window walk-forward evaluation
                     |
@@ -38,6 +38,11 @@ endpoints. Brownian-bridge corrections preserve intrahorizon uncertainty while
 calibrating each path to a sampled endpoint. The UI receives q10/q25/median/
 q75/q90 paths and labels them as model ranges.
 
+Feature groups include adjusted OHLCV, momentum/drawdown, volatility,
+liquidity and price staleness, fundamentals, cross-sectional KASE market and
+sector returns, inflation, the KZT risk-free curve, USD/KZT movement, and
+published event features.
+
 ## Time correctness
 
 - quotes are aggregated into actual KASE trading dates; intraday refreshes are
@@ -58,8 +63,9 @@ q75/q90 paths and labels them as model ranges.
 
 The 10-minute market job collects a new observation, recalculates features and
 creates a snapshot. It does not retrain an existing production model. Training
-runs independently every 30 days. A candidate uses expanding-window folds and
-is promoted only when aggregate out-of-sample RMSE improves by at least 1%; a
+runs independently every 30 days. A candidate uses expanding-window folds for
+selection and a separate untouched final temporal test. It is promoted only
+when aggregate out-of-sample RMSE improves by at least 1%; a
 rejected candidate remains recorded. If no production model exists, the market
 job may perform the initial evaluated release once sufficient history exists.
 

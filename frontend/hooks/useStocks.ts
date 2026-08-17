@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { stocksService } from "@/services/stocks";
-import type { InstrumentSearchResponse, StockCard, StockEventsResponse, StockForecastResponse, StockHistoryResponse, StockListResponse } from "@/types/api";
+import type { InstrumentSearchResponse, StockCard, StockEventsResponse, StockForecastPerformanceResponse, StockForecastResponse, StockHistoryResponse, StockListResponse } from "@/types/api";
 
 export function useTopStocks(category = "best", limit = 12) {
   return useSWR<StockListResponse>(
@@ -28,6 +28,11 @@ export function useStockHistory(identifier: string) {
 export function useStockForecast(identifier: string, horizon: string) {
   return useSWR<StockForecastResponse>(["stock-forecast", identifier, horizon], () => stocksService.forecast(identifier, horizon), {
     refreshInterval: 600_000, revalidateOnFocus: true, dedupingInterval: 30_000,
+  });
+}
+export function useStockForecastPerformance(identifier: string) {
+  return useSWR<StockForecastPerformanceResponse>(["stock-forecast-performance", identifier], () => stocksService.forecastPerformance(identifier), {
+    refreshInterval: 600_000, revalidateOnFocus: true, dedupingInterval: 60_000,
   });
 }
 export function useInstrumentSearch(query: string, delay = 250) {
