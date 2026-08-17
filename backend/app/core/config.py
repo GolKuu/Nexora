@@ -184,6 +184,10 @@ class Settings(BaseSettings):
     #: After the backfill, every active stock is observed on this cadence.
     MONITORING_INTERVAL_SECONDS: int = 600
     RUN_LIVE_KASE_BACKFILL_TESTS: bool = False
+    #: Shared secret for the operational endpoints (X-Admin-Token). Outside
+    #: production an unset token leaves them open for local work; in production
+    #: an unset token closes them entirely rather than exposing them.
+    ADMIN_TOKEN: str | None = None
 
     # --- AI --------------------------------------------------------------
     # The product's primary intelligence is our own model, served by the

@@ -12,6 +12,8 @@ from app.models.stock import Stock
 from app.schemas.stocks import StockCompareRequest, StockInvestmentRequest, StockRecommendRequest, UniversalSearchRequest
 from app.services.change_service import ChangeService, serialize_change
 from app.services.series_service import MAX_DAYS as MAX_SERIES_DAYS, PublicSeriesService
+from app.services.backfill.status import stock_history_coverage
+from app.services.chart_service import ChartService
 from app.services.stock_service import StockService
 from app.services.stock_analyst import StockAnalystService
 from app.services.stock_market import ensure_fresh_stock_market
@@ -110,6 +112,35 @@ def stock_financial_changes(identifier: str, session: Session = Depends(get_sess
 @router.get("/{identifier}/history")
 def stock_history(identifier: str, limit: int = Query(252, ge=1, le=2000), session: Session = Depends(get_session)) -> dict:
     return StockService(session).history(identifier, limit)
+
+
+@router.get("/{identifier}/chart")
+def stock_chart(
+    identifier: str,
+    range: str = Query("1m", pattern="^(1d|5d|1m|3m|6m|1y|2y|max)$"),
+    resolution: str = Query("auto", pattern="^(auto|10m|1h|1d|1w|1mo)$"),
+    include_events: bool = Query(True),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Price history from stored observations only.
+
+    Days KASE never published stay absent, and ``insufficient_history`` says so
+    explicitly - the chart is never padded to make the range look complete.
+    """
+    stock = StockService(session).require(identifier)
+    payload = ChartService(session).series(
+        stock.instrument, range_key=range, resolution=resolution
+    )
+    if not include_events:
+        payload["events"] = []
+    return payload
+
+
+@router.get("/{identifier}/history-status")
+def stock_history_status(identifier: str, session: Session = Depends(get_session)) -> dict:
+    """How much of the requested window this instrument actually has."""
+    stock = StockService(session).require(identifier)
+    return stock_history_coverage(session, stock.instrument)
 
 
 @router.get("/{identifier}/series", summary="Дневная серия из публичных данных")

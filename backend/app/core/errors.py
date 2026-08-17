@@ -33,6 +33,13 @@ class UpstreamError(AppError):
     code = "upstream_error"
 
 
+class ForbiddenError(AppError):
+    """The caller is not allowed to use this endpoint."""
+
+    status_code = 403
+    code = "forbidden"
+
+
 class ConfigurationError(AppError):
     status_code = 500
     code = "configuration_error"

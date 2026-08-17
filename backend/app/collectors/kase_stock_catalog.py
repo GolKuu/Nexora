@@ -14,6 +14,8 @@ from app.models.instrument import Instrument
 from app.models.issuer import Issuer
 from app.models.stock import Stock, StockFinancialPeriod, StockQuote
 from app.providers.kase_public_api import KasePublicApiProvider
+from app.services.backfill.queue import BackfillQueue
+from app.services.backfill.window import backfill_window
 from app.services.incremental import IncrementalStateService, content_hash
 from app.services.stock_actions import KaseStockDocumentActionCollector
 
@@ -190,8 +192,30 @@ class KaseStockCatalogCollector:
                     ).collect(stocks_by_issuer)
             stats.update(action_stats)
         stats["depth"] = "full" if deep else "market_snapshot"
+        stats.update(self._enrol_for_backfill())
         self.session.commit()
         return stats
+
+    def _enrol_for_backfill(self) -> dict:
+        """Every discovered share enters the historical backfill queue.
+
+        Discovery and backfill are joined here so that a company listing on KASE
+        tomorrow is queued tomorrow. Delisted instruments are deliberately not
+        enrolled: their history stays, but they are not crawled again.
+        """
+        window = backfill_window()
+        queue = BackfillQueue(self.session)
+        enrolled = 0
+        rows = self.session.execute(
+            select(Instrument, Stock)
+            .join(Stock, Stock.instrument_id == Instrument.id)
+            .where(Instrument.instrument_type.in_(("stock", "preferred_stock")),
+                   Instrument.is_active.is_(True))
+        ).all()
+        for instrument, stock in rows:
+            queue.enqueue(instrument, window, stock=stock)
+            enrolled += 1
+        return {"backfill_enrolled": enrolled, "backfill_window": window.to_dict()}
 
     async def _collect_financials(self, stocks_by_issuer: dict[str, list[Stock]], incremental: IncrementalStateService, now: datetime) -> dict:
         """KASE fin-data is issuer-level; fan it out to each listed share class."""

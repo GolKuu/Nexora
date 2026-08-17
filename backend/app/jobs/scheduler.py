@@ -8,7 +8,11 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.jobs.refresh import refresh_ai_changes, refresh_catalog_incremental, refresh_documents, refresh_forecast_models, refresh_news, refresh_quotes, refresh_stocks
+from app.jobs.refresh import (
+    refresh_ai_changes, refresh_catalog_incremental, refresh_documents,
+    refresh_forecast_models, refresh_historical_backfill, refresh_monitoring,
+    refresh_news, refresh_quotes, refresh_stocks,
+)
 
 logger = get_logger(__name__)
 
@@ -28,6 +32,13 @@ class PeriodicRefresh:
             *(([("news", settings.SCHEDULE_NEWS_SECONDS, refresh_news)]) if settings.NEWS_COLLECTION_ENABLED else []),
             ("ai_changes", settings.SCHEDULE_AI_TASKS_SECONDS, refresh_ai_changes),
             ("forecast_training", settings.SCHEDULE_FORECAST_TRAINING_SECONDS, refresh_forecast_models),
+            # History: a polite backfill pass, and the ten-minute cadence that
+            # keeps extending the record once the backfill has caught up.
+            *(
+                [("historical_backfill", settings.SCHEDULE_BACKFILL_SECONDS, refresh_historical_backfill)]
+                if settings.HISTORICAL_BACKFILL_ENABLED else []
+            ),
+            ("monitoring", settings.MONITORING_INTERVAL_SECONDS, refresh_monitoring),
         ]
         self._tasks: list[asyncio.Task] = []
 

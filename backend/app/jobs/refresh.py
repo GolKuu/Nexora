@@ -13,7 +13,10 @@ from app.db.session import SessionLocal
 from app.providers.factory import get_provider
 from app.collectors.incremental_catalog import incremental_catalog_sync
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
+from app.core.config import settings
+from app.services.backfill.runner import BackfillRunner
 from app.services.change_alerts import ChangeAlertEngine
+from app.services.monitoring import MonitoringService
 from app.services.incremental import JobTracker
 from app.services.ingestion_priority import prioritized_tickers
 from app.services.incremental_documents import DocumentIngestionService
@@ -234,5 +237,41 @@ async def refresh_news() -> dict:
     try:
         latest = session.scalar(select(func.max(NewsArticle.published_at)).where(NewsArticle.source == "tengrinews"))
         return await NewsIntelligencePipeline(session).collect(TengrinewsCollector(), since=latest)
+    finally:
+        session.close()
+
+async def refresh_historical_backfill(limit: int | None = None) -> dict:
+    """One polite pass of the two-year historical backfill (§19-21).
+
+    Enrolment is idempotent, so newly discovered stocks join the queue on the
+    next pass without any code change. The batch size and browser concurrency
+    come from settings; the defaults are deliberately small.
+    """
+    if not settings.HISTORICAL_BACKFILL_ENABLED:
+        return {"skipped": "HISTORICAL_BACKFILL_ENABLED=false"}
+    session = SessionLocal()
+    try:
+        runner = BackfillRunner(session)
+        enrolled = runner.enrol_all()
+        result = await runner.run_batch(limit=limit)
+        logger.info("historical backfill pass: %s", {k: v for k, v in result.items() if k != "results"})
+        return {"enrolled": enrolled, **result}
+    finally:
+        session.close()
+
+
+async def refresh_monitoring() -> dict:
+    """The ten-minute cadence that turns backfilled history into live history.
+
+    The same fingerprint rule that de-duplicates the backfill also de-duplicates
+    the seam between the last backfilled point and the first monitored one, so
+    the handover needs no special case.
+    """
+    session = SessionLocal()
+    try:
+        service = MonitoringService(session)
+        result = await service.observe_active()
+        logger.info("monitoring pass: %s", result)
+        return result
     finally:
         session.close()
