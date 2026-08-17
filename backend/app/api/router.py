@@ -5,6 +5,7 @@ from app.api.routes import (
     bonds,
     browser,
     compare,
+    events,
     health,
     instruments,
     meta,
@@ -19,6 +20,7 @@ api_router.include_router(health.router, tags=["health"])
 api_router.include_router(meta.router, tags=["meta"])
 api_router.include_router(bonds.router, prefix="/bonds", tags=["bonds"])
 api_router.include_router(stocks.router, prefix="/stocks", tags=["stocks"])
+api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(instruments.router, prefix="/instruments", tags=["instruments"])
 api_router.include_router(browser.router, tags=["browser"])
 api_router.include_router(compare.router, tags=["compare"])

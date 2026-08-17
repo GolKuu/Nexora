@@ -1,0 +1,29 @@
+{
+  "format": "jsonl",
+  "rows": 0,
+  "features": [
+    "event_timestamp",
+    "issuer_id",
+    "instrument_id",
+    "event_type",
+    "sector",
+    "country",
+    "importance",
+    "sentiment",
+    "surprise",
+    "market_regime",
+    "source_confidence",
+    "analysis_confidence",
+    "text_features"
+  ],
+  "labels": [
+    "return_1d",
+    "return_5d",
+    "return_20d",
+    "abnormal_return_1d",
+    "abnormal_return_5d",
+    "direction_1d",
+    "direction_5d"
+  ],
+  "look_ahead_validated": true
+}

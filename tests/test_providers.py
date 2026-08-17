@@ -121,7 +121,7 @@ def test_empty_deployment_variables_fall_back_to_typed_defaults(monkeypatch):
 
     assert config.AI_ENABLED is True
     assert config.AI_TIMEOUT == 30.0
-    assert config.SCHEDULE_QUOTES_SECONDS == 900
+    assert config.SCHEDULE_QUOTES_SECONDS == 600
     assert config.KASE_AI_DATA_MODE == "snapshot"
 
 

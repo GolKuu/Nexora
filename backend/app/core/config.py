@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     #: with the site's own language control when the page renders another one.
     KASE_LANGUAGE: str = "ru"
     RUN_LIVE_KASE_TESTS: bool = False
-    STOCK_MARKET_REFRESH_SECONDS: int = 300
+    STOCK_MARKET_REFRESH_SECONDS: int = 600
 
     # --- browser agent ---------------------------------------------------
     # The browser agent reads the *public* site as an ordinary visitor. It
@@ -146,10 +146,14 @@ class Settings(BaseSettings):
     MATERIAL_CREDIT_SCORE_CHANGE: float = 5.0
     MATERIAL_LIQUIDITY_SCORE_CHANGE: float = 5.0
     MATERIAL_TRADE_VOLUME_CHANGE: float = 0.25
-    SCHEDULE_QUOTES_SECONDS: int = 900
+    # Market inference receives a new observation at most every ten minutes.
+    # Retraining remains a separate evaluated release process.
+    SCHEDULE_QUOTES_SECONDS: int = 600
     SCHEDULE_CATALOG_SECONDS: int = 21_600
     SCHEDULE_DOCUMENTS_SECONDS: int = 21_600
     SCHEDULE_NEWS_SECONDS: int = 3_600
+    NEWS_COLLECTION_ENABLED: bool = Field(default_factory=lambda: not _on_vercel())
+    NEWS_MINIMUM_ANALOG_SAMPLE: int = 5
     SCHEDULE_AI_TASKS_SECONDS: int = 60
     SCHEDULE_BOND_TERMS_SECONDS: int = 86_400
     RAW_SNAPSHOT_RETENTION_DAYS: int = 30

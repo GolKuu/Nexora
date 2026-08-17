@@ -1,5 +1,7 @@
 # KASE Bond AI
 
+News-to-market alignment, event clustering, historical analogs, and the leakage-safe event dataset are documented in [News Intelligence](docs/news-intelligence.md).
+
 > Проект поддерживает два раздельных класса инструментов: облигации и акции
 > KASE. Equity-модель, источники, калькулятор и scores описаны в
 > [docs/stocks.md](docs/stocks.md); существующие bond-контракты сохранены.

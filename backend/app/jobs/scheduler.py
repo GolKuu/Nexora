@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.jobs.refresh import refresh_ai_changes, refresh_catalog_incremental, refresh_documents, refresh_quotes
+from app.jobs.refresh import refresh_ai_changes, refresh_catalog_incremental, refresh_documents, refresh_news, refresh_quotes, refresh_stocks
 
 logger = get_logger(__name__)
 
@@ -22,8 +22,10 @@ class PeriodicRefresh:
     def __init__(self, interval_seconds: float | None = None):
         self.jobs: list[Job] = [
             ("quotes", interval_seconds or settings.SCHEDULE_QUOTES_SECONDS, refresh_quotes),
+            ("stock_forecasts", interval_seconds or settings.STOCK_MARKET_REFRESH_SECONDS, refresh_stocks),
             ("catalog", settings.SCHEDULE_CATALOG_SECONDS, refresh_catalog_incremental),
             ("documents", settings.SCHEDULE_DOCUMENTS_SECONDS, refresh_documents),
+            *(([("news", settings.SCHEDULE_NEWS_SECONDS, refresh_news)]) if settings.NEWS_COLLECTION_ENABLED else []),
             ("ai_changes", settings.SCHEDULE_AI_TASKS_SECONDS, refresh_ai_changes),
         ]
         self._tasks: list[asyncio.Task] = []

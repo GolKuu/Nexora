@@ -24,6 +24,9 @@ from app.models.portfolio import Alert, Portfolio, PortfolioPosition, Watchlist
 from app.models.scores import BondScore, ScoreComponent
 from app.models.source import DataSource, RawKaseData
 from app.models.user import User, UserSettings
+from app.models.news import (CompanyAlias, EventCluster, EventMarketReaction, MarketEvent,
+    NewsArticle, NewsClusterMember, NewsImpactScore, NotificationCandidate)
+from app.models.forecast import ForecastChange, ForecastEvaluation, ForecastModelVersion, ForecastSnapshot
 
 __all__ = [
     "AIAnalysis",
@@ -71,4 +74,7 @@ __all__ = [
     "StockScore",
     "Dividend",
     "CorporateAction",
+    "NewsArticle", "CompanyAlias", "EventCluster", "NewsClusterMember",
+    "MarketEvent", "EventMarketReaction", "NewsImpactScore", "NotificationCandidate",
+    "ForecastModelVersion", "ForecastSnapshot", "ForecastEvaluation", "ForecastChange",
 ]

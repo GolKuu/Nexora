@@ -397,6 +397,45 @@ export interface StockCalculation {
   scenario_profit: number | null; total_return_percent: number | null;
   liquidity_warning: string | null; warnings: string[]; data_timestamp: string | null; source: string | null;
 }
+export interface EventReaction {
+  price_before: number | null; return_5m: number | null; return_30m: number | null; return_1h: number | null;
+  return_same_day: number | null; return_1d: number | null; return_5d: number | null; return_20d: number | null;
+  volume_ratio: number | null; volatility_change: number | null; market_return: number | null;
+  sector_return: number | null; abnormal_return_1d: number | null; abnormal_return_5d: number | null;
+  benchmark_id: number | null; formula_version: string;
+}
+export interface HistoricalAnalogs {
+  count: number; minimum_sample_size: number; sufficient_sample: boolean; message: string | null;
+  positive_reaction_rate: number | null; negative_reaction_rate: number | null;
+  median_return_1d: number | null; median_return_5d: number | null; median_abnormal_return: number | null;
+}
+export interface MarketEventItem {
+  id: number; news_id: number; title: string; source: string; source_url: string; event_type: string;
+  event_timestamp: string; importance: number; sentiment: number | null; surprise: number | null;
+  source_confidence: number; analysis_confidence: number; impact_score: number | null; marker: "N"|"E"|"D"|"P"|"M"|"R";
+  reaction: EventReaction | null; historical_analogs: HistoricalAnalogs; explanation: string;
+}
+export interface StockEventsResponse { ticker: string; items: MarketEventItem[]; total: number }
+export interface StockHistoryResponse { ticker: string; quotes: Array<{timestamp:string; last:number|null; close:number|null; volume:number|null}> }
+
+export interface ForecastHorizon {
+  forecast_available: boolean; reason?: string; minimum_observations?: number; observations?: number;
+  expected_return?: number; median_return?: number; probability_up?: number; probability_down?: number;
+  q05?: number; q10?: number; q25?: number; q50?: number; q75?: number; q90?: number; q95?: number;
+  expected_volatility?: number; confidence?: number; confidence_components?: Record<string, number>;
+  selected_model?: string;
+  factors?: Array<{feature: string; association: "positive" | "negative"; contribution: number}>;
+}
+export interface StockForecastResponse {
+  instrument: string; as_of?: string; source_timestamp?: string; current_price?: number;
+  data_mode?: DataMode | string; model_version?: string; forecast_available: boolean; reason?: string;
+  selected_horizon?: string; horizons: Record<string, ForecastHorizon>;
+  history: Array<{date: string; price: number; volume: number | null}>;
+  path: Array<{date: string; median: number; q10: number; q25: number; q75: number; q90: number}>;
+  confidence?: number; warnings: string[]; label?: string; disclaimer?: string;
+  explanation?: Array<{feature: string; association: "positive" | "negative"; contribution: number}>;
+  validation?: Record<string, Record<string, number | string>>;
+}
 export interface InstrumentSearchItem { id: number; ticker: string; isin: string | null; name: string; instrument_type: "stock" | "bond"; type_label: string; href: string }
 export interface InstrumentSearchResponse { items: InstrumentSearchItem[]; total: number; query: string }
 export interface CrossAssetItem {

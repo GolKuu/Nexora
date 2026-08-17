@@ -1,10 +1,13 @@
 import { api } from "@/services/client";
-import type { CrossAssetCompareResponse, InstrumentSearchResponse, StockCalculation, StockCard, StockListResponse } from "@/types/api";
+import type { CrossAssetCompareResponse, InstrumentSearchResponse, StockCalculation, StockCard, StockEventsResponse, StockForecastResponse, StockHistoryResponse, StockListResponse } from "@/types/api";
 
 export const stocksService = {
   list: (limit = 100) => api.get<StockListResponse>(`/stocks?limit=${limit}`),
   top: (category = "best", limit = 12) => api.get<StockListResponse>(`/stocks/top?category=${category}&limit=${limit}`),
   card: (identifier: string) => api.get<StockCard>(`/stocks/${encodeURIComponent(identifier)}`),
+  events: (identifier: string) => api.get<StockEventsResponse>(`/stocks/${encodeURIComponent(identifier)}/event-impact`),
+  history: (identifier: string) => api.get<StockHistoryResponse>(`/stocks/${encodeURIComponent(identifier)}/history`),
+  forecast: (identifier: string, horizon = "20d") => api.get<StockForecastResponse>(`/stocks/${encodeURIComponent(identifier)}/forecast?horizon=${horizon}`),
   searchAll: (q: string, limit = 20) => api.get<InstrumentSearchResponse>(`/instruments/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   interpretSearch: (query: string, limit = 20) => api.post<{query: string; validated_filters: Record<string, string | number>; assumptions: string[]; items: StockListResponse["items"]; total: number; warning: string}>("/stocks/search", { query, limit }),
   calculate: (identifier: string, amount: number, scenario: string, commission = 0.1) =>

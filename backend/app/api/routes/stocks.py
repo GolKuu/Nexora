@@ -12,8 +12,26 @@ from app.services.stock_service import StockService
 from app.services.stock_analyst import StockAnalystService
 from app.services.stock_market import ensure_fresh_stock_market
 from app.services.stock_ranking import rank_stocks
+from app.services.news_queries import NewsQueryService
+from app.services.stock_forecast import StockForecastService
 
 router = APIRouter()
+
+@router.get("/{identifier}/news")
+def stock_news(identifier: str, limit: int = Query(50, ge=1, le=200), session: Session = Depends(get_session)) -> dict:
+    return NewsQueryService(session).news(identifier, limit)
+
+@router.get("/{identifier}/events")
+def stock_events(identifier: str, limit: int = Query(50, ge=1, le=200), session: Session = Depends(get_session)) -> dict:
+    return NewsQueryService(session).events(identifier, limit)
+
+@router.get("/{identifier}/event-impact")
+def stock_event_impact(identifier: str, limit: int = Query(50, ge=1, le=200), session: Session = Depends(get_session)) -> dict:
+    return NewsQueryService(session).events(identifier, limit)
+
+@router.get("/{identifier}/daily-drivers")
+def stock_daily_drivers(identifier: str, session: Session = Depends(get_session)) -> dict:
+    return NewsQueryService(session).daily_drivers(identifier)
 
 
 @router.get("")
@@ -88,6 +106,16 @@ def stock_financial_changes(identifier: str, session: Session = Depends(get_sess
 @router.get("/{identifier}/history")
 def stock_history(identifier: str, limit: int = Query(252, ge=1, le=2000), session: Session = Depends(get_session)) -> dict:
     return StockService(session).history(identifier, limit)
+
+
+@router.get("/{identifier}/forecast")
+def stock_forecast(identifier: str, horizon: str = Query("20d", pattern=r"^(1|5|20|60)d$"), session: Session = Depends(get_session)) -> dict:
+    return StockForecastService(session).forecast(identifier, int(horizon[:-1]))
+
+
+@router.get("/{identifier}/forecast-performance")
+def stock_forecast_performance(identifier: str, session: Session = Depends(get_session)) -> dict:
+    return StockForecastService(session).performance(identifier)
 
 
 @router.get("/{identifier}/analysis")

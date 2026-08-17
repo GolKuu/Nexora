@@ -76,6 +76,19 @@ async def refresh_stocks() -> dict:
         service = StockService(session)
         for stock in session.execute(select(Stock)).scalars():
             service.persist_metrics_and_scores(stock)
+        session.flush()
+        from app.services.stock_forecast import StockForecastService
+        forecasts_updated = 0
+        forecast_service = StockForecastService(session)
+        for stock in session.execute(select(Stock)).scalars():
+            try:
+                payload = forecast_service.forecast(str(stock.id), persist=True)
+                forecasts_updated += int(payload.get("forecast_available", False))
+            except ValueError:
+                # Honest insufficient-history output is expected for new or
+                # illiquid listings and must not break the market refresh.
+                continue
+        result["forecasts_updated"] = forecasts_updated
         result["alerts_triggered"] = ChangeAlertEngine(session).evaluate_since(started_at)
         session.commit()
         return result
@@ -183,5 +196,18 @@ async def refresh_ai_changes(*, limit: int = 50) -> dict:
         result = await run_ai_change_tasks(session, limit=limit)
         session.commit()
         return result
+    finally:
+        session.close()
+
+
+async def refresh_news() -> dict:
+    """Collect metadata incrementally and process only unseen articles."""
+    from app.collectors.tengrinews import TengrinewsCollector
+    from app.models.news import NewsArticle
+    from app.services.news_intelligence import NewsIntelligencePipeline
+    session = SessionLocal()
+    try:
+        latest = session.scalar(select(func.max(NewsArticle.published_at)).where(NewsArticle.source == "tengrinews"))
+        return await NewsIntelligencePipeline(session).collect(TengrinewsCollector(), since=latest)
     finally:
         session.close()
