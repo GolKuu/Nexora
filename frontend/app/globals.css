@@ -39,3 +39,30 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* Chart tokens.
+ *
+ * Both modes are selected, not flipped: the dark steps are re-picked for the
+ * dark surface. The set was validated for colour-vision separation and for
+ * contrast against the surface it actually renders on (light #ffffff, dark
+ * #0f1420). Marks read these as SVG paint, so they follow the theme without
+ * the chart code knowing which mode it is in. */
+.viz {
+  --viz-series-1: #2a78d6; /* price */
+  --viz-series-2: #eb6834; /* yield */
+  --viz-grid: #e1e0d9;
+  --viz-axis: #c3c2b7;
+  --viz-ink-muted: #898781;
+  --viz-surface: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .viz {
+    --viz-series-1: #3987e5;
+    --viz-series-2: #d95926;
+    --viz-grid: #2c2c2a;
+    --viz-axis: #383835;
+    --viz-ink-muted: #898781;
+    --viz-surface: #0f1420;
+  }
+}

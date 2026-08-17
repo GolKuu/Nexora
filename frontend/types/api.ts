@@ -593,3 +593,122 @@ export interface KaseLinkResponse {
   verified_at: string | null;
   source: string | null;
 }
+
+/* ---- Daily series and change history (public data only) ------------------ */
+
+export type InstrumentKind = "stock" | "bond";
+
+/** One trading session. ``bar_basis`` says whether the exchange published the
+ *  bar or whether we folded it out of our own snapshots of the public feed. */
+export interface SeriesSession {
+  date: string;
+  timestamp: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  bid: number | null;
+  ask: number | null;
+  spread_pct: number | null;
+  ytm: number | null;
+  ytm_high: number | null;
+  ytm_low: number | null;
+  volume: number | null;
+  turnover: number | null;
+  trades: number | null;
+  change_pct: number | null;
+  observations: number;
+  bar_basis: "native" | "sampled";
+  sources: string[];
+  data_mode: DataMode | string | null;
+  change_events: number;
+}
+
+export interface SeriesMarker {
+  date: string;
+  count: number;
+  max_importance: number;
+  sections: string[];
+  top: Array<{
+    section: string;
+    field: string;
+    old_value: unknown;
+    new_value: unknown;
+    change_type: string;
+    importance: number;
+    source_url: string;
+  }>;
+}
+
+export interface SeriesCoverage {
+  requested_days: number;
+  sessions: number;
+  observations: number;
+  first_session: string | null;
+  last_session: string | null;
+  expected_sessions: number;
+  coverage_ratio: number | null;
+  longest_gap_sessions: number;
+  native_bars: number;
+  sampled_bars: number;
+  sources: Record<string, number>;
+  data_modes: Record<string, number>;
+  includes_licensed: boolean;
+  licensed_rows_excluded: number;
+  licensed_free: boolean;
+  mock: boolean;
+  chartable: boolean;
+}
+
+export interface SeriesResponse {
+  ticker: string;
+  instrument_type: InstrumentKind;
+  basis: string;
+  price_unit: string;
+  isin: string | null;
+  name: string | null;
+  currency: string;
+  kase_url: string | null;
+  maturity_date?: string | null;
+  sessions: SeriesSession[];
+  markers: SeriesMarker[];
+  coverage: SeriesCoverage;
+  warning: string | null;
+}
+
+export interface ChangeRecord {
+  id: number;
+  detected_at: string;
+  ticker: string | null;
+  isin: string | null;
+  section: string;
+  field: string;
+  old_value: unknown;
+  new_value: unknown;
+  change_type: string;
+  importance: number;
+  material: boolean;
+  source_url: string;
+  source_timestamp: string | null;
+  parser_version: string;
+}
+
+export interface ChangeSummary {
+  ticker?: string;
+  instrument_type?: InstrumentKind;
+  changed: boolean;
+  since: string | null;
+  material_changes: number;
+  summary: {
+    price_changed: boolean;
+    yield_changed: boolean;
+    credit_changed: boolean;
+    new_documents: number;
+    sections: string[];
+  };
+  freshness?: {
+    last_checked_at: string | null;
+    last_changed_at: string | null;
+    source_timestamp: string | null;
+  };
+}

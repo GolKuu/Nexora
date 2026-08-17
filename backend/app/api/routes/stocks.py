@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,6 +10,8 @@ from app.api.deps import get_session
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.models.stock import Stock
 from app.schemas.stocks import StockCompareRequest, StockInvestmentRequest, StockRecommendRequest, UniversalSearchRequest
+from app.services.change_service import ChangeService, serialize_change
+from app.services.series_service import MAX_DAYS as MAX_SERIES_DAYS, PublicSeriesService
 from app.services.stock_service import StockService
 from app.services.stock_analyst import StockAnalystService
 from app.services.stock_market import ensure_fresh_stock_market
@@ -106,6 +110,48 @@ def stock_financial_changes(identifier: str, session: Session = Depends(get_sess
 @router.get("/{identifier}/history")
 def stock_history(identifier: str, limit: int = Query(252, ge=1, le=2000), session: Session = Depends(get_session)) -> dict:
     return StockService(session).history(identifier, limit)
+
+
+@router.get("/{identifier}/series", summary="Дневная серия из публичных данных")
+def stock_series(
+    identifier: str,
+    days: int = Query(365, ge=1, le=MAX_SERIES_DAYS),
+    include_licensed: bool = Query(False, description="Включить строки из лицензионного архива KASE"),
+    session: Session = Depends(get_session),
+) -> dict:
+    return PublicSeriesService(session).stock(identifier, days=days, include_licensed=include_licensed)
+
+
+@router.get("/{identifier}/changes", summary="История реальных изменений акции")
+def stock_changes(
+    identifier: str,
+    since: datetime | None = Query(default=None),
+    section: str | None = Query(default=None),
+    importance: int | None = Query(default=None, ge=0, le=100),
+    limit: int = Query(default=100, ge=1, le=1000),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    stock = StockService(session).require(identifier)
+    return [serialize_change(row) for row in ChangeService(session).for_entity(
+        str(stock.id), entity_type="stock", since=since, section=section,
+        importance=importance, limit=limit,
+    )]
+
+
+@router.get("/{identifier}/change-summary", summary="Сводка изменений акции")
+def stock_change_summary(
+    identifier: str,
+    since: datetime | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict:
+    stock = StockService(session).require(identifier)
+    service = ChangeService(session)
+    freshness = service.freshness(str(stock.id), entity_type="stock")
+    return {
+        "ticker": stock.instrument.ticker,
+        **service.summary(str(stock.id), entity_type="stock", since=since),
+        "freshness": {key: value.isoformat() if value else None for key, value in freshness.items()},
+    }
 
 
 @router.get("/{identifier}/forecast")

@@ -28,6 +28,7 @@ from app.services.investment_service import InvestmentService
 from app.services.peer_service import PeerService
 from app.services.recommendation_service import RecommendationService
 from app.services.scoring_service import ScoringService
+from app.services.series_service import MAX_DAYS as MAX_SERIES_DAYS, PublicSeriesService
 from app.services.settings_service import SettingsService
 from app.services.change_service import ChangeService, serialize_change
 
@@ -349,6 +350,21 @@ def get_history(
     service = BondService(session)
     bond = service.require(identifier)
     return [HistoryPoint(**p) for p in service.history(bond, days=days)]
+
+
+@router.get("/{identifier}/series", summary="Дневная серия из публичных данных")
+def get_series(
+    identifier: str,
+    days: int = Query(default=365, ge=1, le=MAX_SERIES_DAYS),
+    include_licensed: bool = Query(
+        default=False, description="Включить строки из лицензионного архива KASE"
+    ),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Daily bars folded out of our own public snapshots, licence-free."""
+    return PublicSeriesService(session).bond(
+        identifier, days=days, include_licensed=include_licensed
+    )
 
 
 @router.get("/{identifier}/peers", summary="Похожие выпуски")
