@@ -78,10 +78,17 @@ async def refresh_stocks() -> dict:
             service.persist_metrics_and_scores(stock)
         session.flush()
         from app.services.stock_forecast import StockForecastService
+        from app.models.forecast import ForecastModelVersion
         forecasts_updated = 0
         forecast_service = StockForecastService(session)
         for stock in session.execute(select(Stock)).scalars():
             try:
+                production = session.execute(select(ForecastModelVersion.id).where(
+                    ForecastModelVersion.instrument_id == stock.instrument_id,
+                    ForecastModelVersion.production_status == "production",
+                ).limit(1)).scalar_one_or_none()
+                if production is None:
+                    forecast_service.retrain(str(stock.id))
                 payload = forecast_service.forecast(str(stock.id), persist=True)
                 forecasts_updated += int(payload.get("forecast_available", False))
             except ValueError:
@@ -92,6 +99,24 @@ async def refresh_stocks() -> dict:
         result["alerts_triggered"] = ChangeAlertEngine(session).evaluate_since(started_at)
         session.commit()
         return result
+    finally:
+        session.close()
+
+
+async def refresh_forecast_models() -> dict:
+    """Monthly evaluated candidates; only an OOS improvement is promoted."""
+    session = SessionLocal()
+    try:
+        from app.models.stock import Stock
+        from app.services.stock_forecast import StockForecastService
+        service = StockForecastService(session)
+        outcomes: dict[str, int] = {}
+        for stock in session.execute(select(Stock)).scalars():
+            result = service.retrain(str(stock.id))
+            status = result["status"]
+            outcomes[status] = outcomes.get(status, 0) + 1
+        session.commit()
+        return {"stocks": sum(outcomes.values()), "outcomes": outcomes}
     finally:
         session.close()
 

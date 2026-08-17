@@ -6,11 +6,12 @@ import math
 import pytest
 from sqlalchemy import select
 
-from app.forecast.path import ForecastPathGenerator
+from app.forecast.path import ForecastPathGenerator, kase_holidays
 from app.forecast.pipeline import FeaturePipeline, Observation, QuantileForecastModel
 from app.models.forecast import ForecastModelVersion, ForecastSnapshot
 from app.models.instrument import Instrument
 from app.models.issuer import Issuer
+from app.models.news import MarketEvent, NewsArticle
 from app.models.stock import Stock, StockQuote
 from app.services.stock_forecast import StockForecastService
 
@@ -81,6 +82,11 @@ def test_monte_carlo_path_is_reproducible_and_uses_trading_days():
     assert len(first) == 20
     assert all(datetime.fromisoformat(row["date"]).weekday() < 5 for row in first)
     assert all(row["q10"] <= row["q25"] <= row["median"] <= row["q75"] <= row["q90"] for row in first)
+    january = ForecastPathGenerator(seed=1, trajectories=20).generate(
+        current_price=100, as_of=datetime(2026, 1, 6, tzinfo=timezone.utc), horizon=2,
+        return_distribution=[0.0], annualized_volatility=0.1,
+    )
+    assert datetime.fromisoformat(january[0]["date"]).date() not in kase_holidays(2026)
 
 
 def _seed_forecast_stock(session, ticker: str = "QNTTEST") -> Stock:
@@ -102,6 +108,7 @@ def _seed_forecast_stock(session, ticker: str = "QNTTEST") -> Stock:
 def test_service_persists_registry_snapshots_and_reuses_same_information(session):
     stock = _seed_forecast_stock(session)
     service = StockForecastService(session)
+    assert service.retrain(stock.instrument.ticker)["status"] == "promoted"
     first = service.forecast(stock.instrument.ticker, 20)
     second = service.forecast(stock.instrument.ticker, 20)
     assert first["forecast_available"] is True
@@ -115,6 +122,8 @@ def test_service_persists_registry_snapshots_and_reuses_same_information(session
 
 def test_stale_illiquid_price_reduces_confidence(session):
     stock = _seed_forecast_stock(session, "STALETEST")
+    service = StockForecastService(session)
+    assert service.retrain(stock.instrument.ticker)["status"] == "promoted"
     rows = list(session.execute(select(StockQuote).where(StockQuote.stock_id == stock.id)).scalars())
     for row in rows:
         row.timestamp -= timedelta(days=20)
@@ -124,7 +133,7 @@ def test_stale_illiquid_price_reduces_confidence(session):
         row.number_of_trades = 0
     stock.liquidity_class = 4
     session.flush()
-    response = StockForecastService(session).forecast(stock.instrument.ticker, 20)
+    response = service.forecast(stock.instrument.ticker, 20)
     assert response["confidence"] < 0.65
     assert any("Последняя сделка" in warning for warning in response["warnings"])
     assert any("ликвидност" in warning for warning in response["warnings"])
@@ -139,3 +148,20 @@ def test_insufficient_history_is_explicit(session):
     assert response["forecast_available"] is False
     assert response["horizons"]["20d"]["reason"] == "insufficient_history"
     assert response["path"] == []
+
+
+def test_news_feature_waits_for_publication_timestamp(session):
+    stock = _seed_forecast_stock(session, "PUBTEST")
+    as_of = datetime.now(timezone.utc)
+    article = NewsArticle(source="test", source_url="https://example.test/pub", canonical_url="https://example.test/pub",
+                          title="Publication alignment", published_at=as_of + timedelta(days=1), fetched_at=as_of,
+                          content_hash="pub-hash", fingerprint="pub-fingerprint", source_confidence=1.0)
+    session.add(article); session.flush()
+    event = MarketEvent(news_id=article.id, event_type="earnings", event_timestamp=as_of - timedelta(days=2),
+                        instrument_id=stock.instrument_id, issuer_id=stock.instrument.issuer_id,
+                        importance=0.9, sentiment=0.8, surprise=0.5, source_confidence=1.0,
+                        analysis_confidence=1.0, relevance=1.0)
+    session.add(event); session.flush()
+    context, _, _ = StockForecastService(session)._context_builder(stock)
+    assert context(as_of)["event_count_5d"] == 0
+    assert context(as_of + timedelta(days=2))["event_count_5d"] == 1

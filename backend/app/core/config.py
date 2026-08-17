@@ -155,6 +155,7 @@ class Settings(BaseSettings):
     NEWS_COLLECTION_ENABLED: bool = Field(default_factory=lambda: not _on_vercel())
     NEWS_MINIMUM_ANALOG_SAMPLE: int = 5
     SCHEDULE_AI_TASKS_SECONDS: int = 60
+    SCHEDULE_FORECAST_TRAINING_SECONDS: int = 2_592_000
     SCHEDULE_BOND_TERMS_SECONDS: int = 86_400
     RAW_SNAPSHOT_RETENTION_DAYS: int = 30
 

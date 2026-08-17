@@ -15,7 +15,7 @@ from app.forecast.path import ForecastPathGenerator
 from app.forecast.pipeline import FEATURES_VERSION, HORIZONS, MIN_HISTORY, FeaturePipeline, Observation, QuantileForecastModel
 from app.models.forecast import ForecastChange, ForecastEvaluation, ForecastModelVersion, ForecastSnapshot
 from app.models.instrument import Instrument
-from app.models.news import MarketEvent
+from app.models.news import MarketEvent, NewsArticle
 from app.models.stock import CorporateAction, Stock, StockMetric, StockQuote
 
 MODEL_FAMILY = "kase-quantile-ensemble-v1"
@@ -88,14 +88,17 @@ class StockForecastService:
         metrics = list(self.session.execute(
             select(StockMetric).where(StockMetric.stock_id == stock.id).order_by(StockMetric.as_of)
         ).scalars())
-        events = list(self.session.execute(
-            select(MarketEvent).where(MarketEvent.instrument_id == stock.instrument_id).order_by(MarketEvent.event_timestamp)
-        ).scalars())
+        event_rows = list(self.session.execute(
+            select(MarketEvent, NewsArticle.published_at).join(NewsArticle, NewsArticle.id == MarketEvent.news_id)
+            .where(MarketEvent.instrument_id == stock.instrument_id).order_by(MarketEvent.event_timestamp)
+        ).all())
+        events = [event for event, _ in event_rows]
+        availability = {event.id: max(_aware(event.event_timestamp), _aware(published_at)) for event, published_at in event_rows}
 
         def context(as_of: datetime) -> dict[str, float]:
             available_metrics = [row for row in metrics if _aware(row.as_of) <= _aware(as_of)]
             metric = available_metrics[-1] if available_metrics else None
-            recent_events = [event for event in events if timedelta(0) <= _aware(as_of) - _aware(event.event_timestamp) <= timedelta(days=5)]
+            recent_events = [event for event in events if timedelta(0) <= _aware(as_of) - availability[event.id] <= timedelta(days=5)]
             weights = [max(event.importance, 0.0) * max(event.relevance, 0.0) for event in recent_events]
             denominator = sum(weights)
             weighted = lambda field: (sum((getattr(event, field) or 0.0) * weight for event, weight in zip(recent_events, weights)) / denominator) if denominator else 0.0
@@ -106,7 +109,7 @@ class StockForecastService:
                 "event_sentiment": weighted("sentiment"), "event_importance": weighted("importance"),
                 "event_surprise": weighted("surprise"),
             }
-        return context, events
+        return context, events, availability
 
     def _dataset_version(self, stock: Stock, rows: list[StockQuote]) -> str:
         body = [(row.timestamp.isoformat(), row.close, row.last, row.volume, row.content_hash) for row in rows]
@@ -173,7 +176,7 @@ class StockForecastService:
         """Evaluated release gate used by the training schedule, never inference."""
         stock = self._stock(identifier)
         observations, rows = self._quotes(stock.id)
-        context, _ = self._context_builder(stock)
+        context, _, _ = self._context_builder(stock)
         dataset_version = self._dataset_version(stock, rows) if rows else "empty"
         version = f"{MODEL_FAMILY}-{hashlib.sha256(dataset_version.encode()).hexdigest()[:8]}"
         existing_version = self.session.execute(select(ForecastModelVersion).where(
@@ -258,7 +261,7 @@ class StockForecastService:
             return {"instrument": stock.instrument.ticker, "forecast_available": False, "reason": "no_price_history", "horizons": {}, "history": [], "path": [], "warnings": ["Нет исторических котировок."]}
         quote = rows[-1]
         current_price = float(quote.close or quote.last)
-        context, events = self._context_builder(stock)
+        context, events, event_availability = self._context_builder(stock)
         transformed = self.features.transform(observations)
         latest_features = ({**transformed[-1].values, **context(transformed[-1].timestamp)} if transformed else {})
         if latest_features:
@@ -273,8 +276,10 @@ class StockForecastService:
         distributions: dict[int, list[float]] = {}
         validation: dict[str, dict] = {}
         trained_models: dict[str, QuantileForecastModel] = {}
+        saved_snapshots: dict[int, ForecastSnapshot] = {}
         all_warnings: list[str] = []
-        latest_event = next((event for event in reversed(events) if _aware(event.event_timestamp) <= _aware(quote.timestamp)), None)
+        latest_event = next((event for event in reversed(events) if event_availability[event.id] <= _aware(quote.timestamp) and
+                             _aware(quote.timestamp) - event_availability[event.id] <= timedelta(days=5)), None)
         for horizon in HORIZONS:
             if len(observations) < MIN_HISTORY[horizon] or not latest_features:
                 horizons[f"{horizon}d"] = {"forecast_available": False, "reason": "insufficient_history", "minimum_observations": MIN_HISTORY[horizon], "observations": len(observations)}
@@ -298,12 +303,36 @@ class StockForecastService:
             horizons[f"{horizon}d"] = {"forecast_available": True, **{key: value for key, value in prediction.items() if key not in ("distribution", "validation")}}
             all_warnings.extend(warnings)
             if persist:
-                self._save_snapshot(
+                saved_snapshots[horizon] = self._save_snapshot(
                     stock=stock, version=version, quote=quote, horizon=horizon,
                     features_hash=hashlib.sha256((self.features.features_hash(transformed[-1]) + json.dumps(context(transformed[-1].timestamp), sort_keys=True)).encode()).hexdigest(),
                     prediction=prediction, confidence=confidence, warnings=warnings, event_id=latest_event.id if latest_event else None,
                 )
         selected = horizons.get(f"{selected_horizon}d", {})
+        event_comparison = None
+        change_payload = None
+        selected_snapshot = saved_snapshots.get(selected_horizon)
+        if selected_snapshot and latest_event:
+            before = self.session.execute(select(ForecastSnapshot).where(
+                ForecastSnapshot.instrument_id == stock.instrument_id,
+                ForecastSnapshot.horizon == selected_horizon,
+                ForecastSnapshot.as_of_market_time < event_availability[latest_event.id],
+            ).order_by(ForecastSnapshot.as_of_market_time.desc()).limit(1)).scalar_one_or_none()
+            if before:
+                event_comparison = {
+                    "event_id": latest_event.id, "event_type": latest_event.event_type,
+                    "before": {"generated_at": before.generated_at.isoformat(), "probability_up": before.prediction.get("probability_up"), "median_return": before.prediction.get("median_return")},
+                    "after": {"generated_at": selected_snapshot.generated_at.isoformat(), "probability_up": selected_snapshot.prediction.get("probability_up"), "median_return": selected_snapshot.prediction.get("median_return")},
+                    "label": "Как новая информация изменила оценку модели",
+                }
+        if selected_snapshot:
+            change = self.session.execute(select(ForecastChange).where(
+                ForecastChange.current_snapshot_id == selected_snapshot.id
+            ).order_by(ForecastChange.created_at.desc()).limit(1)).scalar_one_or_none()
+            if change:
+                change_payload = {"probability_change": change.probability_change, "expected_return_change": change.expected_return_change,
+                                  "interval_width_change": change.interval_width_change, "confidence_change": change.confidence_change,
+                                  "reason": change.reason}
         path = []
         if selected.get("forecast_available"):
             path = ForecastPathGenerator().generate(
@@ -320,6 +349,7 @@ class StockForecastService:
             "confidence": selected.get("confidence", 0.0), "warnings": sorted(set(all_warnings)),
             "label": "Прогноз модели", "disclaimer": "Не является гарантией будущей цены.",
             "explanation": selected.get("factors", []), "validation": validation,
+            "event_comparison": event_comparison, "forecast_change": change_payload,
         }
         if persist:
             self.evaluate_due(stock)
@@ -369,7 +399,10 @@ class StockForecastService:
                 "interval_50_coverage": (sum(row.interval_50_hit for row, _ in group) / len(group)) if group else None,
                 "interval_80_coverage": (sum(row.interval_80_hit for row, _ in group) / len(group)) if group else None,
             }
-        latest_model = self.session.execute(select(ForecastModelVersion).order_by(ForecastModelVersion.created_at.desc()).limit(1)).scalar_one_or_none()
+        latest_model = self.session.execute(select(ForecastModelVersion).where(
+            ForecastModelVersion.instrument_id == stock.instrument_id,
+            ForecastModelVersion.production_status == "production",
+        ).order_by(ForecastModelVersion.created_at.desc()).limit(1)).scalar_one_or_none()
         return {"instrument": stock.instrument.ticker, "metrics_are_out_of_sample": True, "horizons": by_horizon,
                 "walk_forward_validation": latest_model.evaluation_metrics if latest_model else {},
                 "warning": "Метрики показываются только по завершившимся out-of-sample прогнозам."}

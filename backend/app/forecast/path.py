@@ -2,21 +2,34 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import math
 import random
 
 from app.forecast.pipeline import _quantile
 
 
+def kase_holidays(year: int) -> set[date]:
+    """National KASE closures plus weekday substitution for weekend holidays."""
+    fixed = {(1, 1), (1, 2), (1, 7), (3, 8), (3, 21), (3, 22), (3, 23),
+             (5, 1), (5, 7), (5, 9), (7, 6), (8, 30), (10, 25), (12, 16)}
+    holidays = {date(year, month, day) for month, day in fixed}
+    occupied = set(holidays)
+    for holiday in sorted(holidays):
+        if holiday.weekday() >= 5:
+            substitute = holiday + timedelta(days=1)
+            while substitute.weekday() >= 5 or substitute in occupied:
+                substitute += timedelta(days=1)
+            occupied.add(substitute)
+    return occupied
+
+
 def _trading_days(start: datetime, count: int) -> list[datetime]:
-    # Weekend-safe default. Exchange holiday adapters can replace this without
-    # changing the API contract; weekends are never presented as trading days.
     days: list[datetime] = []
     cursor = start
     while len(days) < count:
         cursor += timedelta(days=1)
-        if cursor.weekday() < 5:
+        if cursor.weekday() < 5 and cursor.date() not in kase_holidays(cursor.year):
             days.append(cursor)
     return days
 
@@ -57,4 +70,4 @@ class ForecastPathGenerator:
         return output
 
 
-__all__ = ["ForecastPathGenerator"]
+__all__ = ["ForecastPathGenerator", "kase_holidays"]
