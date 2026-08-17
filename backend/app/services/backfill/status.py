@@ -20,7 +20,9 @@ from app.models.history import (
     IngestionAnomaly,
     MarketObservation,
 )
+from app.models.incremental import KaseNewsItem
 from app.models.instrument import Instrument
+from app.models.stock import CorporateAction, Stock
 from app.services.backfill.coverage import CoverageService
 from app.services.backfill.queue import JOB_MARKET_HISTORY
 from app.services.backfill.records import STATUS_NO_TRADE, STATUS_TRADED
@@ -56,6 +58,15 @@ def stock_history_coverage(session: Session, instrument: Instrument) -> dict:
     traded_days = _count(DailyMarketSnapshot, DailyMarketSnapshot.status == STATUS_TRADED)
     quiet_days = _count(DailyMarketSnapshot, DailyMarketSnapshot.status == STATUS_NO_TRADE)
 
+    news_items = session.execute(
+        select(func.count(KaseNewsItem.id)).where(KaseNewsItem.ticker == instrument.ticker)
+    ).scalar_one()
+    corporate_actions = session.execute(
+        select(func.count(CorporateAction.id))
+        .join(Stock, Stock.id == CorporateAction.stock_id)
+        .where(Stock.instrument_id == instrument.id)
+    ).scalar_one()
+
     return {
         "instrument": {
             "id": instrument.id,
@@ -74,6 +85,8 @@ def stock_history_coverage(session: Session, instrument: Instrument) -> dict:
             "historical_trades": _count(HistoricalTrade),
             "dividend_events": _count(DividendEvent),
             "financial_reports": _count(FinancialReportRelease),
+            "news": news_items,
+            "corporate_actions": corporate_actions,
             "anomalies": _count(IngestionAnomaly, IngestionAnomaly.resolved.is_(False)),
         },
         "oldest_observation": bounds[0].isoformat() if bounds[0] else None,

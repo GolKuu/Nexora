@@ -57,12 +57,17 @@ class MonitoringService:
         return [(instrument, stock) for instrument, stock in rows]
 
     def observation_from_quote(self, quote: StockQuote) -> ObservationRecord:
+        # The database hands back naive timestamps; history is always stored in
+        # UTC, so the reading is normalised before anything else looks at it.
+        observed_at = quote.timestamp
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
         price = quote.last if quote.last is not None else quote.close
         traded = any(
             value is not None for value in (price, quote.volume, quote.turnover)
         )
         return ObservationRecord(
-            observed_at=quote.timestamp,
+            observed_at=observed_at,
             price=price,
             bid=quote.bid,
             ask=quote.ask,
@@ -79,10 +84,10 @@ class MonitoringService:
             status=STATUS_TRADED if traded else "no_trade",
             source=quote.source or MONITORING_SOURCE,
             source_url=quote.source_url,
-            source_timestamp=quote.source_timestamp or quote.timestamp,
+            source_timestamp=quote.source_timestamp or observed_at,
             parser_version=PARSER_VERSION,
             data_mode=quote.data_mode,
-            trading_date=kase_date(quote.timestamp),
+            trading_date=kase_date(observed_at),
         )
 
     def record_latest(self, instrument: Instrument, stock: Stock) -> dict:

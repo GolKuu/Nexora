@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.forecast.calendar import kase_date
@@ -143,11 +143,20 @@ class ChartService:
         expected = (
             expected_market_days(kase_date(start), kase_date(now)) if start else None
         )
-        insufficient = self._insufficient(range_key, traded, expected, start)
+        # Sufficiency is judged on stored trading days, never on the number of
+        # points returned: weekly buckets are a rendering choice and must not
+        # make a complete history look thin.
+        insufficient = self._insufficient(
+            range_key, traded, expected, start,
+            traded_days=self._traded_day_count(instrument.id, start),
+        )
 
         last_observation = self.session.execute(
             select(MarketObservation.observed_at, MarketObservation.data_mode)
-            .where(MarketObservation.instrument_id == instrument.id)
+            .where(
+                MarketObservation.instrument_id == instrument.id,
+                MarketObservation.superseded_at.is_(None),
+            )
             .order_by(MarketObservation.observed_at.desc())
             .limit(1)
         ).first()
@@ -205,7 +214,10 @@ class ChartService:
         self, instrument_id: int, start: datetime | None, resolution: str
     ) -> tuple[list[ChartPoint], str]:
         stmt = select(MarketObservation).where(
-            MarketObservation.instrument_id == instrument_id
+            MarketObservation.instrument_id == instrument_id,
+            # Corrected readings replace the originals on the chart; the
+            # originals remain in the table for the audit trail.
+            MarketObservation.superseded_at.is_(None),
         )
         if start is not None:
             stmt = stmt.where(MarketObservation.observed_at >= start)
@@ -238,12 +250,23 @@ class ChartService:
             )
         return points, "market_observations"
 
+    def _traded_day_count(self, instrument_id: int, start: datetime | None) -> int:
+        stmt = select(func.count(DailyMarketSnapshot.id)).where(
+            DailyMarketSnapshot.instrument_id == instrument_id,
+            DailyMarketSnapshot.status == STATUS_TRADED,
+        )
+        if start is not None:
+            stmt = stmt.where(DailyMarketSnapshot.trading_date >= kase_date(start))
+        return self.session.execute(stmt).scalar_one()
+
     def _insufficient(
         self,
         range_key: str,
         traded: list[ChartPoint],
         expected: int | None,
         start: datetime | None,
+        *,
+        traded_days: int,
     ) -> dict:
         """Say plainly when the stored history cannot fill the requested range."""
         if not traded:
@@ -254,15 +277,16 @@ class ChartService:
                 "expected_market_days": expected,
             }
         if expected and range_key in ("1y", "2y", "max"):
-            ratio = len(traded) / expected
+            ratio = traded_days / expected
             if ratio < 0.5:
                 return {
                     "value": True,
                     "reason": (
-                        f"KASE раскрывает лишь часть периода: есть {len(traded)} "
+                        f"KASE раскрывает лишь часть периода: есть {traded_days} "
                         f"торговых дней из ожидаемых {expected}."
                     ),
                     "available_points": len(traded),
+                    "traded_days": traded_days,
                     "expected_market_days": expected,
                     "completeness": round(ratio, 4),
                 }
@@ -278,6 +302,7 @@ class ChartService:
         return {
             "value": False,
             "available_points": len(traded),
+            "traded_days": traded_days,
             "expected_market_days": expected,
         }
 

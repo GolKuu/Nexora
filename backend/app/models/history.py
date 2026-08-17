@@ -82,6 +82,12 @@ class MarketObservation(Base, TimestampMixin, SourceMixin):
     parser_version: Mapped[str | None] = mapped_column(String(32))
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
 
+    #: Set when KASE later published a different value for this same moment. The
+    #: row stays exactly as it was recorded - charts and aggregates simply read
+    #: the corrected observation instead, and :class:`HistoricalCorrection`
+    #: carries the audit trail.
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
 
 class DailyMarketSnapshot(Base, TimestampMixin, SourceMixin):
     """One trading day, aggregated from the observations actually collected.
@@ -161,7 +167,7 @@ class HistoricalCoverage(Base, TimestampMixin):
     __tablename__ = "historical_coverage"
     __table_args__ = (
         UniqueConstraint("instrument_id", "job_type", name="uq_historical_coverage"),
-        Index("ix_historical_coverage_status", "status"),
+        Index("ix_historical_coverage_job_status", "job_type", "status"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -201,7 +207,7 @@ class BackfillCheckpoint(Base, TimestampMixin):
     __tablename__ = "backfill_checkpoints"
     __table_args__ = (
         UniqueConstraint("job_type", "instrument_id", name="uq_backfill_checkpoint"),
-        Index("ix_backfill_checkpoints_status", "status", "updated_at"),
+        Index("ix_backfill_checkpoints_status_updated", "status", "updated_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

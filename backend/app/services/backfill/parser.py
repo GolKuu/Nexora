@@ -13,13 +13,17 @@ A column we do not recognise is left alone; a value we cannot parse becomes
 from __future__ import annotations
 
 import re
-from datetime import datetime, time, timezone
+from calendar import monthrange
+from datetime import date, datetime, time, timezone
+from hashlib import sha256
 
-from app.browser.normalize import is_empty, parse_date, parse_number
+from app.browser.normalize import is_empty, parse_date, parse_datetime, parse_number
 from app.forecast.calendar import KASE_TZ
 from app.services.backfill.records import (
     DividendRecord,
+    NewsRecord,
     ObservationRecord,
+    ReportRecord,
     STATUS_NO_TRADE,
     STATUS_TRADED,
     TradeRecord,
@@ -267,6 +271,154 @@ def parse_dividends(
     return records
 
 
+#: Words that mark a document as periodic financial reporting. A prospectus or a
+#: press release is a document too, but it is not a financial statement and does
+#: not enter the report-version history.
+_REPORT_WORDS = (
+    "финансов", "отчет", "отчёт", "бухгалтерск", "баланс", "мсфо", "ifrs",
+    "financial statement", "annual report", "quarterly report", "есеп",
+)
+_QUARTER = re.compile(r"\b([1-4])\s*(?:кв|quarter|q)\b|\bq([1-4])\b", re.IGNORECASE)
+_HALF_YEAR = ("полугод", "half.year", "6 месяц", "жартыжылд")
+_YEAR = re.compile(r"\b(19|20)\d{2}\b")
+
+#: Publication headline -> event type. Only used to label news; a label never
+#: turns into a dividend, a split or any other stored fact on its own.
+NEWS_EVENT_WORDS: dict[str, tuple[str, ...]] = {
+    "dividend": ("дивиденд", "dividend"),
+    "financial_report": ("финансов отчет", "отчетность", "financial statement", "мсфо"),
+    "corporate_action": (
+        "дроблен", "консолидац", "выкуп акци", "размещени акци", "split", "buyback",
+    ),
+    "listing_change": ("делистинг", "листинг", "исключени из", "delisting", "listing"),
+    "meeting": ("собрани акционеров", "general meeting", "жиналыс"),
+    "rating": ("рейтинг", "rating"),
+}
+
+
+def classify_news_event(title: str | None) -> str | None:
+    """Best-effort label for a headline. ``None`` when nothing matches."""
+    folded = _fold(title)
+    if not folded:
+        return None
+    for event_type, words in NEWS_EVENT_WORDS.items():
+        if any(word in folded for word in words):
+            return event_type
+    return None
+
+
+def looks_like_financial_report(name: str | None) -> bool:
+    return any(word in _fold(name) for word in _REPORT_WORDS)
+
+
+def _reporting_period(text: str) -> tuple[date | None, str | None]:
+    """Derive the period a report covers from what the page called it.
+
+    Returns ``(None, None)`` when the text names no period - an undated document
+    is skipped rather than filed under the current quarter.
+    """
+    folded = _fold(text)
+    year_match = _YEAR.search(folded)
+    if not year_match:
+        return None, None
+    year = int(year_match.group(0))
+    quarter = _QUARTER.search(folded)
+    if quarter:
+        number = int(quarter.group(1) or quarter.group(2))
+        end_month = number * 3
+        return date(year, end_month, monthrange(year, end_month)[1]), "Q"
+    if any(word in folded for word in _HALF_YEAR):
+        return date(year, 6, 30), "H"
+    return date(year, 12, 31), "Y"
+
+
+def parse_report_documents(
+    documents: list,
+    *,
+    source: str | None = None,
+    window_start: date | None = None,
+) -> list[ReportRecord]:
+    """Turn official document links into versioned report releases.
+
+    The document itself is not downloaded here: the hash is over the stable
+    identity of the publication (URL, name, stated date), which is enough to
+    recognise the same file on the next run and to file a restatement as a new
+    version instead of an edit.
+    """
+    records: list[ReportRecord] = []
+    for document in documents:
+        url = getattr(document, "url", None) or ""
+        name = (getattr(document, "name", None) or "").strip()
+        if not url or not looks_like_financial_report(name):
+            continue
+        published = parse_date(getattr(document, "publication_date", None))
+        period, period_type = _reporting_period(f"{name} {getattr(document, 'publication_date', '') or ''}")
+        if period is None:
+            period, period_type = (published, None) if published else (None, None)
+        if period is None:
+            continue  # nothing stated the period; it is not invented
+        if window_start is not None and period < window_start and (
+            published is None or published < window_start
+        ):
+            continue
+        records.append(
+            ReportRecord(
+                reporting_period=period,
+                period_type=period_type,
+                publication_date=published,
+                available_at=(
+                    datetime.combine(published, time(0, 0), tzinfo=timezone.utc)
+                    if published else None
+                ),
+                document_url=url,
+                document_hash=sha256(
+                    f"{url}|{name.casefold()}|{published or ''}".encode("utf-8")
+                ).hexdigest(),
+                title=name[:1024],
+                source=source,
+                parser_version=PARSER_VERSION,
+            )
+        )
+    return records
+
+
+def parse_publication_links(
+    links: list[dict],
+    *,
+    source: str | None = None,
+    window_start: date | None = None,
+) -> list[NewsRecord]:
+    """Turn public news links into news records, dated only where stated."""
+    records: list[NewsRecord] = []
+    for link in links:
+        title = " ".join(str(link.get("title") or "").split())
+        url = str(link.get("url") or "")
+        if not title or not url:
+            continue
+        published = parse_datetime(link.get("publication_date"))
+        if published is None:
+            day = parse_date(link.get("publication_date"))
+            published = (
+                datetime.combine(day, time(0, 0), tzinfo=timezone.utc) if day else None
+            )
+        if window_start is not None and published is not None and published.date() < window_start:
+            continue
+        excerpt = " ".join(str(link.get("context") or "").split())
+        records.append(
+            NewsRecord(
+                title=title[:1024],
+                url=url,
+                publication_date=published,
+                event_type=classify_news_event(title),
+                excerpt=excerpt[:2000] or None,
+                source=source,
+                section=link.get("section"),
+                parser_version=PARSER_VERSION,
+            )
+        )
+    return records
+
+
 def looks_like_price_table(headers: list[str]) -> bool:
     mapping = map_headers(headers)
     return "date" in mapping and bool(
@@ -287,13 +439,18 @@ def looks_like_dividend_table(headers: list[str]) -> bool:
 
 __all__ = [
     "COLUMN_VOCABULARY",
+    "NEWS_EVENT_WORDS",
     "PARSER_VERSION",
     "classify_column",
+    "classify_news_event",
     "looks_like_dividend_table",
+    "looks_like_financial_report",
     "looks_like_price_table",
     "looks_like_trade_table",
     "map_headers",
     "parse_dividends",
     "parse_price_history",
+    "parse_publication_links",
+    "parse_report_documents",
     "parse_trades",
 ]

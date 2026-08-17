@@ -23,6 +23,7 @@ from app.models.history import (
 )
 from app.models.incremental import KaseNewsItem
 from app.models.instrument import Instrument
+from app.models.stock import CorporateAction, Stock
 from app.services.backfill.window import BackfillWindow, expected_market_days
 
 COMPLETE = "complete"
@@ -110,6 +111,12 @@ class CoverageService:
             )
         ).scalar_one()
 
+        actions = self.session.execute(
+            select(func.count(CorporateAction.id))
+            .join(Stock, Stock.id == CorporateAction.stock_id)
+            .where(Stock.instrument_id == instrument_id)
+        ).scalar_one()
+
         # Quarterly reporting: eight periods over two years is full coverage.
         expected_reports = max(window.years * 4, 1)
 
@@ -133,7 +140,10 @@ class CoverageService:
         row.quote_history_coverage = _ratio(quote_days, expected)
         row.financial_history_coverage = _ratio(reports, expected_reports)
         row.news_history_coverage = None if news == 0 else 1.0
-        row.corporate_action_coverage = None if dividends == 0 else 1.0
+        # There is no "expected" number of corporate actions - an issuer may
+        # legitimately have none - so this records whether any were found at
+        # all, and stays NULL rather than reporting a fabricated zero-of-zero.
+        row.corporate_action_coverage = None if (dividends + actions) == 0 else 1.0
         row.last_backfilled_at = datetime.now(timezone.utc)
         row.status = status or self._status(covered, expected)
         row.details = {
@@ -143,6 +153,7 @@ class CoverageService:
             "quote_days": quote_days,
             "reports": reports,
             "dividend_events": dividends,
+            "corporate_actions": actions,
             "news_items": news,
         }
         self.session.flush()

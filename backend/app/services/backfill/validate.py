@@ -11,8 +11,8 @@ as it was. Nothing here ever repairs a value - it only accepts or refuses it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, fields
+from datetime import date, datetime, timedelta, timezone
 
 from app.services.backfill.records import (
     ObservationRecord,
@@ -55,10 +55,11 @@ class ValidationOutcome:
 
 
 def _payload(record) -> dict:
+    """The raw record, JSON-safe, so a rejected parse can be inspected later."""
     return {
-        key: (value.isoformat() if isinstance(value, datetime) else value)
-        for key, value in vars(record).items()
-        if value is not None
+        field.name: (value.isoformat() if isinstance(value, (datetime, date)) else value)
+        for field in fields(record)
+        if (value := getattr(record, field.name, None)) is not None
     }
 
 

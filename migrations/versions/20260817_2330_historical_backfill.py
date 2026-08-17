@@ -231,13 +231,15 @@ def upgrade() -> None:
             ("ix_historical_coverage_instrument_id", ["instrument_id"]),
             ("ix_historical_coverage_job_type", ["job_type"]),
             ("ix_historical_coverage_status", ["status"]),
+            ("ix_historical_coverage_job_status", ["job_type", "status"]),
         ],
         "backfill_checkpoints": [
             ("ix_backfill_checkpoints_job_type", ["job_type"]),
             ("ix_backfill_checkpoints_instrument_id", ["instrument_id"]),
             ("ix_backfill_checkpoints_priority", ["priority"]),
             ("ix_backfill_checkpoints_next_attempt_at", ["next_attempt_at"]),
-            ("ix_backfill_checkpoints_status", ["status", "updated_at"]),
+            ("ix_backfill_checkpoints_status", ["status"]),
+            ("ix_backfill_checkpoints_status_updated", ["status", "updated_at"]),
         ],
         "ingestion_anomalies": [
             ("ix_ingestion_anomalies_instrument_id", ["instrument_id"]),

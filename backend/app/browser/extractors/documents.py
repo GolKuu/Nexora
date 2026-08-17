@@ -93,6 +93,80 @@ async def extract_documents(
     return documents
 
 
+#: Path segments that mark a link as a publication rather than navigation. Only
+#: KASE's own hosts are followed - an issuer's press release on a third-party
+#: site is not a KASE source and is not treated as one.
+PUBLICATION_SEGMENTS = (
+    "/news", "/announcements", "/announce", "/press", "/publications",
+    "/emitters/show", "/disclosure", "/hab", "/events",
+)
+KASE_HOSTS = {"kase.kz", "www.kase.kz"}
+
+
+async def extract_publication_links(
+    session: BrowserSession, *, section: str | None = None
+) -> list[dict]:
+    """Public news and disclosure links currently rendered on the page.
+
+    Returns raw link dictionaries rather than a typed record: what counts as an
+    issuer publication is a decision for the backfill parser, which knows the
+    ticker, not for the browser layer, which only knows the DOM.
+
+    Titles are the link's own text and dates come from the page around it. A
+    link whose date the page never states keeps ``publication_date=None`` - the
+    year in a URL is not a publication date.
+    """
+    page_url = await session.get_current_url()
+    entries = await session.page.evaluate(
+        """() => [...document.querySelectorAll('a[href]')].map((a) => {
+            const container = a.closest('li, tr, article, .card, .item, .news-item');
+            return {
+                href: a.href,
+                text: (a.innerText || '').trim().slice(0, 400),
+                title: a.getAttribute('title'),
+                time: (() => {
+                    const el = container ? container.querySelector('time') : null;
+                    return el ? (el.getAttribute('datetime') || el.innerText || '').trim() : '';
+                })(),
+                context: container ? (container.innerText || '').trim().slice(0, 400) : '',
+            };
+        })"""
+    )
+
+    seen: set[str] = set()
+    links: list[dict] = []
+    for entry in entries:
+        url = entry["href"]
+        parsed = urlparse(url)
+        if parsed.hostname not in KASE_HOSTS:
+            continue
+        path = parsed.path.lower()
+        if not any(segment in path for segment in PUBLICATION_SEGMENTS):
+            continue
+        if document_type_for(url) is not None:
+            continue  # a downloadable file: that is a document, not an article
+        if url in seen:
+            continue
+        title = (entry["text"] or entry.get("title") or "").strip()
+        if len(title) < 12:
+            continue  # navigation chrome ("Новости", "Все") is not a publication
+        seen.add(url)
+        context = entry.get("context") or ""
+        stated = entry.get("time") or ""
+        match = _DATE_IN_TEXT.search(stated) or _DATE_IN_TEXT.search(context)
+        links.append(
+            {
+                "url": url,
+                "title": title,
+                "publication_date": stated.strip() or (match.group(0) if match else None),
+                "context": context,
+                "source_page": page_url,
+                "section": section,
+            }
+        )
+    return links
+
+
 class KaseDocumentCollector:
     """Find public document links; downloading/parsing remains a later stage."""
 
@@ -101,3 +175,14 @@ class KaseDocumentCollector:
 
     async def collect(self, *, section: str | None = None) -> list[DocumentLink]:
         return await extract_documents(self.session, section=section)
+
+
+__all__ = [
+    "DOCUMENT_TYPES",
+    "KASE_HOSTS",
+    "KaseDocumentCollector",
+    "PUBLICATION_SEGMENTS",
+    "document_type_for",
+    "extract_documents",
+    "extract_publication_links",
+]

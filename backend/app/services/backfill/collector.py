@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app.browser.agent import KaseBrowserAgent, KaseBrowsingContext
+from app.browser.extractors.documents import extract_documents, extract_publication_links
 from app.browser.extractors.tables import extract_dynamic_table, extract_tables
 from app.browser.network import KaseNetworkObserver
 from app.browser.types import BrowserStatus
@@ -33,6 +34,8 @@ from app.services.backfill.parser import (
     looks_like_trade_table,
     parse_dividends,
     parse_price_history,
+    parse_publication_links,
+    parse_report_documents,
     parse_trades,
 )
 from app.services.backfill.records import CollectionResult
@@ -142,13 +145,15 @@ class KaseHistoryCollector:
         result.pages_visited += 1
 
         # The landing tab first, then whatever sections the page itself offers.
-        await self._harvest_current_page(agent, result, page.url or target)
+        await self._harvest_current_page(agent, result, page.url or target, window)
         for tab in getattr(page, "tabs", []) or []:
             name = (getattr(tab, "name", None) or "").strip()
             if not name:
                 continue
             await self._pace()
-            await self._harvest_current_page(agent, result, page.url or target, section=name)
+            await self._harvest_current_page(
+                agent, result, page.url or target, window, section=name
+            )
             if result.pages_visited >= self.page_limit:
                 result.notes.append("достигнут лимит страниц за один проход")
                 break
@@ -158,6 +163,19 @@ class KaseHistoryCollector:
         )
 
     async def _harvest_current_page(
+        self,
+        agent: KaseBrowserAgent,
+        result: CollectionResult,
+        source_url: str,
+        window: BackfillWindow,
+        *,
+        section: str | None = None,
+    ) -> None:
+        """Read everything the rendered section exposes: tables, then links."""
+        await self._harvest_tables(agent, result, source_url, section=section)
+        await self._harvest_links(agent, result, window, section=section)
+
+    async def _harvest_tables(
         self,
         agent: KaseBrowserAgent,
         result: CollectionResult,
@@ -206,6 +224,44 @@ class KaseHistoryCollector:
                 result.dividends.extend(
                     parse_dividends(headers, rows, source=SOURCE_NAME, source_url=source_url)
                 )
+
+    async def _harvest_links(
+        self,
+        agent: KaseBrowserAgent,
+        result: CollectionResult,
+        window: BackfillWindow,
+        *,
+        section: str | None = None,
+    ) -> None:
+        """Collect official documents and issuer publications from the section.
+
+        Documents that look like periodic financial reporting become versioned
+        report releases; KASE news and disclosure links become news records.
+        Both are filtered to the requested window, and anything the page did not
+        date is kept undated rather than guessed at.
+        """
+        try:
+            documents = await extract_documents(agent.session, section=section)
+        except Exception as exc:
+            logger.info("document extraction failed for %s: %s", section, exc)
+            result.notes.append(f"не удалось прочитать документы раздела {section}: {exc}")
+            documents = []
+        if documents:
+            result.reports.extend(
+                parse_report_documents(
+                    documents, source=SOURCE_NAME, window_start=window.start_date
+                )
+            )
+
+        try:
+            links = await extract_publication_links(agent.session, section=section)
+        except Exception as exc:
+            logger.info("publication extraction failed for %s: %s", section, exc)
+            result.notes.append(f"не удалось прочитать публикации раздела {section}: {exc}")
+            return
+        result.news.extend(
+            parse_publication_links(links, source=SOURCE_NAME, window_start=window.start_date)
+        )
 
 
 __all__ = ["HISTORY_SECTIONS", "KaseHistoryCollector", "PageHistory", "SOURCE_NAME"]

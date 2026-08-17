@@ -15,12 +15,15 @@ from app.services.backfill.coverage import CoverageService
 from app.services.backfill.parser import (
     parse_dividends,
     parse_price_history,
+    parse_publication_links,
+    parse_report_documents,
     parse_trades,
 )
 from app.services.backfill.queue import BackfillQueue
 from app.services.backfill.records import (
     CollectionResult,
     DividendRecord,
+    NewsRecord,
     ObservationRecord,
     ReportRecord,
     STATUS_DATA_UNAVAILABLE,
@@ -43,6 +46,7 @@ __all__ = [
     "DividendRecord",
     "HistoryStore",
     "KaseHistoryCollector",
+    "NewsRecord",
     "ObservationRecord",
     "ReportRecord",
     "STATUS_DATA_UNAVAILABLE",
@@ -54,6 +58,8 @@ __all__ = [
     "market_days",
     "parse_dividends",
     "parse_price_history",
+    "parse_publication_links",
+    "parse_report_documents",
     "parse_trades",
     "validate_observations",
     "validate_trades",

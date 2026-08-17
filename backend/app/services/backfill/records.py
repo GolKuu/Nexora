@@ -149,6 +149,47 @@ class ReportRecord:
 
 
 @dataclass(slots=True)
+class NewsRecord:
+    """One issuer publication linked from a public KASE page.
+
+    Only what the page actually stated: the headline text, its own URL and the
+    date printed next to it. A publication whose date the page never showed
+    keeps ``publication_date=None`` rather than being dated by the crawl.
+    """
+
+    title: str
+    url: str
+    publication_date: datetime | None = None
+    issuer_code: str | None = None
+    event_type: str | None = None
+    excerpt: str | None = None
+    source: str | None = None
+    section: str | None = None
+    parser_version: str | None = None
+
+    def content_hash(self) -> str:
+        return _digest([self.title.casefold(), self.url, self.publication_date])
+
+    def as_item(self) -> dict:
+        """The shape the existing news/corporate-action ingestion expects.
+
+        ``content`` carries the headline plus whatever excerpt the listing
+        showed, which is what lets a dividend announcement be recognised - and
+        an announcement with no stated amount stays a news item rather than
+        becoming a fabricated dividend.
+        """
+        return {
+            "title": self.title,
+            "url": self.url,
+            "publication_date": self.publication_date,
+            "content": " ".join(filter(None, (self.title, self.excerpt))),
+            "event_type": self.event_type,
+            "source": self.source,
+            "section": self.section,
+        }
+
+
+@dataclass(slots=True)
 class CollectionResult:
     """Everything one collector managed to read from one public page."""
 
@@ -156,6 +197,7 @@ class CollectionResult:
     trades: list[TradeRecord] = field(default_factory=list)
     dividends: list[DividendRecord] = field(default_factory=list)
     reports: list[ReportRecord] = field(default_factory=list)
+    news: list[NewsRecord] = field(default_factory=list)
     #: Pages visited, for pacing accounting and for the audit trail.
     pages_visited: int = 0
     source_urls: list[str] = field(default_factory=list)
@@ -168,6 +210,7 @@ class CollectionResult:
         self.trades.extend(other.trades)
         self.dividends.extend(other.dividends)
         self.reports.extend(other.reports)
+        self.news.extend(other.news)
         self.pages_visited += other.pages_visited
         self.source_urls.extend(other.source_urls)
         self.blocked = self.blocked or other.blocked
@@ -176,13 +219,17 @@ class CollectionResult:
 
     @property
     def is_empty(self) -> bool:
-        return not (self.observations or self.trades or self.dividends or self.reports)
+        return not (
+            self.observations or self.trades or self.dividends
+            or self.reports or self.news
+        )
 
 
 __all__ = [
     "ALL_STATUSES",
     "CollectionResult",
     "DividendRecord",
+    "NewsRecord",
     "ObservationRecord",
     "ReportRecord",
     "STATUS_DATA_UNAVAILABLE",

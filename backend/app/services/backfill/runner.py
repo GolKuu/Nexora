@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.history import BackfillCheckpoint
 from app.models.instrument import Instrument
+from app.models.issuer import Issuer
 from app.models.stock import Stock
 from app.services.backfill.collector import KaseHistoryCollector, PageHistory
 from app.services.backfill.coverage import CoverageService, FAILED, UNAVAILABLE
@@ -98,6 +99,10 @@ class BackfillRunner:
         self.session.commit()
         return {"discovered": len(rows), "queued": queued, **self.window.to_dict()}
 
+    def _issuer_code(self, instrument: Instrument) -> str | None:
+        issuer = self.session.get(Issuer, instrument.issuer_id)
+        return issuer.code if issuer else None
+
     # -- one instrument ---------------------------------------------------
 
     async def backfill_instrument(
@@ -114,6 +119,7 @@ class BackfillRunner:
             "trades": {"created": 0, "duplicates": 0, "received": 0},
             "dividends": {"created": 0, "duplicates": 0, "received": 0},
             "reports": {"created": 0, "duplicates": 0, "received": 0},
+            "news": {"created": 0, "duplicates": 0, "received": 0},
             "anomalies": 0,
             "blocked": False,
         }
@@ -195,6 +201,15 @@ class BackfillRunner:
         summary["trades"] = self.store.save_trades(instrument.id, trades.accepted)
         summary["dividends"] = self.store.save_dividends(instrument.id, result.dividends)
         summary["reports"] = self.store.save_reports(instrument.id, result.reports)
+        # News carries the corporate-action history with it: splits, buybacks
+        # and dividend decisions are read from the publications that announced
+        # them, never inferred from the price series.
+        summary["news"] = self.store.save_news(
+            instrument.id,
+            result.news,
+            ticker=instrument.ticker,
+            issuer_code=self._issuer_code(instrument),
+        )
 
         self.store.rebuild_daily_snapshots(instrument.id)
 

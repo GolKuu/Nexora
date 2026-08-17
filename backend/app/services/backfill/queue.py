@@ -153,6 +153,9 @@ class BackfillQueue:
         """Record progress so a crash resumes here instead of at the start."""
         if last_timestamp is not None:
             current = checkpoint.last_processed_timestamp
+            # SQLite hands back naive datetimes; compare in UTC either way.
+            if current is not None and current.tzinfo is None:
+                current = current.replace(tzinfo=timezone.utc)
             if current is None or last_timestamp > current:
                 checkpoint.last_processed_timestamp = last_timestamp
         if cursor is not None:

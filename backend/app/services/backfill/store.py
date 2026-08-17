@@ -27,8 +27,10 @@ from app.models.history import (
     IngestionAnomaly,
     MarketObservation,
 )
+from app.models.incremental import KaseNewsItem
 from app.services.backfill.records import (
     DividendRecord,
+    NewsRecord,
     ObservationRecord,
     ReportRecord,
     STATUS_NO_TRADE,
@@ -61,10 +63,18 @@ class HistoryStore:
     def save_observations(
         self, instrument_id: int, records: list[ObservationRecord]
     ) -> dict:
-        """Insert what is new; silently skip what we already hold."""
+        """Insert what is new; silently skip what we already hold.
+
+        A record whose fingerprint is new but whose *moment* we already hold is
+        KASE restating a value it published before. The original row is kept and
+        marked superseded, the restatement is stored alongside it, and the change
+        is written to :class:`~app.models.history.HistoricalCorrection` - so the
+        chart shows the corrected number and the audit trail shows both.
+        """
         known = self.existing_fingerprints(instrument_id)
         created = 0
         duplicates = 0
+        corrections = 0
         batch: set[str] = set()
         for record in records:
             fingerprint = record.fingerprint()
@@ -72,6 +82,7 @@ class HistoryStore:
                 duplicates += 1
                 continue
             batch.add(fingerprint)
+            corrections += self._supersede_restated(instrument_id, record)
             self.session.add(
                 MarketObservation(
                     instrument_id=instrument_id,
@@ -103,7 +114,64 @@ class HistoryStore:
             )
             created += 1
         self.session.flush()
-        return {"created": created, "duplicates": duplicates, "received": len(records)}
+        return {
+            "created": created,
+            "duplicates": duplicates,
+            "received": len(records),
+            "corrections": corrections,
+        }
+
+    def _supersede_restated(self, instrument_id: int, record: ObservationRecord) -> int:
+        """Retire any earlier reading of the same moment.
+
+        One moment has one current observation: a later read of the same
+        timestamp replaces the earlier one, whether it corrects a value or just
+        adds a column the first page did not show. Only a value that actually
+        *changed* is written to the correction log - a field that was NULL and
+        now has a number was never wrong, so it is not a correction.
+
+        Returns the number of superseded rows for which a correction was logged.
+        """
+        previous = list(
+            self.session.execute(
+                select(MarketObservation).where(
+                    MarketObservation.instrument_id == instrument_id,
+                    MarketObservation.observed_at == record.observed_at,
+                    MarketObservation.superseded_at.is_(None),
+                )
+            ).scalars()
+        )
+        if not previous:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        written = 0
+        for row in previous:
+            changed = {
+                field: (getattr(row, field), getattr(record, field))
+                for field in ("price", "open", "high", "low", "close", "volume",
+                              "turnover", "trade_count", "bid", "ask", "status")
+                if getattr(row, field) is not None
+                and getattr(row, field) != getattr(record, field)
+            }
+            row.superseded_at = now
+            if not changed:
+                continue
+            written += 1
+            for field, (original, corrected) in changed.items():
+                self.record_correction(
+                    instrument_id=instrument_id,
+                    record_type="market_observation",
+                    record_id=row.id,
+                    field=field,
+                    original_value=original,
+                    corrected_value=corrected,
+                    effective_date=record.trading_date or kase_date(record.observed_at),
+                    source=record.source,
+                    source_url=record.source_url,
+                    reason="KASE опубликовал другое значение для того же момента",
+                )
+        return written
 
     def save_trades(self, instrument_id: int, records: list[TradeRecord]) -> dict:
         known = set(
@@ -222,6 +290,54 @@ class HistoryStore:
         self.session.flush()
         return {"created": created, "duplicates": duplicates, "received": len(records)}
 
+    def save_news(
+        self,
+        instrument_id: int,
+        records: list[NewsRecord],
+        *,
+        ticker: str | None = None,
+        issuer_code: str | None = None,
+    ) -> dict:
+        """Store historical publications and whatever official actions they state.
+
+        Deliberately routed through the existing news ingestion rather than a
+        second news table: it already deduplicates by fingerprint, so a headline
+        collected by the live pipeline and by the backfill is stored once, and
+        it already refuses to turn an announcement with no stated amount into a
+        dividend. Corporate actions therefore arrive as a by-product of the news
+        history, verified rather than inferred.
+        """
+        if not records:
+            return {"created": 0, "duplicates": 0, "received": 0,
+                    "corporate_actions": 0, "dividends": 0}
+
+        # Imported lazily: the news pipeline imports the analyser, and the
+        # backfill must not drag it in on modules that never store news.
+        from app.services.incremental_documents import NewsIngestionService
+
+        before = self.session.execute(
+            select(func.count()).select_from(KaseNewsItem)
+        ).scalar_one()
+        outcome = NewsIngestionService(self.session).ingest(
+            entity_id=f"instrument:{instrument_id}",
+            items=[record.as_item() for record in records],
+            ticker=ticker,
+            issuer_code=issuer_code,
+        )
+        created = outcome.get("new_news", 0)
+        after = self.session.execute(
+            select(func.count()).select_from(KaseNewsItem)
+        ).scalar_one()
+        return {
+            "created": created,
+            "duplicates": len(records) - created,
+            "received": len(records),
+            "stored_total": after,
+            "grew_by": after - before,
+            "corporate_actions": outcome.get("corporate_actions_created", 0),
+            "dividends": outcome.get("dividends_created", 0),
+        }
+
     # -- anomalies and corrections ---------------------------------------
 
     def record_anomalies(
@@ -301,7 +417,10 @@ class HistoryStore:
           coverage instead.
         """
         stmt = select(MarketObservation).where(
-            MarketObservation.instrument_id == instrument_id
+            MarketObservation.instrument_id == instrument_id,
+            # A superseded reading stays in the table but no longer shapes the
+            # day: the corrected value is the factual one.
+            MarketObservation.superseded_at.is_(None),
         )
         if start is not None:
             stmt = stmt.where(MarketObservation.trading_date >= start)
@@ -362,6 +481,7 @@ class HistoryStore:
                 MarketObservation.instrument_id == instrument_id,
                 MarketObservation.price.is_not(None),
                 MarketObservation.status == STATUS_TRADED,
+                MarketObservation.superseded_at.is_(None),
             )
             .order_by(MarketObservation.observed_at.desc())
             .limit(1)
