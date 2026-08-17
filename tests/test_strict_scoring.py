@@ -663,6 +663,7 @@ def test_mock_data_cannot_produce_an_investable_score(bonds):
     [
         (strong_bond, "bonds"), (high_yield_weak_bond, "bonds"),
         (defaulted_bond, "bonds"), (illiquid_bond, "bonds"),
+        (cap_binding_bond, "bonds"),
         (strong_cheap_stock, "stocks"), (strong_expensive_stock, "stocks"),
         (value_trap_stock, "stocks"), (illiquid_strong_stock, "stocks"),
         (healthy_bank, "banks"), (weak_bank, "banks"),
@@ -682,6 +683,7 @@ def test_scores_are_deterministic(factory, engine_name, bonds, stocks, banks):
     [
         (strong_bond, "bonds"), (high_yield_weak_bond, "bonds"),
         (defaulted_bond, "bonds"), (illiquid_bond, "bonds"),
+        (cap_binding_bond, "bonds"),
         (strong_cheap_stock, "stocks"), (strong_expensive_stock, "stocks"),
         (value_trap_stock, "stocks"), (illiquid_strong_stock, "stocks"),
         (healthy_bank, "banks"), (weak_bank, "banks"),

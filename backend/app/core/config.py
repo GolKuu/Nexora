@@ -163,6 +163,28 @@ class Settings(BaseSettings):
     SCHEDULE_BOND_TERMS_SECONDS: int = 86_400
     RAW_SNAPSHOT_RETENTION_DAYS: int = 30
 
+    # --- historical backfill ---------------------------------------------
+    # The window is relative to the moment the job runs, never a calendar
+    # constant: backfill_start = today - HISTORICAL_BACKFILL_YEARS.
+    #
+    # This is only the *initial* window. Collected history is never deleted for
+    # being older than it - after three years of operation the database holds
+    # roughly five years of observations.
+    HISTORICAL_BACKFILL_YEARS: int = 2
+    HISTORICAL_BACKFILL_ENABLED: bool = Field(default_factory=lambda: not _on_vercel())
+    #: Instruments per scheduled backfill pass.
+    BACKFILL_BATCH_SIZE: int = 5
+    #: Browser contexts working in parallel. Kept low on purpose: kase.kz is a
+    #: public site being visited as a guest, not a load-test target.
+    BACKFILL_BROWSER_CONCURRENCY: int = 1
+    BACKFILL_REQUEST_DELAY_MS: int = 1_500
+    BACKFILL_MAX_RETRIES: int = 3
+    BACKFILL_PAGE_LIMIT: int = 60
+    SCHEDULE_BACKFILL_SECONDS: int = 900
+    #: After the backfill, every active stock is observed on this cadence.
+    MONITORING_INTERVAL_SECONDS: int = 600
+    RUN_LIVE_KASE_BACKFILL_TESTS: bool = False
+
     # --- AI --------------------------------------------------------------
     # The product's primary intelligence is our own model, served by the
     # inference service in ai/inference on our own infrastructure. See

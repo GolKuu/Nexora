@@ -10,6 +10,11 @@ from app.models.financials import (
 )
 from app.models.issuer import Issuer
 from app.models.instrument import Instrument
+from app.models.history import (
+    BackfillCheckpoint, DailyMarketSnapshot, DividendEvent, FinancialReportRelease,
+    HistoricalCorrection, HistoricalCoverage, HistoricalTrade, IngestionAnomaly,
+    MarketObservation,
+)
 from app.models.stock import CorporateAction, Dividend, Stock, StockFinancialPeriod, StockMetric, StockQuote, StockScore
 from app.models.macro import FxRate, InflationData, YieldCurve
 from app.models.market import BondQuote, BondTrade
@@ -57,6 +62,15 @@ __all__ = [
     "InflationData",
     "Issuer",
     "Instrument",
+    "BackfillCheckpoint",
+    "DailyMarketSnapshot",
+    "DividendEvent",
+    "FinancialReportRelease",
+    "HistoricalCorrection",
+    "HistoricalCoverage",
+    "HistoricalTrade",
+    "IngestionAnomaly",
+    "MarketObservation",
     "IssuerMetric",
     "PeerGroup",
     "Portfolio",
