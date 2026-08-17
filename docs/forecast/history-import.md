@@ -1,5 +1,9 @@
 # Licensed KASE history import
 
+This import is **only** for model training. The application's charts and change
+history do not use it: they are built from our own snapshots of the public KASE
+endpoints - see `docs/charts-and-change-history.md`.
+
 The production forecast release requires real historical equity observations.
 KASE classifies archived trading information as a commercial product, so the
 application never downloads or purchases it automatically.
