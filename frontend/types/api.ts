@@ -435,6 +435,15 @@ export interface StockForecastResponse {
   confidence?: number; warnings: string[]; label?: string; disclaimer?: string;
   explanation?: Array<{feature: string; association: "positive" | "negative"; contribution: number}>;
   validation?: Record<string, Record<string, unknown>>;
+  event_comparison?: {
+    event_id: number; event_type: string; label: string;
+    before: {generated_at: string; probability_up: number; median_return: number};
+    after: {generated_at: string; probability_up: number; median_return: number};
+  } | null;
+  forecast_change?: {
+    probability_change: number; expected_return_change: number;
+    interval_width_change: number; confidence_change: number; reason: string;
+  } | null;
 }
 export interface ForecastCalibrationBin {
   lower: number; upper: number; count: number; mean_probability: number | null; observed_frequency: number | null;

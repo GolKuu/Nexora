@@ -9,7 +9,7 @@ probability or a price path.
 ```text
 KASE quotes + reports + corporate actions + MarketEvent
                     |
-      point-in-time FeaturePipeline v2
+      point-in-time FeaturePipeline v3
                     |
     expanding-window walk-forward evaluation
                     |
@@ -41,28 +41,38 @@ q75/q90 paths and labels them as model ranges.
 Feature groups include adjusted OHLCV, momentum/drawdown, volatility,
 liquidity and price staleness, fundamentals, cross-sectional KASE market and
 sector returns, inflation, the KZT risk-free curve, USD/KZT movement, and
-published event features.
+published event features. Named 1d/5d/20d/60d returns use exact prior KASE
+sessions; missing prices produce an explicit availability flag rather than a
+fabricated return or a return spanning an unknown number of sessions.
 
 ## Time correctness
 
 - quotes are aggregated into actual KASE trading dates; intraday refreshes are
   not mistaken for separate trading days;
+- forward-return labels and completed-snapshot evaluations require an observed
+  price on the exact target KASE session; a later illiquid trade never stretches
+  a 5d/20d horizon;
 - missing days remain missing;
 - features have an `available_at` timestamp and are rejected if it is after
   the training row;
-- events enter a row only when `event_timestamp <= as_of`;
+- events enter a training row only when both their event and publication times
+  are `<= as_of`;
 - reports/metrics enter only when their stored availability timestamp is not
   later than the row;
 - splits and reverse splits back-adjust prior prices and volumes; dividends
-  remain price-return events because v1 does not claim to be a total-return
+  remain price-return events because this release does not claim to be a total-return
   series;
-- snapshots are immutable and realized results are evaluated only after the
-  requested number of later trading observations exists.
+- snapshots are immutable and realized results are evaluated only when the
+  exact requested target session has an observed price.
 
 ## Training versus inference
 
 The 10-minute market job collects a new observation, recalculates features and
 creates a snapshot. It does not retrain an existing production model. Training
+runs with historical point-in-time context, while inference uses the current
+information timestamp for newly published news/macro inputs and preserves the
+last real trade as `source_timestamp`. A post-close shock can therefore update
+the model without pretending that a fresh trade occurred. Training
 runs independently every 30 days. A candidate uses expanding-window folds for
 selection and a separate untouched final temporal test. It is promoted only
 when aggregate out-of-sample RMSE improves by at least 1%; a

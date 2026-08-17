@@ -6,7 +6,8 @@ import math
 import pytest
 from sqlalchemy import select
 
-from app.forecast.path import ForecastPathGenerator, kase_holidays
+from app.forecast.calendar import previous_trading_days
+from app.forecast.path import ForecastPathGenerator, kase_holidays, trading_days
 from app.forecast.pipeline import FeaturePipeline, Observation, QuantileForecastModel
 from app.models.forecast import ForecastModelVersion, ForecastSnapshot
 from app.models.instrument import Instrument
@@ -47,9 +48,26 @@ def test_features_are_past_only_and_missing_days_are_not_interpolated():
     assert all(all(available <= row.timestamp for available in row.available_at.values()) for row in transformed)
     samples = pipeline.samples(rows, 5)
     assert [row.timestamp for row in samples] == sorted(row.timestamp for row in samples)
-    by_time = {row.timestamp: row for row in rows}
+    by_date = {row.timestamp.astimezone(timezone(timedelta(hours=5))).date(): row for row in rows}
     first = samples[0]
-    assert first.features["return_1d"] == pytest.approx(math.log(by_time[first.timestamp].close / rows[59].close))
+    prior_date = previous_trading_days(first.timestamp, 1)[-1].astimezone(timezone(timedelta(hours=5))).date()
+    if prior_date in by_date:
+        current = next(row for row in rows if row.timestamp == first.timestamp)
+        assert first.features["return_1d"] == pytest.approx(math.log(current.close / by_date[prior_date].close))
+        assert first.features["return_1d_available"] == 1.0
+    else:
+        assert first.features["return_1d"] == 0.0
+        assert first.features["return_1d_available"] == 0.0
+
+
+def test_training_label_does_not_stretch_to_a_later_illiquid_trade():
+    rows = history(140)
+    pipeline = FeaturePipeline()
+    feature_time = pipeline.transform(rows)[5].timestamp
+    target_date = trading_days(feature_time, 5)[-1].astimezone(timezone(timedelta(hours=5))).date()
+    rows = [row for row in rows if row.timestamp.astimezone(timezone(timedelta(hours=5))).date() != target_date]
+    samples = pipeline.samples(rows, 5)
+    assert feature_time not in {sample.timestamp for sample in samples}
 
 
 def test_split_adjustment_removes_false_price_crash():
@@ -177,6 +195,47 @@ def test_news_feature_waits_for_publication_timestamp(session):
     assert context(as_of + timedelta(days=2))["event_count_5d"] == 1
 
 
+def test_news_after_a_stale_last_trade_updates_inference_without_retraining(session):
+    stock = _seed_forecast_stock(session, "SHOCKTEST")
+    quotes = list(session.execute(select(StockQuote).where(StockQuote.stock_id == stock.id)).scalars())
+    for quote in quotes:
+        quote.timestamp -= timedelta(days=2)
+        quote.source_timestamp = quote.timestamp
+    session.flush()
+    service = StockForecastService(session)
+    trained = service.retrain(stock.instrument.ticker)
+    assert trained["status"] == "promoted"
+    published_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    before = ForecastSnapshot(
+        instrument_id=stock.instrument_id, model_version=trained["model_version"],
+        generated_at=published_at - timedelta(hours=1), as_of_market_time=quotes[-1].timestamp,
+        source_timestamp=quotes[-1].timestamp, data_mode="delayed", features_hash="b" * 64,
+        horizon=20, current_price=float(quotes[-1].close), confidence=0.6, warnings=[],
+        prediction={"expected_return": -0.03, "median_return": -0.03, "probability_up": 0.35,
+                    "q10": -0.15, "q25": -0.08, "q50": -0.03, "q75": 0.03, "q90": 0.08},
+    )
+    session.add(before)
+    article = NewsArticle(source="test", source_url="https://example.test/shock", canonical_url="https://example.test/shock",
+                          title="Post-close material event", published_at=published_at, fetched_at=published_at,
+                          content_hash="shock-hash", fingerprint="shock-fingerprint", source_confidence=1.0)
+    session.add(article); session.flush()
+    event = MarketEvent(news_id=article.id, event_type="earnings", event_timestamp=published_at,
+                        instrument_id=stock.instrument_id, issuer_id=stock.instrument.issuer_id,
+                        importance=0.95, sentiment=0.4, surprise=0.8, source_confidence=1.0,
+                        analysis_confidence=1.0, relevance=1.0)
+    session.add(event); session.flush()
+    response = service.forecast(stock.instrument.ticker, 20)
+    snapshots = list(session.execute(select(ForecastSnapshot).where(
+        ForecastSnapshot.instrument_id == stock.instrument_id
+    )).scalars())
+    assert response["forecast_available"] is True
+    assert all(snapshot.event_id == event.id for snapshot in snapshots if snapshot.id != before.id)
+    assert response["event_comparison"]["before"]["probability_up"] == pytest.approx(0.35)
+    assert response["event_comparison"]["after"]["generated_at"] > response["event_comparison"]["before"]["generated_at"]
+    assert datetime.fromisoformat(response["as_of"]) > datetime.fromisoformat(response["source_timestamp"])
+    assert datetime.fromisoformat(response["path"][0]["date"]).date() > datetime.fromisoformat(response["as_of"]).date()
+
+
 def test_macro_feature_waits_for_source_timestamp(session):
     stock = _seed_forecast_stock(session, "MACROTEST")
     as_of = datetime.now(timezone.utc)
@@ -202,6 +261,23 @@ def test_financial_metric_waits_for_actual_availability(session):
     assert context(as_of + timedelta(days=2))["valuation_pe"] == pytest.approx(99.0)
 
 
+def test_peer_market_feature_waits_for_exact_quote_timestamp(session):
+    stock = _seed_forecast_stock(session, "POINTTEST")
+    peer = _seed_forecast_stock(session, "PEERTEST")
+    stock.sector = peer.sector = "banking"
+    peer_quotes = list(session.execute(select(StockQuote).where(
+        StockQuote.stock_id == peer.id
+    ).order_by(StockQuote.timestamp)).scalars())
+    latest = peer_quotes[-1]
+    latest.close = latest.last = float(latest.close) * 2
+    session.flush()
+    context, _, _ = StockForecastService(session)._context_builder(stock)
+    before = context(latest.timestamp - timedelta(microseconds=1))
+    after = context(latest.timestamp + timedelta(microseconds=1))
+    assert after["market_return_20d"] > before["market_return_20d"] + 0.5
+    assert after["sector_return_20d"] > before["sector_return_20d"] + 0.5
+
+
 def test_snapshot_evaluation_and_track_record_are_realized(session):
     stock = _seed_forecast_stock(session, "TRACKTEST")
     service = StockForecastService(session)
@@ -224,3 +300,24 @@ def test_snapshot_evaluation_and_track_record_are_realized(session):
     assert track["mae_return"] is not None
     assert track["brier_score"] is not None
     assert sum(bin_["count"] for bin_ in track["calibration_bins"]) == 1
+
+
+def test_snapshot_is_not_evaluated_on_a_later_trade_when_target_session_is_missing(session):
+    stock = _seed_forecast_stock(session, "MISSEVAL")
+    quotes = list(session.execute(select(StockQuote).where(
+        StockQuote.stock_id == stock.id
+    ).order_by(StockQuote.timestamp)).scalars())
+    origin = quotes[-30]
+    target_date = trading_days(origin.timestamp, 5)[-1].astimezone(timezone(timedelta(hours=5))).date()
+    target_quote = next(row for row in quotes
+                        if row.timestamp.astimezone(timezone(timedelta(hours=5))).date() == target_date)
+    session.delete(target_quote)
+    snapshot = ForecastSnapshot(
+        instrument_id=stock.instrument_id, model_version="missing-session-v1", generated_at=origin.timestamp,
+        as_of_market_time=origin.timestamp, source_timestamp=origin.timestamp, data_mode="delayed",
+        features_hash="m" * 64, horizon=5, current_price=float(origin.close), confidence=0.5, warnings=[],
+        prediction={"expected_return": 0.01, "median_return": 0.01, "probability_up": 0.55,
+                    "q10": -0.10, "q25": -0.03, "q50": 0.01, "q75": 0.05, "q90": 0.10},
+    )
+    session.add(snapshot); session.flush()
+    assert StockForecastService(session).evaluate_due(stock) == 0

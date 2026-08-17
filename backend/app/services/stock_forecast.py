@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.errors import NotFoundError
 from app.core.config import settings
+from app.forecast.calendar import KASE_TZ, kase_date, trading_days
 from app.forecast.path import ForecastPathGenerator
 from app.forecast.pipeline import FEATURES_VERSION, HORIZONS, MIN_HISTORY, FeaturePipeline, Observation, QuantileForecastModel
 from app.models.forecast import ForecastChange, ForecastEvaluation, ForecastModelVersion, ForecastSnapshot
@@ -21,9 +22,8 @@ from app.models.news import MarketEvent, NewsArticle
 from app.models.macro import FxRate, InflationData, YieldCurve
 from app.models.stock import CorporateAction, Stock, StockMetric, StockQuote
 
-MODEL_FAMILY = "kase-quantile-ensemble-v2"
+MODEL_FAMILY = "kase-quantile-ensemble-v3"
 _MODEL_CACHE: dict[tuple[str, int], QuantileForecastModel] = {}
-KASE_TZ = timezone(timedelta(hours=5))
 
 
 def _aware(value: datetime) -> datetime:
@@ -112,31 +112,23 @@ class StockForecastService:
         ).join(Stock, Stock.id == StockQuote.stock_id).where(
             or_(StockQuote.close.is_not(None), StockQuote.last.is_not(None))
         ).order_by(StockQuote.stock_id, StockQuote.timestamp, StockQuote.id)).all())
-        closes: dict[int, dict[object, tuple[float, str | None]]] = {}
+        closes: dict[int, dict[date, tuple[float, str | None, datetime]]] = {}
         for stock_id, timestamp, close, last, sector in market_rows:
-            closes.setdefault(stock_id, {})[_aware(timestamp).astimezone(KASE_TZ).date()] = (float(close or last), sector)
-        market_by_day: dict[object, list[tuple[int, float]]] = {}
-        sector_by_day: dict[tuple[object, str], list[tuple[int, float]]] = {}
+            market_time = _aware(timestamp)
+            closes.setdefault(stock_id, {})[market_time.astimezone(KASE_TZ).date()] = (
+                float(close or last), sector, market_time,
+            )
+        market_by_day: dict[date, list[tuple[int, float, datetime]]] = {}
+        sector_by_day: dict[tuple[date, str], list[tuple[int, float, datetime]]] = {}
         for series_stock_id, series in closes.items():
             ordered = sorted(series.items())
-            for (day_before, (price_before, _)), (day, (price, sector)) in zip(ordered, ordered[1:]):
+            for (_, (price_before, _, _)), (day, (price, sector, available_at)) in zip(ordered, ordered[1:]):
                 if price_before <= 0 or price <= 0:
                     continue
                 value = math.log(price / price_before)
-                market_by_day.setdefault(day, []).append((series_stock_id, value))
+                market_by_day.setdefault(day, []).append((series_stock_id, value, available_at))
                 if sector:
-                    sector_by_day.setdefault((day, sector), []).append((series_stock_id, value))
-        market_daily: dict[object, float] = {}
-        for day, values in market_by_day.items():
-            peers = [value for other_stock_id, value in values if other_stock_id != stock.id]
-            if peers:
-                market_daily[day] = sum(peers) / len(peers)
-
-        sector_daily: dict[tuple[object, str], float] = {}
-        for day_sector, values in sector_by_day.items():
-            peers = [value for other_stock_id, value in values if other_stock_id != stock.id]
-            if peers:
-                sector_daily[day_sector] = sum(peers) / len(peers)
+                    sector_by_day.setdefault((day, sector), []).append((series_stock_id, value, available_at))
 
         def source_available(row, date_value) -> datetime:
             timestamp = getattr(row, "source_timestamp", None) or getattr(row, "created_at", None)
@@ -150,10 +142,22 @@ class StockForecastService:
             weights = [max(event.importance, 0.0) * max(event.relevance, 0.0) for event in recent_events]
             denominator = sum(weights)
             weighted = lambda field: (sum((getattr(event, field) or 0.0) * weight for event, weight in zip(recent_events, weights)) / denominator) if denominator else 0.0
-            as_of_date = _aware(as_of).astimezone(KASE_TZ).date()
-            market_values = [value for day, value in sorted(market_daily.items()) if day <= as_of_date][-20:]
-            sector_values = [value for (day, sector), value in sorted(sector_daily.items())
-                             if day <= as_of_date and sector == (stock.sector or "")][-20:]
+            known_at = _aware(as_of)
+            as_of_date = known_at.astimezone(KASE_TZ).date()
+            market_values: list[float] = []
+            for day, values in sorted(market_by_day.items()):
+                peers = [value for other_stock_id, value, available_at in values
+                         if other_stock_id != stock.id and available_at <= known_at]
+                if day <= as_of_date and peers:
+                    market_values.append(sum(peers) / len(peers))
+            sector_values: list[float] = []
+            for (day, sector), values in sorted(sector_by_day.items()):
+                peers = [value for other_stock_id, value, available_at in values
+                         if other_stock_id != stock.id and available_at <= known_at]
+                if day <= as_of_date and sector == (stock.sector or "") and peers:
+                    sector_values.append(sum(peers) / len(peers))
+            market_values = market_values[-20:]
+            sector_values = sector_values[-20:]
             known_inflation = [row for row in inflation if source_available(row, row.period_end) <= _aware(as_of)]
             known_curves = [row for row in curves if source_available(row, row.as_of_date) <= _aware(as_of)]
             known_fx = [row for row in fx_rates if source_available(row, row.as_of_date) <= _aware(as_of)]
@@ -260,7 +264,10 @@ class StockForecastService:
         for horizon in HORIZONS:
             if len(observations) < MIN_HISTORY[horizon]:
                 continue
-            model = QuantileForecastModel(horizon).fit(self.features.samples(observations, horizon, context))
+            samples = self.features.samples(observations, horizon, context)
+            if len(samples) < 50:
+                continue
+            model = QuantileForecastModel(horizon).fit(samples)
             models[f"{horizon}d"] = model
             metrics[f"{horizon}d"] = model.validation
         if not models:
@@ -337,7 +344,9 @@ class StockForecastService:
         current_price = float(quote.close or quote.last)
         context, events, event_availability = self._context_builder(stock)
         transformed = self.features.transform(observations)
-        latest_features = ({**transformed[-1].values, **context(transformed[-1].timestamp)} if transformed else {})
+        inference_time = datetime.now(timezone.utc)
+        latest_context = context(inference_time)
+        latest_features = ({**transformed[-1].values, **latest_context} if transformed else {})
         dataset_version = self._dataset_version(stock, rows)
         registry = self.session.execute(select(ForecastModelVersion).where(
             ForecastModelVersion.instrument_id == stock.instrument_id,
@@ -350,8 +359,8 @@ class StockForecastService:
         trained_models: dict[str, QuantileForecastModel] = {}
         saved_snapshots: dict[int, ForecastSnapshot] = {}
         all_warnings: list[str] = []
-        latest_event = next((event for event in reversed(events) if event_availability[event.id] <= _aware(quote.timestamp) and
-                             _aware(quote.timestamp) - event_availability[event.id] <= timedelta(days=5)), None)
+        latest_event = next((event for event in reversed(events) if event_availability[event.id] <= inference_time and
+                             inference_time - event_availability[event.id] <= timedelta(days=5)), None)
         for horizon in HORIZONS:
             if len(observations) < MIN_HISTORY[horizon] or not latest_features:
                 horizons[f"{horizon}d"] = {"forecast_available": False, "reason": "insufficient_history", "minimum_observations": MIN_HISTORY[horizon], "observations": len(observations)}
@@ -377,7 +386,7 @@ class StockForecastService:
             if persist:
                 saved_snapshots[horizon] = self._save_snapshot(
                     stock=stock, version=version, quote=quote, horizon=horizon,
-                    features_hash=hashlib.sha256((self.features.features_hash(transformed[-1]) + json.dumps(context(transformed[-1].timestamp), sort_keys=True)).encode()).hexdigest(),
+                    features_hash=hashlib.sha256((self.features.features_hash(transformed[-1]) + json.dumps(latest_context, sort_keys=True)).encode()).hexdigest(),
                     prediction=prediction, confidence=confidence, warnings=warnings, event_id=latest_event.id if latest_event else None,
                 )
         selected = horizons.get(f"{selected_horizon}d", {})
@@ -388,8 +397,8 @@ class StockForecastService:
             before = self.session.execute(select(ForecastSnapshot).where(
                 ForecastSnapshot.instrument_id == stock.instrument_id,
                 ForecastSnapshot.horizon == selected_horizon,
-                ForecastSnapshot.as_of_market_time < event_availability[latest_event.id],
-            ).order_by(ForecastSnapshot.as_of_market_time.desc()).limit(1)).scalar_one_or_none()
+                ForecastSnapshot.generated_at < event_availability[latest_event.id],
+            ).order_by(ForecastSnapshot.generated_at.desc()).limit(1)).scalar_one_or_none()
             if before:
                 event_comparison = {
                     "event_id": latest_event.id, "event_type": latest_event.event_type,
@@ -408,13 +417,13 @@ class StockForecastService:
         path = []
         if selected.get("forecast_available"):
             path = ForecastPathGenerator().generate(
-                current_price=current_price, as_of=_aware(quote.timestamp), horizon=selected_horizon,
+                current_price=current_price, as_of=inference_time, horizon=selected_horizon,
                 return_distribution=distributions[selected_horizon], annualized_volatility=selected["expected_volatility"],
                 event_uncertainty=float(latest_features.get("event_importance", 0.0)) * 0.25,
             )
         history = [{"date": row.timestamp.isoformat(), "price": row.close, "volume": row.volume} for row in observations[-260:]]
         response = {
-            "instrument": stock.instrument.ticker, "as_of": _aware(quote.timestamp).isoformat(),
+            "instrument": stock.instrument.ticker, "as_of": inference_time.isoformat(),
             "source_timestamp": _aware(quote.source_timestamp or quote.timestamp).isoformat(), "current_price": current_price,
             "data_mode": quote.data_mode, "model_version": version, "forecast_available": bool(selected.get("forecast_available")),
             "horizons": horizons, "selected_horizon": f"{selected_horizon}d", "history": history, "path": path,
@@ -435,10 +444,14 @@ class StockForecastService:
         created = 0
         for snapshot in snapshots:
             observations, _ = self._quotes(stock.id)
-            later = [row for row in observations if _aware(row.timestamp).date() > _aware(snapshot.as_of_market_time).date()]
-            if len(later) < snapshot.horizon:
+            target_date = kase_date(trading_days(_aware(snapshot.generated_at), snapshot.horizon)[-1])
+            realized = next((row for row in observations
+                             if kase_date(_aware(row.timestamp)) == target_date), None)
+            # Do not silently stretch an N-session forecast until the next
+            # trade of an illiquid stock. Without an observed target-session
+            # price, that forecast is not yet eligible for evaluation.
+            if realized is None:
                 continue
-            realized = later[snapshot.horizon - 1]
             price = float(realized.close)
             realized_return = math.log(price / snapshot.current_price)
             pred = snapshot.prediction

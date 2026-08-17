@@ -84,6 +84,21 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
         <div className="h-[86px] w-full border-t border-slate-100 dark:border-slate-800"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chart} margin={{top: 8, right: 70, bottom: 4, left: 2}}><XAxis dataKey="date" hide/><YAxis hide/><Tooltip content={<VolumeTooltip/>}/><Bar dataKey="volume" fill="#22c55e" opacity={0.65} radius={[2,2,0,0]} /></ComposedChart></ResponsiveContainer></div>
       </div>
 
+      {data.event_comparison ? <div className="border-t border-slate-100 p-5 dark:border-slate-800">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Как событие изменило оценку модели</p>
+        <p className="mt-1 text-xs text-slate-500">Тип события: {data.event_comparison.event_type}</p>
+        <div className="mt-3 grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
+          <EventForecastState label="До публикации" probability={data.event_comparison.before.probability_up} median={data.event_comparison.before.median_return} timestamp={data.event_comparison.before.generated_at} />
+          <span className="text-center text-xl text-slate-400">→</span>
+          <EventForecastState label="После публикации" probability={data.event_comparison.after.probability_up} median={data.event_comparison.after.median_return} timestamp={data.event_comparison.after.generated_at} />
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">Это изменение оценки модели после появления информации, а не доказательство причинного эффекта новости.</p>
+      </div> : null}
+
+      {data.forecast_change ? <div className="border-t border-amber-100 bg-amber-50/70 px-5 py-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+        <span className="font-semibold">Существенное изменение прогноза:</span> P(up) {signedPct(data.forecast_change.probability_change)}, центральный сценарий {signedPct(data.forecast_change.expected_return_change)}, ширина 80% диапазона {signedPct(data.forecast_change.interval_width_change)}.
+      </div> : null}
+
       {quality ? <div className="border-t border-slate-100 p-5 dark:border-slate-800">
         <div className="flex flex-wrap items-end justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Качество модели на исторических данных</p><p className="mt-1 text-xs text-slate-500">Только out-of-sample · {qualitySource}</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{String(validationTrack?.selected_model ?? selected?.selected_model ?? "production")}</span></div>
         <div className="mt-3 grid gap-2 sm:grid-cols-4"><QualityStat label="Direction accuracy" value={pct(numeric(quality.direction_accuracy) ?? undefined)} /><QualityStat label="80% coverage" value={pct(numeric(quality.interval_80_coverage) ?? undefined)} /><QualityStat label="Brier score" value={numeric(quality.brier_score)?.toFixed(3) ?? "—"} /><QualityStat label="Calibration error" value={pct(numeric(quality.calibration_error) ?? undefined)} /></div>
@@ -100,6 +115,8 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
 
 function ForecastStat({label, value, accent}: {label: string; value: string; accent?: boolean}) { return <div className="bg-white px-5 py-3 dark:bg-slate-900"><p className="text-[11px] uppercase tracking-wide text-slate-500">{label}</p><p className={`mt-1 text-lg font-semibold tabular ${accent ? "text-emerald-600" : ""}`}>{value}</p></div>; }
 function QualityStat({label, value}: {label: string; value: string}) { return <div className="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/70"><p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 font-semibold tabular">{value}</p></div>; }
+function EventForecastState({label, probability, median, timestamp}: {label: string; probability: number; median: number; timestamp: string}) { return <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/70"><p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p><div className="mt-1 flex items-baseline justify-between gap-2"><strong>P(up) {pct(probability)}</strong><span className={median >= 0 ? "text-emerald-600" : "text-rose-600"}>{signedPct(median)}</span></div><p className="mt-1 text-[10px] text-slate-400">{formatDate(timestamp)}</p></div>; }
+function signedPct(value: number) { return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`; }
 function Legend({color, label, dashed}: {color: string; label: string; dashed?: boolean}) { return <span className="flex items-center gap-1.5"><span className="h-0 w-5" style={{borderTop: `2px ${dashed ? "dashed" : "solid"} ${color}`}} />{label}</span>; }
 function ForecastTooltip({active, payload, label, currency}: any) { if (!active || !payload?.length) return null; const row = payload[0]?.payload ?? {}; return <div className="rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"><p className="mb-2 font-semibold">{formatDate(label)}</p>{row.history != null ? <p>Фактическая цена: <b>{formatMoney(row.history, currency, 2)}</b></p> : null}{row.forecast != null ? <><p>Медиана: <b>{formatMoney(row.forecast, currency, 2)}</b></p><p>50%: {formatMoney(row.q25, currency, 2)} — {formatMoney(row.q75, currency, 2)}</p><p>80%: {formatMoney(row.q10, currency, 2)} — {formatMoney(row.q90, currency, 2)}</p></> : null}</div>; }
 function VolumeTooltip({active, payload}: any) { if (!active || !payload?.length || payload[0]?.value == null) return null; return <div className="rounded-lg bg-slate-950 px-2 py-1 text-xs text-white">Объём: {Number(payload[0].value).toLocaleString("ru-RU", {notation: "compact"})}</div>; }

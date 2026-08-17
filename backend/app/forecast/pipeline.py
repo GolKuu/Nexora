@@ -15,9 +15,11 @@ import math
 import statistics
 from typing import Callable, Iterable
 
+from app.forecast.calendar import kase_date, previous_trading_days, trading_days
+
 HORIZONS = (1, 5, 20, 60)
 MIN_HISTORY = {1: 120, 5: 125, 20: 150, 60: 210}
-FEATURES_VERSION = "stock-features-v2"
+FEATURES_VERSION = "stock-features-v3"
 
 
 @dataclass(frozen=True)
@@ -122,6 +124,7 @@ class FeaturePipeline:
 
     names = (
         "return_1d", "return_5d", "return_20d", "return_60d",
+        "return_1d_available", "return_5d_available", "return_20d_available", "return_60d_available",
         "momentum_5_20", "distance_ma20", "drawdown_60", "range_20",
         "volatility_20", "volatility_60", "relative_volume_20",
         "volume_trend", "spread_pct", "trades_log", "days_since_trade", "quote_availability",
@@ -160,14 +163,21 @@ class FeaturePipeline:
     def transform(self, observations: Iterable[Observation]) -> list[FeatureRow]:
         rows = self.normalize(observations)
         closes = [row.close for row in rows]
+        rows_by_session = {kase_date(row.timestamp): row for row in rows}
         volumes = [row.volume for row in rows]
         output: list[FeatureRow] = []
         for i, row in enumerate(rows):
             if i < 60:
                 continue
 
-            def ret(days: int) -> float:
-                return math.log(row.close / closes[i - days]) if closes[i - days] > 0 else 0.0
+            def return_and_availability(days: int) -> tuple[float, float]:
+                prior_date = kase_date(previous_trading_days(row.timestamp, days)[-1])
+                prior = rows_by_session.get(prior_date)
+                if prior is None or prior.close <= 0:
+                    return 0.0, 0.0
+                return math.log(row.close / prior.close), 1.0
+
+            returns = {days: return_and_availability(days) for days in (1, 5, 20, 60)}
 
             log_returns = [math.log(closes[j] / closes[j - 1]) for j in range(max(1, i - 59), i + 1)]
             vol20 = _std(log_returns[-20:]) * math.sqrt(252)
@@ -184,8 +194,11 @@ class FeaturePipeline:
             prior_volume = _mean(v for v in volumes[i - 19:i - 4] if v is not None and v >= 0)
             spread = ((row.ask - row.bid) / ((row.ask + row.bid) / 2)) if row.bid and row.ask and row.ask >= row.bid else 0.0
             values = {
-                "return_1d": ret(1), "return_5d": ret(5), "return_20d": ret(20), "return_60d": ret(60),
-                "momentum_5_20": ret(5) - ret(20), "distance_ma20": row.close / ma20 - 1.0,
+                "return_1d": returns[1][0], "return_5d": returns[5][0],
+                "return_20d": returns[20][0], "return_60d": returns[60][0],
+                "return_1d_available": returns[1][1], "return_5d_available": returns[5][1],
+                "return_20d_available": returns[20][1], "return_60d_available": returns[60][1],
+                "momentum_5_20": returns[5][0] - returns[20][0], "distance_ma20": row.close / ma20 - 1.0,
                 "drawdown_60": row.close / high60 - 1.0, "range_20": max(highs) / min(lows) - 1.0,
                 "volatility_20": vol20, "volatility_60": vol60, "relative_volume_20": relative_volume,
                 "volume_trend": (recent_volume / prior_volume - 1.0) if prior_volume > 0 else 0.0,
@@ -203,14 +216,17 @@ class FeaturePipeline:
         rows = self.normalize(observations)
         feature_rows = self.transform(rows)
         index = {row.timestamp: i for i, row in enumerate(rows)}
+        rows_by_session = {kase_date(row.timestamp): row for row in rows}
         samples: list[TrainingSample] = []
         for feature in feature_rows:
             i = index[feature.timestamp]
-            if i + horizon >= len(rows):
+            target_date = kase_date(trading_days(feature.timestamp, horizon)[-1])
+            target_row = rows_by_session.get(target_date)
+            if target_row is None:
                 continue
             if any(available > feature.timestamp for available in feature.available_at.values()):
                 raise ValueError("look-ahead feature detected")
-            target = math.log(rows[i + horizon].close / rows[i].close)
+            target = math.log(target_row.close / rows[i].close)
             values = {**feature.values, **(context(feature.timestamp) if context else {})}
             samples.append(TrainingSample(feature.timestamp, values, target))
         return samples

@@ -4,9 +4,9 @@ Status: **production release not yet eligible on the bundled KASE dataset**
 
 Report date: 2026-08-17
 
-Feature version: `stock-features-v2`
+Feature version: `stock-features-v3`
 
-Model family: `kase-quantile-ensemble-v2`
+Model family: `kase-quantile-ensemble-v3`
 
 This report deliberately contains no invented win rate. The bundled verified
 snapshot contains 87 KASE stocks and 87 stock quote rows: one observation per
@@ -30,6 +30,12 @@ Corporate actions (731 bundled rows), financial periods (656), dividends (26),
 news events and quote provenance are stored separately and aligned by their
 availability timestamps. Delisted/inactive instruments remain in persistence
 instead of being removed from backtests.
+
+Forward labels must land on the exact target KASE trading session. If an
+illiquid instrument has no observed price for that session, the sample is
+omitted instead of using a later trade and silently changing the horizon.
+Lagged return features follow the same rule and include per-horizon
+availability flags when the exact prior-session price is absent.
 
 ## Candidate protocol
 
