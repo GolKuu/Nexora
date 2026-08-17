@@ -95,4 +95,6 @@ product. The application does not bypass that boundary. It starts accumulating
 verified public observations every ten minutes and returns
 `forecast_available=false` until the minimum history and production gate are
 satisfied. Importing a licensed archive is a separate, permissioned deployment
-step.
+step. The offline workflow is documented in [`history-import.md`](history-import.md);
+it is dry-run by default, requires an explicit licence acknowledgement and
+never contacts the paid service.

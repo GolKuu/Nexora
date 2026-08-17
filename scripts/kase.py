@@ -10,6 +10,7 @@
     python scripts/kase.py set-inflation 10.2     # manual override, in percent
     python scripts/kase.py export-snapshot        # portable offline dataset
     python scripts/kase.py import-snapshot        # load it, no network needed
+    python scripts/kase.py import-kase-history    # user-licensed KASE deals CSV
     python scripts/kase.py recalculate-metrics    # YTM, duration, spreads
     python scripts/kase.py recalculate-scores     # all score kinds
 
@@ -193,6 +194,19 @@ async def cmd_import_snapshot(args: argparse.Namespace) -> int:
     return 0 if result.get("bonds") else 1
 
 
+async def cmd_import_kase_history(args: argparse.Namespace) -> int:
+    """Import a local licensed archive; never contacts or purchases from KASE."""
+    if not args.license_acknowledged:
+        _emit({"ok": False, "error": "Pass --license-acknowledged only when you have lawful rights to use this paid KASE archive."})
+        return 1
+    from app.collectors.kase_history_importer import import_deals_csv
+
+    with SessionLocal() as session:
+        result = import_deals_csv(session, args.path, dry_run=not args.commit)
+    _emit({"ok": True, **result})
+    return 0
+
+
 async def cmd_recalculate_metrics(_: argparse.Namespace) -> int:
     with SessionLocal() as session:
         collector = KaseCollector(session, get_provider())
@@ -232,6 +246,7 @@ COMMANDS = {
     "set-inflation": cmd_set_inflation,
     "export-snapshot": cmd_export_snapshot,
     "import-snapshot": cmd_import_snapshot,
+    "import-kase-history": cmd_import_kase_history,
     "recalculate-metrics": cmd_recalculate_metrics,
     "recalculate-scores": cmd_recalculate_scores,
 }
@@ -261,6 +276,10 @@ def build_parser() -> argparse.ArgumentParser:
             child.add_argument("--note", default=None)
         if name in ("export-snapshot", "import-snapshot"):
             child.add_argument("--path", default=None, help="snapshot file path")
+        if name == "import-kase-history":
+            child.add_argument("--path", required=True, help="local KASE deals-register CSV")
+            child.add_argument("--license-acknowledged", action="store_true", help="confirm lawful rights to use the paid archive")
+            child.add_argument("--commit", action="store_true", help="write to the database; default is dry-run")
         if name == "export-snapshot":
             child.add_argument("--note", default=None)
         if name == "import-snapshot":
