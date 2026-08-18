@@ -36,7 +36,24 @@ class KaseNetworkObserver:
                 "status": entry.get("status"),
                 "content_type": entry.get("content_type"),
                 "resource_type": entry.get("resource_type"),
-                "auth_required": None,
+                "source_page": entry.get("source_page"),
+                "auth_required": _auth_required(entry.get("status")),
                 "license_uncertainty": True,
             })
         return list(seen.values())
+
+
+def _auth_required(status) -> bool | None:
+    """Whether the site refused this request to an anonymous visitor.
+
+    ``True`` is a reason to leave the endpoint alone, not a hint to authenticate.
+    ``None`` means the observation says nothing either way.
+    """
+    if status in (401, 403):
+        return True
+    if isinstance(status, int) and 200 <= status < 400:
+        return False
+    return None
+
+
+__all__ = ["KaseNetworkObserver"]

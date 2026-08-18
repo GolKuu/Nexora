@@ -58,6 +58,10 @@ def stock_history_coverage(session: Session, instrument: Instrument) -> dict:
     traded_days = _count(DailyMarketSnapshot, DailyMarketSnapshot.status == STATUS_TRADED)
     quiet_days = _count(DailyMarketSnapshot, DailyMarketSnapshot.status == STATUS_NO_TRADE)
 
+    stock_row = session.execute(
+        select(Stock).where(Stock.instrument_id == instrument.id)
+    ).scalar_one_or_none()
+
     news_items = session.execute(
         select(func.count(KaseNewsItem.id)).where(KaseNewsItem.ticker == instrument.ticker)
     ).scalar_one()
@@ -73,6 +77,10 @@ def stock_history_coverage(session: Session, instrument: Instrument) -> dict:
             "ticker": instrument.ticker,
             "isin": instrument.isin,
             "is_active": instrument.is_active,
+            # A delisted share keeps everything it ever had; this is the date it
+            # stopped trading, not a reason to hide the history.
+            "delisted_at": stock_row.delisted_at.isoformat()
+            if stock_row is not None and stock_row.delisted_at else None,
             "kase_url": instrument.kase_url,
         },
         "window": window.to_dict(),

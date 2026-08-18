@@ -115,16 +115,25 @@ def observation(day: date, price: float | None, **kwargs) -> ObservationRecord:
 class FakeCollector:
     """Stands in for the browser. Records what it was asked for."""
 
-    def __init__(self, result: CollectionResult, *, error: Exception | None = None):
+    def __init__(
+        self,
+        result: CollectionResult,
+        *,
+        error: Exception | None = None,
+        endpoints: list[dict] | None = None,
+    ):
         self.result = result
         self.error = error
+        self.endpoints = endpoints or []
         self.calls: list[dict] = []
 
     async def collect(self, ticker, window, *, url=None, since=None) -> PageHistory:
         self.calls.append({"ticker": ticker, "url": url, "since": since, "window": window})
         if self.error is not None:
             raise self.error
-        return PageHistory(result=self.result, status="ok", observed_endpoints=[])
+        return PageHistory(
+            result=self.result, status="ok", observed_endpoints=list(self.endpoints)
+        )
 
 
 def collection(observations=(), trades=(), dividends=(), reports=(), **kwargs) -> CollectionResult:
@@ -819,6 +828,65 @@ async def test_every_discovered_stock_is_enrolled(session, instrument, anyio_bac
     assert result["queued"] >= 1
     assert BackfillQueue(session).get(instrument.id) is not None
     assert result["years"] == 2
+
+
+def test_a_preferred_share_is_enrolled_and_then_monitored_like_any_other(session):
+    """Preferred shares are listed and traded on KASE, so they are not a special case.
+
+    Discovery already queues them; if the runner or the monitoring pass filtered
+    them out, a preferred share would be backfilled once and then never observed
+    again - history that quietly stops growing.
+    """
+    from app.services.monitoring import MonitoringService
+
+    unique = uuid.uuid4().hex[:8].upper()
+    issuer = Issuer(name="Pref Issuer", code=f"PRISS{unique}", sector="corporate")
+    session.add(issuer)
+    session.flush()
+    preferred = Instrument(
+        ticker=f"PR{unique}p", isin=f"KZ{unique}PRF", issuer_id=issuer.id,
+        instrument_type="preferred_stock", currency="KZT", is_active=True,
+    )
+    session.add(preferred)
+    session.flush()
+    session.add(Stock(instrument_id=preferred.id))
+    session.flush()
+
+    runner = BackfillRunner(session, collector=FakeCollector(collection()),
+                            window=backfill_window(now=NOW))
+    runner.enrol_all()
+
+    assert BackfillQueue(session).get(preferred.id) is not None
+    monitored = [row[0].id for row in MonitoringService(session).active_instruments()]
+    assert preferred.id in monitored
+
+
+@pytest.mark.anyio
+async def test_the_public_requests_the_page_made_are_recorded(session, instrument, anyio_backend):
+    """§16: observed endpoints are documented as metadata, never used as a way in."""
+    endpoints = [{
+        "method": "GET",
+        "url": "https://kase.kz/api/public/shares/",
+        "status": 200,
+        "content_type": "application/json",
+        "resource_type": "xhr",
+        "source_page": "https://kase.kz/en/investors/shares/TEST/",
+        "auth_required": False,
+        "license_uncertainty": True,
+    }]
+    runner = BackfillRunner(
+        session,
+        collector=FakeCollector(
+            collection(observations=[observation(date(2026, 8, 12), 1000.0)]),
+            endpoints=endpoints,
+        ),
+        window=backfill_window(now=NOW),
+    )
+    await runner.backfill_instrument(instrument)
+
+    recorded = CoverageService(session).get(instrument.id).details["observed_endpoints"]
+    assert recorded == endpoints
+    assert recorded[0]["source_page"], "an endpoint is only documentable with its page"
 
 
 def test_a_delisted_stock_keeps_its_history(session, instrument):

@@ -68,6 +68,66 @@ async def test_market_snapshot_updates_official_company_name(session):
     assert issuer.short_name == "Test"
 
 
+@pytest.mark.anyio
+async def test_a_share_that_leaves_the_catalog_is_dated_not_deleted(session):
+    """§27: delisting stops the crawling, never the history."""
+    from app.models.history import MarketObservation
+    from app.models.instrument import Instrument
+    from app.models.stock import Stock
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def get(self, *_args, **_kwargs):
+            return Response(self.payload)
+
+    listed = catalog_row(code="GONE", ticker={"nin": "KZ1C00009999", "excl_date": None,
+                                              "securities_list_en": "official",
+                                              "open_trade_date": "2020-01-01"})
+    await KaseStockCatalogCollector(session, client=Client([listed])).collect(deep=False)
+
+    instrument = session.query(Instrument).filter_by(ticker="GONE").one()
+    stock = session.query(Stock).filter_by(instrument_id=instrument.id).one()
+    session.add(
+        MarketObservation(
+            instrument_id=instrument.id,
+            observed_at=datetime(2026, 8, 12, 11, tzinfo=timezone.utc),
+            trading_date=date(2026, 8, 12), price=100.0, status="traded",
+            data_mode="browser", fingerprint="delisting-fixture",
+            source="kase_public_website", source_url="https://kase.kz/",
+        )
+    )
+    session.commit()
+
+    # The next catalogue reports it finished, and the row itself carries the date.
+    delisted = catalog_row(code="GONE", ticker={"nin": "KZ1C00009999",
+                                                "finish_date": "2026-08-14"})
+    survivor = catalog_row(code="STILL", ticker={"nin": "KZ1C00008888", "excl_date": None,
+                                                 "securities_list_en": "official"})
+    await KaseStockCatalogCollector(
+        session, client=Client([delisted, survivor])
+    ).collect(deep=False)
+
+    session.refresh(instrument)
+    session.refresh(stock)
+    assert instrument.is_active is False
+    assert stock.delisted_at == date(2026, 8, 14), "the date KASE stated, not today"
+    assert session.query(MarketObservation).filter_by(
+        instrument_id=instrument.id
+    ).count() == 1, "history survives the delisting"
+
+
 def _ranking_item(
     ticker: str,
     *,

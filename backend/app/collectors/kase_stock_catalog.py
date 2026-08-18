@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.instrument import Instrument
+from app.models.instrument import Instrument, SHARE_INSTRUMENT_TYPES
 from app.models.issuer import Issuer
 from app.models.stock import Stock, StockFinancialPeriod, StockQuote
 from app.providers.kase_public_api import KasePublicApiProvider
@@ -58,6 +58,9 @@ class KaseStockCatalogCollector:
         self.session = session
         self.base_url = base_url.rstrip("/")
         self.client = client
+        #: The raw catalogue of the most recent fetch. Discovery uses the parsed
+        #: rows; the delisting pass needs the rows parsing deliberately drops.
+        self._last_payload: Any = []
 
     @staticmethod
     def parse_catalog(payload: Any) -> list[dict]:
@@ -94,6 +97,33 @@ class KaseStockCatalogCollector:
             })
         return items
 
+    @staticmethod
+    def parse_delisted(payload: Any) -> dict[tuple[str, str], date | None]:
+        """Shares the catalogue reports as finished, with the date KASE stated.
+
+        ``parse_catalog`` skips these rows, which is right for discovery but
+        leaves the delisting itself invisible. Read separately, they let a share
+        that stops trading be dated rather than merely disappearing.
+        """
+        if not isinstance(payload, list):
+            return {}
+        finished: dict[tuple[str, str], date | None] = {}
+        for row in payload:
+            ticker_data = row.get("ticker") if isinstance(row, dict) else None
+            if not isinstance(ticker_data, dict) or not ticker_data.get("finish_date"):
+                continue
+            ticker = _text(row.get("code"))
+            if not ticker:
+                continue
+            subtype = (
+                _text(row.get("subcategory_name_en"))
+                or _text(ticker_data.get("typesec_en"))
+                or "ordinary share"
+            ).lower()
+            kind = "preferred_stock" if "preferred" in subtype else "stock"
+            finished[(kind, ticker.upper())] = _date(ticker_data.get("finish_date"))
+        return finished
+
     async def fetch(self) -> list[dict]:
         if self.client is not None:
             response = await self.client.get(CATALOG_URL, params={"sec_type": "share"})
@@ -101,7 +131,11 @@ class KaseStockCatalogCollector:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": "KASE-Bond-AI/stock-collector"}) as client:
                 response = await client.get(CATALOG_URL, params={"sec_type": "share"})
         response.raise_for_status()
-        return self.parse_catalog(response.json())
+        payload = response.json()
+        # Kept for one pass so the delisted rows - which discovery skips - can
+        # still date a share that stopped trading.
+        self._last_payload = payload
+        return self.parse_catalog(payload)
 
     async def collect(self, *, deep: bool = True) -> dict:
         rows = await self.fetch()
@@ -169,9 +203,22 @@ class KaseStockCatalogCollector:
             seen.add((item["instrument_type"], item["ticker"].upper()))
         # Mark only previously known stock instruments absent from a validated
         # full catalog inactive; bond rows and their contracts are untouched.
-        for instrument in self.session.execute(select(Instrument).where(Instrument.instrument_type.in_(("stock", "preferred_stock")))).scalars():
-            if (instrument.instrument_type, instrument.ticker.upper()) not in seen:
+        # Nothing is deleted: the share keeps every price, trade, report and
+        # score it ever had (§27), it simply stops being crawled.
+        finished = self.parse_delisted(self._last_payload)
+        for instrument in self.session.execute(select(Instrument).where(Instrument.instrument_type.in_(SHARE_INSTRUMENT_TYPES))).scalars():
+            key = (instrument.instrument_type, instrument.ticker.upper())
+            stock_row = self.session.execute(select(Stock).where(Stock.instrument_id == instrument.id)).scalar_one_or_none()
+            if key not in seen:
                 instrument.is_active = False
+                if stock_row is not None and stock_row.delisted_at is None:
+                    # The date KASE stated, or the day we first saw it gone -
+                    # never a guess at when trading actually stopped.
+                    stock_row.delisted_at = finished.get(key) or now.date()
+            elif stock_row is not None and stock_row.delisted_at is not None:
+                # Relisted: the share is trading again, so the closing date no
+                # longer applies.
+                stock_row.delisted_at = None
         if deep:
             financial_stats = await self._collect_financials(
                 stocks_by_issuer, incremental, now
@@ -209,7 +256,7 @@ class KaseStockCatalogCollector:
         rows = self.session.execute(
             select(Instrument, Stock)
             .join(Stock, Stock.instrument_id == Instrument.id)
-            .where(Instrument.instrument_type.in_(("stock", "preferred_stock")),
+            .where(Instrument.instrument_type.in_(SHARE_INSTRUMENT_TYPES),
                    Instrument.is_active.is_(True))
         ).all()
         for instrument, stock in rows:

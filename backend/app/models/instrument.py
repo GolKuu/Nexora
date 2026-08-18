@@ -11,6 +11,13 @@ if TYPE_CHECKING:
     from app.models.issuer import Issuer
     from app.models.stock import Stock
 
+#: Every instrument type that is a share on KASE. Preferred shares are listed,
+#: traded and discovered exactly like ordinary ones, so discovery, backfill,
+#: monitoring and the admin counts must all agree on this single definition -
+#: otherwise a preferred share is backfilled and then silently never observed
+#: again.
+SHARE_INSTRUMENT_TYPES: tuple[str, ...] = ("stock", "preferred_stock")
+
 
 class Instrument(Base, TimestampMixin, SourceMixin):
     """Identity shared by asset classes; analytics remain asset-specific."""

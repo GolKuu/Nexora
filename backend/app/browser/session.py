@@ -268,6 +268,10 @@ class BrowserSession:
                         "status": response.status,
                         "resource_type": response.request.resource_type,
                         "content_type": response.headers.get("content-type"),
+                        # Which page asked for it: an endpoint is only
+                        # documentable as public if we can say where a normal
+                        # visitor's browser was when it was requested.
+                        "source_page": getattr(response.frame, "url", None),
                     }
                 )
         except Exception:

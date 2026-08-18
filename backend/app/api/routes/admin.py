@@ -24,7 +24,7 @@ from app.models.history import (
     MarketObservation,
 )
 from app.models.incremental import KaseNewsItem
-from app.models.instrument import Instrument
+from app.models.instrument import Instrument, SHARE_INSTRUMENT_TYPES
 from app.models.stock import CorporateAction
 from app.services.backfill.queue import JOB_MARKET_HISTORY
 from app.services.backfill.window import backfill_window
@@ -62,9 +62,13 @@ def backfill_status(
         select(func.min(MarketObservation.observed_at), func.max(MarketObservation.observed_at))
     ).one()
 
-    total_stocks = _count(Instrument, Instrument.instrument_type == "stock")
+    total_stocks = _count(
+        Instrument, Instrument.instrument_type.in_(SHARE_INSTRUMENT_TYPES)
+    )
     active_stocks = _count(
-        Instrument, Instrument.instrument_type == "stock", Instrument.is_active.is_(True)
+        Instrument,
+        Instrument.instrument_type.in_(SHARE_INSTRUMENT_TYPES),
+        Instrument.is_active.is_(True),
     )
 
     return {

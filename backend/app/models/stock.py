@@ -25,6 +25,10 @@ class Stock(Base, TimestampMixin, SourceMixin):
     sector: Mapped[str | None] = mapped_column(String(64), index=True)
     industry: Mapped[str | None] = mapped_column(String(128), index=True)
     listing_date: Mapped[date | None] = mapped_column(Date)
+    #: When KASE stopped listing the share. Set alongside
+    #: ``Instrument.is_active = False``; the history itself is never removed, so
+    #: this is what distinguishes "delisted on this date" from "never seen".
+    delisted_at: Mapped[date | None] = mapped_column(Date)
     dividend_frequency: Mapped[int | None] = mapped_column(Integer)
     last_dividend: Mapped[float | None] = mapped_column(Float)
     last_dividend_date: Mapped[date | None] = mapped_column(Date)

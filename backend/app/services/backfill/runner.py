@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.history import BackfillCheckpoint
-from app.models.instrument import Instrument
+from app.models.instrument import Instrument, SHARE_INSTRUMENT_TYPES
 from app.models.issuer import Issuer
 from app.models.stock import Stock
 from app.services.backfill.collector import KaseHistoryCollector, PageHistory
@@ -86,7 +86,7 @@ class BackfillRunner:
         rows = self.session.execute(
             select(Instrument, Stock)
             .join(Stock, Stock.instrument_id == Instrument.id)
-            .where(Instrument.instrument_type == "stock")
+            .where(Instrument.instrument_type.in_(SHARE_INSTRUMENT_TYPES))
         ).all()
         queued = 0
         for instrument, stock in rows:
@@ -158,8 +158,10 @@ class BackfillRunner:
                 error=page.error or "blocked by the site",
                 retry_in=self.queue.backoff(checkpoint.attempts + 2),
             )
-            self.coverage.measure(instrument, self.window, status=UNAVAILABLE,
-                                  details={"blocked": True})
+            self.coverage.measure(
+                instrument, self.window, status=UNAVAILABLE,
+                details={"blocked": True, "observed_endpoints": page.observed_endpoints[:20]},
+            )
             self.session.commit()
             return {**summary, "status": STATUS_BLOCKED, "blocked": True}
 
@@ -222,7 +224,15 @@ class BackfillRunner:
         coverage = self.coverage.measure(
             instrument,
             self.window,
-            details={"pages_visited": result.pages_visited, "notes": result.notes},
+            details={
+                "pages_visited": result.pages_visited,
+                "notes": result.notes,
+                # The public requests the page made for itself, as metadata
+                # only. Kept so an officially used public endpoint can be
+                # documented later; nothing here is ever replayed, and an
+                # endpoint marked ``auth_required`` stays untouched.
+                "observed_endpoints": page.observed_endpoints[:20],
+            },
         )
         status = STATUS_COMPLETED if coverage.status == "complete" else STATUS_PARTIAL
         self.queue.finish(checkpoint, status=status)

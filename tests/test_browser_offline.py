@@ -397,6 +397,7 @@ async def test_network_observer_keeps_only_safe_official_metadata(local_session)
             "url": "https://kase.kz/api/public/?token=must-not-be-recorded",
             "status": 200, "resource_type": "xhr",
             "content_type": "application/json",
+            "source_page": "https://kase.kz/en/shares/show/TEST/",
         },
         {
             "method": "GET", "url": "https://example.com/track",
@@ -408,9 +409,31 @@ async def test_network_observer_keeps_only_safe_official_metadata(local_session)
     assert observed == [{
         "method": "GET", "url": "https://kase.kz/api/public/",
         "status": 200, "content_type": "application/json",
-        "resource_type": "xhr", "auth_required": None,
+        "resource_type": "xhr",
+        "source_page": "https://kase.kz/en/shares/show/TEST/",
+        "auth_required": False,
         "license_uncertainty": True,
-    }]
+    }], "the query string, which may carry a token, is never recorded"
+
+
+async def test_network_observer_marks_endpoints_that_refused_an_anonymous_visitor(local_session):
+    """A refusal is documented so the endpoint is left alone, not worked around."""
+    from app.browser.network import KaseNetworkObserver
+
+    local_session.network_log = [
+        {
+            "method": "GET", "url": "https://kase.kz/api/private/",
+            "status": 403, "resource_type": "xhr", "content_type": "application/json",
+            "source_page": "https://kase.kz/en/shares/show/TEST/",
+        },
+        {
+            "method": "GET", "url": "https://kase.kz/api/unknown/",
+            "status": 500, "resource_type": "xhr", "content_type": "application/json",
+            "source_page": "https://kase.kz/en/shares/show/TEST/",
+        },
+    ]
+    observed = KaseNetworkObserver(local_session).observed_endpoints()
+    assert [row["auth_required"] for row in observed] == [True, None]
 
 
 def test_document_analyzer_parses_text_and_writes_a_sidecar(tmp_path):

@@ -25,7 +25,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.forecast.calendar import kase_date
 from app.models.history import MarketObservation
-from app.models.instrument import Instrument
+from app.models.instrument import Instrument, SHARE_INSTRUMENT_TYPES
 from app.models.stock import Stock, StockQuote
 from app.services.backfill.records import ObservationRecord, STATUS_TRADED
 from app.services.backfill.store import HistoryStore
@@ -50,7 +50,7 @@ class MonitoringService:
             select(Instrument, Stock)
             .join(Stock, Stock.instrument_id == Instrument.id)
             .where(
-                Instrument.instrument_type == "stock",
+                Instrument.instrument_type.in_(SHARE_INSTRUMENT_TYPES),
                 Instrument.is_active.is_(True),
             )
         ).all()
