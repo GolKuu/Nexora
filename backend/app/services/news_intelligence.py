@@ -13,7 +13,8 @@ from app.models.instrument import Instrument
 from app.models.news import (EventCluster, EventMarketReaction, MarketEvent, NewsArticle,
     NewsClusterMember, NewsImpactScore, NotificationCandidate)
 from app.models.portfolio import Alert, PortfolioPosition, Watchlist
-from app.models.stock import Stock, StockQuote
+from app.models.stock import Stock
+from app.services.price_service import PriceService
 from app.services.event_study import QuotePoint, abnormal_return, align_event_to_quotes
 from app.services.news_entity_linker import NewsEntityLinker
 
@@ -140,10 +141,16 @@ class NewsIntelligencePipeline:
         article.is_processed = True; self.session.flush(); return events
 
     def _quote_points(self, instrument_id: int) -> list[QuotePoint]:
+        """Prices for the event study, from the canonical observation record.
+
+        The same readings the chart draws, so an abnormal return can always be
+        traced to a visible point rather than to a parallel price series.
+        """
         stock = self.session.execute(select(Stock).where(Stock.instrument_id == instrument_id)).scalar_one_or_none()
-        if not stock: return []
-        rows = self.session.execute(select(StockQuote).where(StockQuote.stock_id == stock.id).order_by(StockQuote.timestamp)).scalars()
-        return [QuotePoint(q.timestamp, q.close or q.last, q.volume or q.turnover) for q in rows if (q.close or q.last) is not None]
+        points = PriceService(self.session).intraday_points(
+            instrument_id, stock_id=stock.id if stock else None
+        )
+        return [QuotePoint(when, price, size) for when, price, size in points]
 
     def _benchmark(self, event: MarketEvent) -> Instrument | None:
         # Prefer a configured local broad index/security ticker; otherwise do

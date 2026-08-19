@@ -103,8 +103,57 @@ class MonitoringService:
         ).scalar_one_or_none()
         if quote is None:
             return {"ticker": instrument.ticker, "stored": 0, "reason": "no recent quote"}
+        return self._store(instrument, self.observation_from_quote(quote))
 
-        record = self.observation_from_quote(quote)
+    def promote_quotes(
+        self, instrument: Instrument, stock: Stock, *, limit: int = 200
+    ) -> dict:
+        """Move every quote we hold into the permanent history.
+
+        The history is what the whole product reads from, so a quote that never
+        reaches it is a price the chart and the card would disagree about. This
+        runs wherever quotes are written - the catalogue snapshot, the importer,
+        the monitoring pass - and the observation fingerprint makes repeating it
+        free.
+        """
+        quotes = list(
+            self.session.execute(
+                select(StockQuote)
+                .where(StockQuote.stock_id == stock.id)
+                .order_by(StockQuote.timestamp.desc(), StockQuote.id.desc())
+                .limit(limit)
+            ).scalars()
+        )
+        if not quotes:
+            return {"ticker": instrument.ticker, "created": 0, "duplicates": 0, "received": 0}
+
+        records = [self.observation_from_quote(quote) for quote in reversed(quotes)]
+        outcome = validate_observations(
+            records,
+            expected_ticker=instrument.ticker,
+            reference_price=self.store.last_validated_price(instrument.id),
+        )
+        if outcome.rejections:
+            self.store.record_anomalies(
+                instrument_id=instrument.id,
+                ticker=instrument.ticker,
+                job_type="quote_promotion",
+                rejections=outcome.rejections,
+            )
+        if not outcome.accepted:
+            return {"ticker": instrument.ticker, "created": 0, "duplicates": 0,
+                    "received": len(records), "reason": "rejected"}
+
+        result = self.store.save_observations(instrument.id, outcome.accepted)
+        if result["created"]:
+            days = sorted({record.trading_date for record in outcome.accepted if record.trading_date})
+            if days:
+                self.store.rebuild_daily_snapshots(
+                    instrument.id, start=days[0], end=days[-1]
+                )
+        return {"ticker": instrument.ticker, **result}
+
+    def _store(self, instrument: Instrument, record: ObservationRecord) -> dict:
         outcome = validate_observations(
             [record],
             expected_ticker=instrument.ticker,
@@ -134,7 +183,10 @@ class MonitoringService:
         results = []
         for instrument, stock in self.active_instruments():
             try:
-                results.append(self.record_latest(instrument, stock))
+                # Promote everything, not just the newest reading: a quote left
+                # in staging is a price the chart would never show, and the
+                # card and the graph would drift apart again.
+                results.append(self.promote_quotes(instrument, stock))
             except Exception as exc:  # one bad instrument must not stop the pass
                 logger.warning("monitoring failed for %s: %s", instrument.ticker, exc)
                 results.append({"ticker": instrument.ticker, "stored": 0, "error": str(exc)})

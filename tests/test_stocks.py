@@ -124,7 +124,7 @@ async def test_a_share_that_leaves_the_catalog_is_dated_not_deleted(session):
     assert instrument.is_active is False
     assert stock.delisted_at == date(2026, 8, 14), "the date KASE stated, not today"
     assert session.query(MarketObservation).filter_by(
-        instrument_id=instrument.id
+        instrument_id=instrument.id, fingerprint="delisting-fixture"
     ).count() == 1, "history survives the delisting"
 
 

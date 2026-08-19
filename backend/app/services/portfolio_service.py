@@ -56,8 +56,11 @@ class PortfolioService:
                 if stock is None:
                     continue
                 stock_service = StockService(self.session)
-                quote = stock_service.latest_quote(stock.id)
-                current_price = (quote.last or quote.close) if quote else None
+                # The portfolio is valued at the same price the stock's own card
+                # and chart show; two prices for one position is a bug report
+                # waiting to happen.
+                quote = stock_service.latest_price(stock)
+                current_price = quote.price if quote else None
                 market_value = current_price * position.quantity if current_price is not None else None
                 purchase_price = position.purchase_price
                 cost = purchase_price * position.quantity + (position.fees or 0.0) if purchase_price is not None else None

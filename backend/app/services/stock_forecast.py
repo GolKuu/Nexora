@@ -20,10 +20,21 @@ from app.models.forecast import ForecastChange, ForecastEvaluation, ForecastMode
 from app.models.instrument import Instrument
 from app.models.news import MarketEvent, NewsArticle
 from app.models.macro import FxRate, InflationData, YieldCurve
-from app.models.stock import CorporateAction, Stock, StockMetric, StockQuote
+from app.models.stock import CorporateAction, Stock, StockMetric
+from app.models.history import DailyMarketSnapshot
+from app.services.backfill.records import STATUS_TRADED
+from app.services.price_service import PriceService
 
 MODEL_FAMILY = "kase-quantile-ensemble-v3"
 _MODEL_CACHE: dict[tuple[str, int], QuantileForecastModel] = {}
+
+
+def _row_time(row: dict) -> datetime:
+    """When a canonical daily bar was observed, falling back to its own day."""
+    moment = row.get("timestamp")
+    if moment is not None:
+        return _aware(moment)
+    return datetime.combine(row["trading_date"], datetime.min.time(), tzinfo=KASE_TZ)
 
 
 def _aware(value: datetime) -> datetime:
@@ -47,37 +58,38 @@ class StockForecastService:
             raise NotFoundError(f"Акция не найдена: {identifier}")
         return stock
 
-    def _quotes(self, stock_id: int) -> tuple[list[Observation], list[StockQuote]]:
-        quote_rows = list(self.session.execute(
-            select(StockQuote).where(StockQuote.stock_id == stock_id).order_by(StockQuote.timestamp, StockQuote.id)
-        ).scalars())
-        # Multiple refreshes can share a timestamp. Keep the last real record,
-        # never interpolate a day without a trade.
-        deduped: dict[datetime, StockQuote] = {}
-        for row in quote_rows:
-            price = row.close or row.last
-            if price is not None and price > 0:
-                deduped[row.timestamp] = row
-        rows = [deduped[key] for key in sorted(deduped)]
-        daily: dict[object, list[StockQuote]] = {}
-        for row in rows:
-            daily.setdefault(_aware(row.timestamp).astimezone(KASE_TZ).date(), []).append(row)
-        observations: list[Observation] = []
-        for trading_date, group in sorted(daily.items()):
-            first, last = group[0], group[-1]
-            prices = [float(row.close or row.last) for row in group]
-            highs = [float(row.high) for row in group if row.high is not None]
-            lows = [float(row.low) for row in group if row.low is not None]
-            observations.append(Observation(
-                timestamp=datetime.combine(trading_date, datetime.min.time(), tzinfo=KASE_TZ), close=prices[-1],
-                open=first.open if first.open is not None else prices[0], high=max(highs or prices), low=min(lows or prices),
-                volume=max((row.volume for row in group if row.volume is not None), default=None),
-                turnover=max((row.turnover for row in group if row.turnover is not None), default=None),
-                trades=max((row.number_of_trades for row in group if row.number_of_trades is not None), default=None),
-                bid=last.bid, ask=last.ask,
-            ))
+    def _quotes(self, stock: Stock) -> tuple[list[Observation], list[dict]]:
+        """The stock's daily price series, from the canonical history.
+
+        The same rows the chart draws and the card quotes, so a forecast can
+        never be anchored on a price the rest of the product does not show. Days
+        without a real close are absent rather than interpolated.
+        """
+        rows = [
+            row for row in PriceService(self.session).daily_series(
+                stock.instrument_id, stock_id=stock.id, limit=None
+            )[0]
+            if row["close"] is not None and row["close"] > 0
+        ]
+        observations = [
+            Observation(
+                timestamp=datetime.combine(
+                    row["trading_date"], datetime.min.time(), tzinfo=KASE_TZ
+                ),
+                close=float(row["close"]),
+                open=float(row["open"]) if row["open"] is not None else float(row["close"]),
+                high=float(row["high"]) if row["high"] is not None else float(row["close"]),
+                low=float(row["low"]) if row["low"] is not None else float(row["close"]),
+                volume=row["volume"],
+                turnover=row["turnover"],
+                trades=row["trade_count"],
+                bid=row["bid"],
+                ask=row["ask"],
+            )
+            for row in rows
+        ]
         actions = list(self.session.execute(select(CorporateAction).where(
-            CorporateAction.stock_id == stock_id, CorporateAction.action_type.in_(("split", "reverse_split"))
+            CorporateAction.stock_id == stock.id, CorporateAction.action_type.in_(("split", "reverse_split"))
         )).scalars())
         ratios: list[tuple[datetime, float]] = []
         for action in actions:
@@ -107,17 +119,20 @@ class StockForecastService:
 
         # Point-in-time cross-sectional market and sector series. Each daily
         # return is formed only after both of its real closes exist.
-        market_rows = list(self.session.execute(select(
-            StockQuote.stock_id, StockQuote.timestamp, StockQuote.close, StockQuote.last, Stock.sector
-        ).join(Stock, Stock.id == StockQuote.stock_id).where(
-            or_(StockQuote.close.is_not(None), StockQuote.last.is_not(None))
-        ).order_by(StockQuote.stock_id, StockQuote.timestamp, StockQuote.id)).all())
+        # Read from the canonical daily history, so the market and sector
+        # factors are built out of the same closes every chart on the site
+        # shows - a peer's return can always be pointed at on its own graph.
+        # One basis for the whole cross-section: the canonical daily closes
+        # every chart on the site draws, so a peer's return can always be
+        # pointed at on its own graph.
         closes: dict[int, dict[date, tuple[float, str | None, datetime]]] = {}
-        for stock_id, timestamp, close, last, sector in market_rows:
-            market_time = _aware(timestamp)
-            closes.setdefault(stock_id, {})[market_time.astimezone(KASE_TZ).date()] = (
-                float(close or last), sector, market_time,
+        for stock_id, trading_date, close, sector, observed_at in PriceService(
+            self.session
+        ).market_closes():
+            market_time = observed_at or datetime.combine(
+                trading_date, datetime.min.time(), tzinfo=KASE_TZ
             )
+            closes.setdefault(stock_id, {})[trading_date] = (close, sector, market_time)
         market_by_day: dict[date, list[tuple[int, float, datetime]]] = {}
         sector_by_day: dict[tuple[date, str], list[tuple[int, float, datetime]]] = {}
         for series_stock_id, series in closes.items():
@@ -184,8 +199,11 @@ class StockForecastService:
             }
         return context, events, availability
 
-    def _dataset_version(self, stock: Stock, rows: list[StockQuote]) -> str:
-        body = [(row.timestamp.isoformat(), row.close, row.last, row.volume, row.content_hash) for row in rows]
+    def _dataset_version(self, stock: Stock, rows: list[dict]) -> str:
+        body = [
+            (row["trading_date"].isoformat(), row["close"], row["volume"], row["source"])
+            for row in rows
+        ]
         digest = hashlib.sha256(json.dumps(body, separators=(",", ":"), default=str).encode()).hexdigest()[:12]
         return f"{stock.instrument.ticker.lower()}-{digest}"
 
@@ -201,15 +219,17 @@ class StockForecastService:
                 _MODEL_CACHE[key] = QuantileForecastModel(horizon).fit(samples)
         return _MODEL_CACHE[key]
 
-    def _confidence(self, *, stock: Stock, row: StockQuote, observations: list[Observation], model: QuantileForecastModel,
+    def _confidence(self, *, stock: Stock, row: dict, observations: list[Observation], model: QuantileForecastModel,
                     prediction: dict, features: dict[str, float]) -> tuple[float, dict[str, float], list[str]]:
-        now, market_time = datetime.now(timezone.utc), _aware(row.timestamp)
+        now, market_time = datetime.now(timezone.utc), _row_time(row)
         age_days = max(0.0, (now - market_time).total_seconds() / 86400)
-        quote_completeness = sum(value is not None for value in (row.close or row.last, row.volume, row.turnover, row.bid, row.ask, row.number_of_trades)) / 6
+        quote_completeness = sum(value is not None for value in (
+            row["close"], row["volume"], row["turnover"], row["bid"], row["ask"], row["trade_count"]
+        )) / 6
         context_completeness = (features.get("fundamentals_available", 0.0) + features.get("macro_available", 0.0)) / 2
         completeness = quote_completeness * 0.7 + context_completeness * 0.3
         spread = features.get("spread_pct", 0.0)
-        liquidity = max(0.05, min(1.0, (1.0 - min(spread / 0.10, 0.8)) * (1.0 if (row.number_of_trades or 0) >= 5 else 0.55)))
+        liquidity = max(0.05, min(1.0, (1.0 - min(spread / 0.10, 0.8)) * (1.0 if (row["trade_count"] or 0) >= 5 else 0.55)))
         if (stock.liquidity_class or 1) >= 3:
             liquidity *= 0.55
         staleness = math.exp(-age_days / 5.0)
@@ -235,13 +255,14 @@ class StockForecastService:
             warnings.append("Текущий режим отличается от исторических обучающих наблюдений (OOD).")
         return confidence, components, warnings
 
-    def _ensure_registry(self, stock: Stock, version: str, dataset_version: str, rows: list[StockQuote], metrics: dict,
+    def _ensure_registry(self, stock: Stock, version: str, dataset_version: str, rows: list[dict], metrics: dict,
                          models: dict[str, QuantileForecastModel], status: str = "production") -> None:
         if self.session.execute(select(ForecastModelVersion).where(ForecastModelVersion.model_version == version)).scalar_one_or_none():
             return
         self.session.add(ForecastModelVersion(
-            instrument_id=stock.instrument_id, model_version=version, market="KASE", training_period_start=rows[0].timestamp,
-            training_period_end=rows[-1].timestamp, training_dataset_version=dataset_version,
+            instrument_id=stock.instrument_id, model_version=version, market="KASE",
+            training_period_start=_row_time(rows[0]), training_period_end=_row_time(rows[-1]),
+            training_dataset_version=dataset_version,
             features_version=FEATURES_VERSION, hyperparameters={"ridge_alpha": 1.0, "nearest_regimes": 80, "seed": 20260817,
                                                                   "models": {key: model.to_state() for key, model in models.items()}},
             evaluation_metrics=metrics, production_status=status,
@@ -250,7 +271,7 @@ class StockForecastService:
     def retrain(self, identifier: str) -> dict:
         """Evaluated release gate used by the training schedule, never inference."""
         stock = self._stock(identifier)
-        observations, rows = self._quotes(stock.id)
+        observations, rows = self._quotes(stock)
         context, _, _ = self._context_builder(stock)
         dataset_version = self._dataset_version(stock, rows) if rows else "empty"
         version = f"{MODEL_FAMILY}-{hashlib.sha256(dataset_version.encode()).hexdigest()[:8]}"
@@ -292,7 +313,7 @@ class StockForecastService:
                 "candidate_rmse": candidate_rmse, "production_rmse": None if math.isinf(production_rmse) else production_rmse,
                 "horizons": sorted(models)}
 
-    def _save_snapshot(self, *, stock: Stock, version: str, quote: StockQuote, horizon: int,
+    def _save_snapshot(self, *, stock: Stock, version: str, quote: dict, horizon: int,
                        features_hash: str, prediction: dict, confidence: float, warnings: list[str], event_id: int | None) -> ForecastSnapshot:
         existing = self.session.execute(select(ForecastSnapshot).where(
             ForecastSnapshot.instrument_id == stock.instrument_id, ForecastSnapshot.model_version == version,
@@ -304,9 +325,9 @@ class StockForecastService:
         stored_prediction = {key: value for key, value in prediction.items() if key != "distribution"}
         snapshot = ForecastSnapshot(
             instrument_id=stock.instrument_id, model_version=version, generated_at=now,
-            as_of_market_time=quote.timestamp, source_timestamp=quote.source_timestamp or quote.timestamp,
-            data_mode=quote.data_mode, features_hash=features_hash, horizon=horizon,
-            current_price=float(quote.close or quote.last), prediction=stored_prediction,
+            as_of_market_time=_row_time(quote), source_timestamp=_row_time(quote),
+            data_mode=quote["data_mode"], features_hash=features_hash, horizon=horizon,
+            current_price=float(quote["close"]), prediction=stored_prediction,
             confidence=confidence, warnings=warnings, event_id=event_id,
         )
         self.session.add(snapshot)
@@ -337,11 +358,13 @@ class StockForecastService:
         if selected_horizon not in HORIZONS:
             raise ValueError(f"Поддерживаемые горизонты: {HORIZONS}")
         stock = self._stock(identifier)
-        observations, rows = self._quotes(stock.id)
+        observations, rows = self._quotes(stock)
         if not rows:
             return {"instrument": stock.instrument.ticker, "forecast_available": False, "reason": "no_price_history", "horizons": {}, "history": [], "path": [], "warnings": ["Нет исторических котировок."]}
+        # The last canonical bar: the same number the card shows and the same
+        # point the chart ends on.
         quote = rows[-1]
-        current_price = float(quote.close or quote.last)
+        current_price = float(quote["close"])
         context, events, event_availability = self._context_builder(stock)
         transformed = self.features.transform(observations)
         inference_time = datetime.now(timezone.utc)
@@ -424,8 +447,8 @@ class StockForecastService:
         history = [{"date": row.timestamp.isoformat(), "price": row.close, "volume": row.volume} for row in observations[-260:]]
         response = {
             "instrument": stock.instrument.ticker, "as_of": inference_time.isoformat(),
-            "source_timestamp": _aware(quote.source_timestamp or quote.timestamp).isoformat(), "current_price": current_price,
-            "data_mode": quote.data_mode, "model_version": version, "forecast_available": bool(selected.get("forecast_available")),
+            "source_timestamp": _row_time(rows[-1]).isoformat(), "current_price": current_price,
+            "data_mode": rows[-1]["data_mode"], "model_version": version, "forecast_available": bool(selected.get("forecast_available")),
             "horizons": horizons, "selected_horizon": f"{selected_horizon}d", "history": history, "path": path,
             "confidence": selected.get("confidence", 0.0), "warnings": sorted(set(all_warnings)),
             "label": "Прогноз модели", "disclaimer": "Не является гарантией будущей цены.",
@@ -443,7 +466,7 @@ class StockForecastService:
         )).scalars())
         created = 0
         for snapshot in snapshots:
-            observations, _ = self._quotes(stock.id)
+            observations, _ = self._quotes(stock)
             target_date = kase_date(trading_days(_aware(snapshot.generated_at), snapshot.horizon)[-1])
             realized = next((row for row in observations
                              if kase_date(_aware(row.timestamp)) == target_date), None)

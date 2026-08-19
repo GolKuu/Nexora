@@ -239,9 +239,26 @@ class KaseStockCatalogCollector:
                     ).collect(stocks_by_issuer)
             stats.update(action_stats)
         stats["depth"] = "full" if deep else "market_snapshot"
+        stats.update(self._promote_quotes_to_history())
         stats.update(self._enrol_for_backfill())
         self.session.commit()
         return stats
+
+    def _promote_quotes_to_history(self) -> dict:
+        """Fold the snapshot we just stored into the permanent history.
+
+        The whole product reads prices from the history, so a catalogue snapshot
+        that stopped at ``stock_quotes`` would leave the card and the chart
+        showing different numbers until the next monitoring pass. Promotion is
+        idempotent - the observation fingerprint absorbs the repeat.
+        """
+        from app.services.monitoring import MonitoringService
+
+        monitoring = MonitoringService(self.session)
+        created = 0
+        for instrument, stock in monitoring.active_instruments():
+            created += monitoring.promote_quotes(instrument, stock).get("created", 0)
+        return {"history_observations_created": created}
 
     def _enrol_for_backfill(self) -> dict:
         """Every discovered share enters the historical backfill queue.

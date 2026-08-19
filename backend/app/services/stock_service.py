@@ -13,6 +13,7 @@ from app.models.issuer import Issuer
 from app.models.stock import CorporateAction, Dividend, Stock, StockFinancialPeriod, StockMetric, StockQuote, StockScore
 from app.scoring.stocks import VERSION, calculate_scores
 from app.services.incremental import IncrementalStateService
+from app.services.price_service import CanonicalPrice, PriceService
 
 
 class StockService:
@@ -33,6 +34,18 @@ class StockService:
 
     def latest_quote(self, stock_id: int) -> StockQuote | None:
         return self.session.execute(select(StockQuote).where(StockQuote.stock_id == stock_id).order_by(StockQuote.timestamp.desc(), StockQuote.id.desc()).limit(1)).scalar_one_or_none()
+
+    def latest_price(self, stock: Stock) -> CanonicalPrice | None:
+        """The one price the whole product agrees on.
+
+        Read from the permanent history - the same rows the chart draws - so the
+        number above the chart and the last point on it cannot diverge. A stock
+        with no stored history yet falls back to its latest raw quote, and says
+        so through ``origin``.
+        """
+        return PriceService(self.session).latest(
+            stock.instrument_id, stock_id=stock.id
+        )
 
     def latest_financials(self, stock_id: int, limit: int = 2) -> list[StockFinancialPeriod]:
         return list(self.session.execute(select(StockFinancialPeriod).where(StockFinancialPeriod.stock_id == stock_id).order_by(StockFinancialPeriod.period_end.desc()).limit(limit)).scalars())
@@ -77,16 +90,23 @@ class StockService:
                 "warning": "Missing report lines remain null; only newly stored periods are compared."}
 
     def history(self, identifier: str, limit: int = 252) -> dict:
+        """Daily history, metrics and scores for one stock.
+
+        The price rows are the canonical daily snapshots - the same ones the
+        chart draws - so this endpoint and ``/chart`` can never tell different
+        stories about the same day.
+        """
         stock = self.require(identifier)
-        quotes = list(reversed(list(self.session.execute(select(StockQuote).where(StockQuote.stock_id == stock.id)
-            .order_by(StockQuote.timestamp.desc(), StockQuote.id.desc()).limit(limit)).scalars())))
+        quotes, price_origin = PriceService(self.session).daily_series(
+            stock.instrument_id, stock_id=stock.id, limit=limit
+        )
         metrics = list(reversed(list(self.session.execute(select(StockMetric).where(StockMetric.stock_id == stock.id)
             .order_by(StockMetric.as_of.desc(), StockMetric.id.desc()).limit(limit)).scalars())))
         scores = list(reversed(list(self.session.execute(select(StockScore).where(StockScore.stock_id == stock.id, StockScore.user_id.is_(None))
             .order_by(StockScore.calculated_at.desc(), StockScore.id.desc()).limit(limit * 10)).scalars())))
         return {"ticker": stock.instrument.ticker,
-                "quotes": [{"timestamp": row.timestamp, "bid": row.bid, "ask": row.ask, "last": row.last, "close": row.close,
-                            "volume": row.volume, "turnover": row.turnover, "source": row.source, "data_mode": row.data_mode} for row in quotes],
+                "price_origin": price_origin,
+                "quotes": [{**row, "last": row["close"]} for row in quotes],
                 "metrics": [{"as_of": row.as_of, "pe": row.pe, "pb": row.pb, "ev_ebitda": row.ev_ebitda,
                              "roe": row.roe, "trailing_dividend_yield": row.trailing_dividend_yield,
                              "volatility": row.volatility, "max_drawdown": row.max_drawdown,
@@ -136,12 +156,12 @@ class StockService:
     def latest_dividends(self, stock_id: int) -> list[Dividend]:
         return list(self.session.execute(select(Dividend).where(Dividend.stock_id == stock_id).order_by(Dividend.record_date.desc(), Dividend.id.desc())).scalars())
 
-    def _inputs(self, stock: Stock) -> tuple[dict, StockQuote | None, StockFinancialPeriod | None]:
-        quote = self.latest_quote(stock.id)
+    def _inputs(self, stock: Stock) -> tuple[dict, CanonicalPrice | None, StockFinancialPeriod | None]:
+        quote = self.latest_price(stock)
         financials = self.latest_financials(stock.id, 2)
         current = financials[0] if financials else None
         previous = financials[1] if len(financials) > 1 else None
-        price = (quote.last or quote.close) if quote else None
+        price = quote.price if quote else None
         shares = (current.shares_outstanding if current else None) or stock.shares_outstanding
         market_cap = stock.market_cap or (price * shares if price is not None and shares is not None else None)
         book_per_share = safe_div(current.total_equity, shares) if current else None
@@ -156,8 +176,12 @@ class StockService:
         trailing_paid = sum(d.dividend_per_share for d in dividends if d.status == "paid" and event_time(d) and event_time(d) >= now - timedelta(days=365)) or None
         announced = sum(d.dividend_per_share for d in dividends if d.status == "announced" and event_time(d) and event_time(d) >= now - timedelta(days=180)) or None
         is_bank = bool(stock.instrument.issuer.is_financial_institution)
-        history = list(reversed(list(self.session.execute(select(StockQuote).where(StockQuote.stock_id == stock.id).order_by(StockQuote.timestamp.desc(), StockQuote.id.desc()).limit(252)).scalars())))
-        observed = market_history_metrics([(row.close or row.last) for row in history])
+        # Volatility and drawdown come from the same daily closes the 1Y chart
+        # draws, so a number in the metrics block can always be traced to a
+        # visible point on the graph.
+        observed = market_history_metrics(
+            PriceService(self.session).daily_closes(stock.instrument_id, limit=252)
+        )
         metrics = {
             "price": price, "market_cap": market_cap,
             "pe": pe(price, current.eps if current else None), "pb": pb(price, book_per_share),
@@ -171,7 +195,7 @@ class StockService:
             "eps_growth": growth(current.eps, previous.eps) if current and previous else None,
             "net_debt": (current.total_debt - current.cash) if current and current.total_debt is not None and current.cash is not None else None,
             "net_debt_to_equity": safe_div((current.total_debt - current.cash), current.total_equity) if current and current.total_debt is not None and current.cash is not None else None,
-            "liquidity_class": stock.liquidity_class, "spread_pct": safe_div((quote.ask - quote.bid), (quote.ask + quote.bid) / 2) if quote and quote.ask and quote.bid else None,
+            "liquidity_class": stock.liquidity_class, "spread_pct": quote.spread_percent if quote else None,
             "turnover": quote.turnover if quote else None, **observed,
             "dividend_coverage": safe_div(current.free_cash_flow, trailing_paid * shares) if current and trailing_paid and shares else None,
             "dividend_consistency": None, "is_bank": is_bank,
@@ -203,14 +227,15 @@ class StockService:
 
     def item(self, stock: Stock, profile: str = "balanced") -> dict:
         metrics, scores = self.computed(stock, profile)
-        quote = self.latest_quote(stock.id)
+        quote = self.latest_price(stock)
         instrument = stock.instrument
         return {"id": stock.id, "ticker": instrument.ticker, "isin": instrument.isin, "company_name": instrument.issuer.short_name or instrument.issuer.name,
                 "issuer": instrument.issuer.name, "instrument_type": instrument.instrument_type, "type_label": "Привилегированная акция" if instrument.instrument_type == "preferred_stock" else "Акция",
                 "currency": instrument.currency, "price": metrics["price"], "bid": quote.bid if quote else None, "ask": quote.ask if quote else None,
                 "change_percent": None, "market_cap": metrics["market_cap"], "sector": stock.sector or instrument.issuer.sector,
                 "metrics": {k: v for k, v in metrics.items() if k not in {"is_bank"}}, "scores": scores,
-                "data_timestamp": quote.timestamp.isoformat() if quote else None, "data_mode": quote.data_mode if quote else None,
+                "data_timestamp": quote.observed_at.isoformat() if quote else None, "data_mode": quote.data_mode if quote else None,
+                "price_origin": quote.origin if quote else None,
                 "source": quote.source if quote else instrument.source, "kase_url": instrument.kase_url, "last_checked_at": stock.last_checked_at.isoformat() if stock.last_checked_at else None,
                 "last_changed_at": stock.last_changed_at.isoformat() if stock.last_changed_at else None}
 
@@ -263,10 +288,13 @@ class StockService:
                 "peers": [self.item(row) for row in comparable[:limit]], "reason": None}
 
     def calculate(self, identifier: str, payload) -> dict:
-        stock = self.require(identifier); quote = self.latest_quote(stock.id); metrics, _, _ = self._inputs(stock)
+        stock = self.require(identifier); quote = self.latest_price(stock); metrics, _, _ = self._inputs(stock)
         now = datetime.now(timezone.utc)
-        fresh_ask = bool(quote and quote.ask and (now - (quote.timestamp if quote.timestamp.tzinfo else quote.timestamp.replace(tzinfo=timezone.utc))).total_seconds() <= 72 * 3600)
-        price = quote.ask if fresh_ask else (quote.last or quote.close if quote else None)
+        # The calculator buys at the ask when the book is fresh; otherwise it
+        # says plainly that it used the last traded price instead.
+        fresh_ask = bool(quote and quote.ask and quote.observed_at
+                         and (now - quote.observed_at).total_seconds() <= 72 * 3600)
+        price = quote.ask if fresh_ask else (quote.price if quote else None)
         price_type = "ask" if fresh_ask else "last"
         warning = None if fresh_ask else "Ask отсутствует или устарел: расчет использует last, фактическая цена покупки может отличаться."
         factor = {"bad": 0.8, "poor": 0.8, "base": 1.0, "good": 1.2}.get(payload.scenario, 1.0)
@@ -275,7 +303,7 @@ class StockService:
         return calculate_stock_investment(identifier=stock.instrument.ticker, amount=payload.amount, price=price, price_type=price_type,
                                           currency=payload.currency, lot_size=stock.lot_size, commission=Commission(payload.commission.type, payload.commission.value),
                                           trailing_dividend_per_share=trailing, scenario_price=(price * factor if price else None),
-                                          data_timestamp=quote.timestamp.isoformat() if quote else None, source=quote.source if quote else None,
+                                          data_timestamp=quote.observed_at.isoformat() if quote and quote.observed_at else None, source=quote.source if quote else None,
                                           liquidity_warning=liquidity_warning, warning=warning)
 
     def recommend(self, payload) -> dict:

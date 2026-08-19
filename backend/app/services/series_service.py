@@ -34,10 +34,13 @@ from sqlalchemy.orm import Session
 from app.collectors.kase_history_importer import SOURCE as LICENSED_SOURCE
 from app.core.enums import DataMode
 from app.forecast.calendar import KASE_TZ, kase_date, kase_holidays
+from app.models.history import DailyMarketSnapshot
 from app.models.incremental import DataChangeSet
 from app.models.market import BondQuote, BondTrade
 from app.models.stock import StockQuote
+from app.services.backfill.records import STATUS_TRADED
 from app.services.bond_service import BondService
+from app.services.price_service import PriceService
 from app.services.stock_service import StockService
 
 #: Series basis reported to the client. Kept as a literal string so a chart can
@@ -207,12 +210,25 @@ class PublicSeriesService:
         self, identifier: str, *, days: int = 365, include_licensed: bool = False
     ) -> dict:
         stock = StockService(self.session).require(identifier)
-        rows = self.session.execute(
-            select(StockQuote)
-            .where(StockQuote.stock_id == stock.id, StockQuote.timestamp >= self._cutoff(days))
-            .order_by(StockQuote.timestamp, StockQuote.id)
-        ).scalars()
-        bars, excluded = self._fold_stock_quotes(rows, include_licensed=include_licensed)
+        cutoff = self._cutoff(days)
+        # The permanent history is the canonical series: it holds everything the
+        # backfill recovered from kase.kz as well as everything we sampled
+        # ourselves, and it reflects published corrections. Folding quotes again
+        # here would draw a second, slightly different chart from the same facts.
+        snapshots = PriceService(self.session).daily_snapshots(
+            stock.instrument_id, start=kase_date(cutoff), limit=None, traded_only=False
+        )
+        if snapshots:
+            bars, excluded = self._fold_daily_snapshots(
+                snapshots, include_licensed=include_licensed
+            )
+        else:
+            rows = self.session.execute(
+                select(StockQuote)
+                .where(StockQuote.stock_id == stock.id, StockQuote.timestamp >= cutoff)
+                .order_by(StockQuote.timestamp, StockQuote.id)
+            ).scalars()
+            bars, excluded = self._fold_stock_quotes(rows, include_licensed=include_licensed)
         return self._payload(
             ticker=stock.instrument.ticker,
             instrument_type="stock",
@@ -266,6 +282,39 @@ class PublicSeriesService:
         )
 
     # -- folding ----------------------------------------------------------
+
+    def _fold_daily_snapshots(
+        self, rows: Iterable[DailyMarketSnapshot], *, include_licensed: bool
+    ) -> tuple[dict[date, _Bar], int]:
+        """One bar per stored trading day, straight from the canonical history.
+
+        The bar is ``native`` only when the day carries a real open and close;
+        a day the source published as a single price stays a close with no
+        manufactured high or low, exactly as the chart draws it.
+        """
+        bars: dict[date, _Bar] = {}
+        excluded = 0
+        for row in rows:
+            if not include_licensed and (row.source or "") in LICENSED_SOURCES:
+                excluded += 1
+                continue
+            if row.status != STATUS_TRADED and row.close is None:
+                continue
+            moment = _aware(row.last_observation_at or row.first_observation_at) if (
+                row.last_observation_at or row.first_observation_at
+            ) else datetime.combine(row.trading_date, datetime.min.time(), tzinfo=KASE_TZ)
+            bar = _Bar(day=row.trading_date, first_at=moment, last_at=moment)
+            bar.touch(moment, row.source, row.data_mode)
+            bar.observations = max(row.observation_count, 1)
+            if row.open is not None and row.close is not None:
+                bar.observe_native_bar(row.open, row.high, row.low, row.close)
+            else:
+                bar.close = row.close
+                bar.high, bar.low = row.high, row.low
+            bar.bid, bar.ask = row.bid_close, row.ask_close
+            bar.observe_cumulative(row.volume, row.turnover, row.trade_count)
+            bars[row.trading_date] = bar
+        return bars, excluded
 
     def _fold_stock_quotes(
         self, rows: Iterable[StockQuote], *, include_licensed: bool
