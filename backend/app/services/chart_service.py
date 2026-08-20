@@ -43,8 +43,14 @@ RANGES: dict[str, int | None] = {
     "6m": 183,
     "1y": 366,
     "2y": 731,
+    "3y": 1096,
+    "5y": 1827,
     "max": None,
 }
+
+#: Ranges expressed as a whole number of calendar years. These are anchored on
+#: the calendar rather than counted in days, so leap years cannot shift them.
+_YEAR_RANGES: dict[str, int] = {"2y": 2, "3y": 3, "5y": 5}
 
 RESOLUTIONS = ("auto", "10m", "1h", "1d", "1w", "1mo")
 
@@ -57,6 +63,8 @@ _AUTO_RESOLUTION: dict[str, str] = {
     "6m": "1d",
     "1y": "1d",
     "2y": "1w",
+    "3y": "1w",
+    "5y": "1mo",
     "max": "1w",
 }
 
@@ -105,11 +113,12 @@ def range_start(range_key: str, *, now: datetime) -> datetime | None:
     days = RANGES.get(range_key)
     if days is None:
         return None
-    if range_key == "2y":
-        # Anchored on the calendar, so the 2Y chart lines up with the window
-        # the backfill actually requested (leap years included).
+    years = _YEAR_RANGES.get(range_key)
+    if years is not None:
+        # Anchored on the calendar, so a whole-year chart lines up with the
+        # window the backfill actually requested (leap years included).
         return datetime.combine(
-            shift_years(kase_date(now), 2), now.timetz()
+            shift_years(kase_date(now), years), now.timetz()
         ).astimezone(timezone.utc)
     return now - timedelta(days=days)
 
@@ -276,7 +285,7 @@ class ChartService:
                 "available_points": 0,
                 "expected_market_days": expected,
             }
-        if expected and range_key in ("1y", "2y", "max"):
+        if expected and range_key in ("1y", "2y", "3y", "5y", "max"):
             ratio = traded_days / expected
             if ratio < 0.5:
                 return {

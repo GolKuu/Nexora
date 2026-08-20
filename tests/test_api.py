@@ -112,6 +112,19 @@ def test_top_is_sorted_by_investment_score(api):
     assert all(0 <= s <= 100 for s in scores)
 
 
+def test_top_100_is_one_request(api, client):
+    """A TOP 100 must not have to be stitched together from two pages (§18)."""
+    body = api.get("/bonds/top?limit=100")
+    assert body.status_code == 200
+    payload = body.json()
+    assert payload["limit"] == 100
+    assert len(payload["items"]) <= 100
+    scores = [item["investment_score"] for item in payload["items"]]
+    assert scores == sorted(scores, reverse=True)
+    over = client.get("/api/v1/bonds/top", params={"limit": 101})
+    assert over.status_code == 422, "the ceiling is still enforced"
+
+
 def test_top_can_be_filtered_by_category(api):
     items = api.get("/bonds/top?limit=10&category=government").json()["items"]
     assert items

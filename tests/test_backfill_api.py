@@ -73,7 +73,9 @@ def test_chart_endpoint_serves_stored_history(api, seeded_stock):
     assert body["last_updated"]
 
 
-@pytest.mark.parametrize("range_key", ["1d", "5d", "1m", "3m", "6m", "1y", "2y", "max"])
+@pytest.mark.parametrize(
+    "range_key", ["1d", "5d", "1m", "3m", "6m", "1y", "2y", "3y", "5y", "max"]
+)
 def test_every_range_is_supported(api, seeded_stock, range_key):
     body = api.get(
         f"/stocks/{seeded_stock.ticker}/chart", params={"range": range_key}

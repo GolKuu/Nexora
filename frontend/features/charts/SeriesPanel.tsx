@@ -40,6 +40,10 @@ const RANGES: Array<{ label: string; days: number }> = [
   { label: "3М", days: 90 },
   { label: "6М", days: 180 },
   { label: "1 год", days: 365 },
+  { label: "2 года", days: 730 },
+  { label: "3 года", days: 1095 },
+  // The public daily series reaches five years back (series_service.MAX_DAYS),
+  // so this button is the whole stored record rather than a fixed window.
   { label: "Всё", days: 1825 },
 ];
 

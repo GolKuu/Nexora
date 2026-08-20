@@ -117,7 +117,7 @@ def stock_history(identifier: str, limit: int = Query(252, ge=1, le=2000), sessi
 @router.get("/{identifier}/chart")
 def stock_chart(
     identifier: str,
-    range: str = Query("1m", pattern="^(1d|5d|1m|3m|6m|1y|2y|max)$"),
+    range: str = Query("1m", pattern="^(1d|5d|1m|3m|6m|1y|2y|3y|5y|max)$"),
     resolution: str = Query("auto", pattern="^(auto|10m|1h|1d|1w|1mo)$"),
     include_events: bool = Query(True),
     session: Session = Depends(get_session),

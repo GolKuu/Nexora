@@ -963,11 +963,30 @@ def test_chart_never_fills_gaps(session, instrument):
 def test_all_ranges_answer(session, instrument):
     _seed_two_years(session, instrument)
     service = ChartService(session)
-    for range_key in ("1d", "5d", "1m", "3m", "6m", "1y", "2y", "max"):
+    for range_key in ("1d", "5d", "1m", "3m", "6m", "1y", "2y", "3y", "5y", "max"):
         payload = service.series(instrument, range_key=range_key, now=NOW)
         assert payload["range"] == range_key
         assert isinstance(payload["series"], list)
         assert "coverage" in payload and "insufficient_history" in payload
+
+
+def test_multi_year_ranges_are_anchored_on_the_calendar(session, instrument):
+    """3Y and 5Y count whole years, so a leap day cannot shift the window."""
+    from app.services.chart_service import range_start
+
+    assert range_start("3y", now=NOW).date() == shift_years(NOW.date(), 3)
+    assert range_start("5y", now=NOW).date() == shift_years(NOW.date(), 5)
+
+
+def test_five_year_range_admits_it_only_holds_two(session, instrument):
+    """A longer range must report the shortfall, never imply history it lacks."""
+    _seed_two_years(session, instrument)
+    payload = ChartService(session).series(instrument, range_key="5y", now=NOW)
+
+    assert payload["range"] == "5y"
+    assert payload["resolution"] == "1mo", "five years aggregate to months"
+    assert payload["insufficient_history"]["value"] is True
+    assert payload["insufficient_history"]["completeness"] < 0.5
 
 
 # ---------------------------------------------------------------------------

@@ -122,7 +122,9 @@ TOP_SORTS = {
 @router.get("/top", response_model=BondListResponse, summary="TOP облигаций по оценке")
 def top_bonds(
     session: Session = Depends(get_session),
-    limit: int = Query(default=10, ge=1, le=50),
+    # A hundred, so a TOP 100 is one request rather than two pages stitched
+    # together - the same ceiling /stocks/top already allows.
+    limit: int = Query(default=10, ge=1, le=100),
     category: str | None = Query(default=None, description="Тип выпуска"),
     exclude_government: bool = Query(
         default=False,
