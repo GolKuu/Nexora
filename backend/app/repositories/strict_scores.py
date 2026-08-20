@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.strict_scores import StrictScoreSnapshot
@@ -90,9 +90,15 @@ class StrictScoreRepository:
     def history(
         self, ticker: str, *, kind: str | None = None, limit: int = 100
     ) -> list[StrictScoreSnapshot]:
+        """Newest first, matched case-insensitively.
+
+        KASE tickers are not all upper case - ``DBNKb1`` is a real one - so a
+        history lookup that upper-cased its argument silently returned nothing
+        for them. Writes still store the ticker exactly as it was published.
+        """
         stmt = (
             select(StrictScoreSnapshot)
-            .where(StrictScoreSnapshot.ticker == ticker)
+            .where(func.upper(StrictScoreSnapshot.ticker) == ticker.upper())
             .order_by(StrictScoreSnapshot.calculated_at.desc())
             .limit(limit)
         )

@@ -11,6 +11,7 @@ from app.schemas.stocks import CrossAssetCompareRequest
 from app.services.browser_agent_service import BrowserAgentService, require_browser
 from app.services.bond_service import BondService
 from app.services.change_service import ChangeService, serialize_change
+from app.services.score_history import ScoreHistoryService
 from app.services.stock_service import StockService
 
 router = APIRouter()
@@ -72,6 +73,27 @@ def cross_asset_compare(payload: CrossAssetCompareRequest, session: Session = De
     return {"items": items, "comparison_type": "cross_asset",
             "explanation": "Акция представляет долю в бизнесе и не имеет договорной доходности; облигация имеет купоны и погашение, но несёт кредитный риск.",
             "warning": "Сценарный рост акции не сопоставляется с YTM облигации как гарантированный доход."}
+
+
+@router.get("/{identifier}/score-history", summary="История оценки инструмента")
+def score_history(
+    identifier: str,
+    kind: str | None = Query(default=None, pattern="^(bond|stock|bank)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Every score ever published for this instrument, newest first.
+
+    Accepts a ticker, an ISIN or a numeric id, for stocks and bonds alike -
+    whatever the user typed into the search box works here too.
+
+    Alongside the snapshots comes one entry per transition explaining what moved
+    the score: which component changed, which red flag was raised, which hard cap
+    started binding, and whether the model version changed rather than the facts.
+    Nothing is recomputed; the explanation is a comparison of the two stored
+    breakdowns, so it can never disagree with the numbers it explains.
+    """
+    return ScoreHistoryService(session).history(identifier, kind=kind, limit=limit)
 
 
 @router.post("/{identifier}/refresh", summary="Обновить один инструмент")
