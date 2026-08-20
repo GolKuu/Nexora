@@ -262,9 +262,14 @@ def test_financial_metric_waits_for_actual_availability(session):
 
 
 def test_peer_market_feature_waits_for_exact_quote_timestamp(session):
+    # The sector is unique to this test on purpose. The market factor averages
+    # every stock in the database, so how far one peer moves it depends on how
+    # many other stocks happen to be there; the sector factor is the same
+    # point-in-time rule over a cross-section this test fully controls.
+    sector = "pit-isolation-test"
     stock = _seed_forecast_stock(session, "POINTTEST")
     peer = _seed_forecast_stock(session, "PEERTEST")
-    stock.sector = peer.sector = "banking"
+    stock.sector = peer.sector = sector
     peer_quotes = list(session.execute(select(StockQuote).where(
         StockQuote.stock_id == peer.id
     ).order_by(StockQuote.timestamp)).scalars())
@@ -274,8 +279,9 @@ def test_peer_market_feature_waits_for_exact_quote_timestamp(session):
     context, _, _ = StockForecastService(session)._context_builder(stock)
     before = context(latest.timestamp - timedelta(microseconds=1))
     after = context(latest.timestamp + timedelta(microseconds=1))
-    assert after["market_return_20d"] > before["market_return_20d"] + 0.5
+    # The doubled close is a fact only from its own timestamp onwards.
     assert after["sector_return_20d"] > before["sector_return_20d"] + 0.5
+    assert after["market_return_20d"] > before["market_return_20d"]
 
 
 def test_snapshot_evaluation_and_track_record_are_realized(session):
