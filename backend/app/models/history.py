@@ -351,3 +351,44 @@ class DividendEvent(Base, TimestampMixin, SourceMixin):
     status: Mapped[str] = mapped_column(String(16), default="announced", index=True)
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     parser_version: Mapped[str | None] = mapped_column(String(32))
+
+
+class MonitoringCycle(Base, TimestampMixin):
+    """One completed pass of the ten-minute monitoring loop.
+
+    Without this table the only evidence a cycle ever ran was a line in the
+    application log, which the operational endpoints cannot read and a restart
+    throws away. Rows are append-only telemetry about the *run*, never about
+    the market, so nothing here is a source of market fact.
+    """
+
+    __tablename__ = "monitoring_cycles"
+    __table_args__ = (
+        Index("ix_monitoring_cycles_job_started", "job_type", "started_at"),
+        Index("ix_monitoring_cycles_status_started", "status", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    #: monitoring | quotes | catalog | documents | news | historical_backfill
+    job_type: Mapped[str] = mapped_column(String(32), default="monitoring", index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+    #: How many instruments the pass looked at, and how many of them actually
+    #: yielded something new. A cycle where nothing changed is a healthy cycle,
+    #: not an idle one - §9 exists precisely so it writes nothing.
+    instruments_checked: Mapped[int] = mapped_column(Integer, default=0)
+    instruments_changed: Mapped[int] = mapped_column(Integer, default=0)
+    observations_created: Mapped[int] = mapped_column(Integer, default=0)
+    duplicates: Mapped[int] = mapped_column(Integer, default=0)
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    anomalies: Mapped[int] = mapped_column(Integer, default=0)
+
+    #: ok | degraded | failed. "degraded" means the pass finished but some
+    #: instruments raised, so its numbers are real but incomplete.
+    status: Mapped[str] = mapped_column(String(16), default="ok", index=True)
+    market_day: Mapped[bool] = mapped_column(Boolean, default=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=600)
+    error: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[dict | None] = mapped_column(JSON)

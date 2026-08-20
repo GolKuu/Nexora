@@ -7,7 +7,7 @@ served is real or demo.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 
 from sqlalchemy import func, select, text
@@ -231,4 +231,97 @@ def app_health(session: Session) -> dict:
         "problems": problems,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "data_mode_values": [m.value for m in DataMode],
+    }
+
+
+#: How many recent cycles the average latency is taken over. Enough to smooth a
+#: single slow pass, short enough to still describe the present.
+MONITORING_WINDOW = 20
+
+
+def monitoring_health(session: Session) -> dict:
+    """Whether the ten-minute loop is actually running, from stored evidence.
+
+    Every number here comes from ``monitoring_cycles`` rows written by the loop
+    itself, so a configured-but-dead scheduler reports ``never_run`` or
+    ``stalled`` rather than looking healthy because the setting is present.
+
+    A cycle that changed nothing is healthy: unchanged data is deliberately not
+    re-written (§9), so ``instruments_changed: 0`` is the normal quiet case.
+    """
+    from app.models.history import IngestionAnomaly, MonitoringCycle
+
+    now = datetime.now(timezone.utc)
+    interval = settings.MONITORING_INTERVAL_SECONDS
+    recent = list(
+        session.execute(
+            select(MonitoringCycle)
+            .where(MonitoringCycle.job_type == "monitoring")
+            .order_by(MonitoringCycle.started_at.desc())
+            .limit(MONITORING_WINDOW)
+        ).scalars()
+    )
+    last = recent[0] if recent else None
+    last_success = next((row for row in recent if row.status == "ok"), None)
+
+    def _aware(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    finished = _aware(last.finished_at) if last else None
+    next_cycle = finished + timedelta(seconds=interval) if finished else None
+    age_seconds = (now - finished).total_seconds() if finished else None
+
+    if last is None:
+        status = "never_run"
+    elif age_seconds is not None and age_seconds > interval * 3:
+        # Three missed cycles is no longer a slow pass, it is a stopped loop.
+        status = "stalled"
+    elif last.status != "ok":
+        status = "degraded"
+    else:
+        status = "ok"
+
+    latencies = [row.duration_ms for row in recent if row.duration_ms is not None]
+    unresolved = int(
+        session.execute(
+            select(func.count(IngestionAnomaly.id)).where(
+                IngestionAnomaly.job_type == "monitoring",
+                IngestionAnomaly.resolved.is_(False),
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    return {
+        "status": status,
+        "enabled": settings.INCREMENTAL_ENABLED and not settings.is_serverless,
+        "interval_seconds": interval,
+        "schedule": f"*/{max(interval // 60, 1)} * * * *",
+        "server_side": True,
+        "last_cycle_at": finished.isoformat() if finished else None,
+        "last_successful_cycle_at": (
+            _aware(last_success.finished_at).isoformat() if last_success else None
+        ),
+        "next_cycle_at": next_cycle.isoformat() if next_cycle else None,
+        "seconds_since_last_cycle": None if age_seconds is None else round(age_seconds, 1),
+        "instruments_checked": last.instruments_checked if last else 0,
+        "instruments_changed": last.instruments_changed if last else 0,
+        "observations_created": last.observations_created if last else 0,
+        "duplicates_skipped": last.duplicates if last else 0,
+        "failures": last.failures if last else 0,
+        "parser_anomalies": last.anomalies if last else 0,
+        "unresolved_parser_anomalies": unresolved,
+        "market_day": last.market_day if last else None,
+        "last_error": last.error if last else None,
+        "cycles_observed": len(recent),
+        "average_latency_ms": (
+            round(sum(latencies) / len(latencies), 1) if latencies else None
+        ),
+        "failures_in_window": sum(row.failures for row in recent),
+        "checked_at": now.isoformat(),
+        # A ten-minute public-web refresh is not a real-time feed, and the
+        # health endpoint is the last place that should blur the difference.
+        "data_mode": DataMode.DELAYED.value,
     }

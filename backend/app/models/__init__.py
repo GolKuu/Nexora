@@ -13,7 +13,7 @@ from app.models.instrument import Instrument
 from app.models.history import (
     BackfillCheckpoint, DailyMarketSnapshot, DividendEvent, FinancialReportRelease,
     HistoricalCorrection, HistoricalCoverage, HistoricalTrade, IngestionAnomaly,
-    MarketObservation,
+    MarketObservation, MonitoringCycle,
 )
 from app.models.stock import CorporateAction, Dividend, Stock, StockFinancialPeriod, StockMetric, StockQuote, StockScore
 from app.models.macro import FxRate, InflationData, YieldCurve
@@ -71,6 +71,7 @@ __all__ = [
     "HistoricalTrade",
     "IngestionAnomaly",
     "MarketObservation",
+    "MonitoringCycle",
     "IssuerMetric",
     "PeerGroup",
     "Portfolio",

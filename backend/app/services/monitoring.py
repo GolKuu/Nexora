@@ -18,13 +18,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.forecast.calendar import kase_date
-from app.models.history import MarketObservation
+from app.models.history import IngestionAnomaly, MarketObservation, MonitoringCycle
 from app.models.instrument import Instrument, SHARE_INSTRUMENT_TYPES
 from app.models.stock import Stock, StockQuote
 from app.services.backfill.records import ObservationRecord, STATUS_TRADED
@@ -178,8 +178,14 @@ class MonitoringService:
         return {"ticker": instrument.ticker, **result}
 
     async def observe_active(self) -> dict:
-        """One monitoring pass over every active stock."""
-        today = kase_date(datetime.now(timezone.utc))
+        """One monitoring pass over every active stock.
+
+        The pass records itself in ``monitoring_cycles`` before returning, so
+        ``GET /health/monitoring`` can answer from stored evidence rather than
+        from a log line a restart would have thrown away.
+        """
+        started_at = datetime.now(timezone.utc)
+        today = kase_date(started_at)
         results = []
         for instrument, stock in self.active_instruments():
             try:
@@ -190,13 +196,68 @@ class MonitoringService:
             except Exception as exc:  # one bad instrument must not stop the pass
                 logger.warning("monitoring failed for %s: %s", instrument.ticker, exc)
                 results.append({"ticker": instrument.ticker, "stored": 0, "error": str(exc)})
-        self.session.commit()
-        return {
+        summary = {
             "instruments": len(results),
             "observations_created": sum(r.get("created", 0) for r in results),
             "duplicates": sum(r.get("duplicates", 0) for r in results),
             "market_day": is_market_day(today),
             "interval_seconds": settings.MONITORING_INTERVAL_SECONDS,
+        }
+        cycle = self._record_cycle(
+            started_at,
+            results,
+            summary,
+            anomalies=self._anomaly_count(started_at),
+        )
+        self.session.commit()
+        return {**summary, **cycle}
+
+    def _anomaly_count(self, since: datetime) -> int:
+        """Parser anomalies raised by monitoring during this pass."""
+        return int(
+            self.session.execute(
+                select(func.count(IngestionAnomaly.id)).where(
+                    IngestionAnomaly.job_type == "monitoring",
+                    IngestionAnomaly.created_at >= since,
+                )
+            ).scalar_one()
+            or 0
+        )
+
+    def _record_cycle(
+        self, started_at: datetime, results: list[dict], summary: dict, *, anomalies: int
+    ) -> dict:
+        finished_at = datetime.now(timezone.utc)
+        failures = sum(1 for row in results if row.get("error"))
+        # An instrument counts as changed when the pass actually stored
+        # something new for it. Re-reading an unchanged price is the normal
+        # case and deliberately writes nothing (§9).
+        changed = sum(1 for row in results if row.get("created"))
+        row = MonitoringCycle(
+            job_type="monitoring",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=int((finished_at - started_at).total_seconds() * 1000),
+            instruments_checked=len(results),
+            instruments_changed=changed,
+            observations_created=summary["observations_created"],
+            duplicates=summary["duplicates"],
+            failures=failures,
+            anomalies=anomalies,
+            status="degraded" if failures else "ok",
+            market_day=summary["market_day"],
+            interval_seconds=summary["interval_seconds"],
+            error=next((result["error"] for result in results if result.get("error")), None),
+        )
+        self.session.add(row)
+        self.session.flush()
+        return {
+            "cycle_id": row.id,
+            "instruments_changed": changed,
+            "failures": failures,
+            "anomalies": anomalies,
+            "duration_ms": row.duration_ms,
+            "status": row.status,
         }
 
 

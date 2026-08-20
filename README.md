@@ -416,10 +416,11 @@ API отдает `coverage.completeness` и `insufficient_history`, и инте�
 
 | Метод | Путь | Назначение |
 | --- | --- | --- |
-| `GET` | `/stocks/{identifier}/chart` | `range=1d…max`, `resolution=auto…1mo`, `include_events` |
+| `GET` | `/stocks/{identifier}/chart` | `range=1d 5d 1m 3m 6m 1y 2y 3y 5y max`, `resolution=auto…1mo`, `include_events` |
 | `GET` | `/stocks/{identifier}/history-status` | Покрытие и состояние загрузки по бумаге |
 | `GET` | `/admin/backfill/status` | Сводка по всей вселенной (заголовок `X-Admin-Token`) |
 | `GET` | `/admin/backfill/anomalies` | Отклоненные разборы с исходными данными |
+| `GET` | `/health/monitoring` | Идет ли десятиминутный цикл: по записанным циклам, а не по конфигурации |
 
 Живой тест против настоящего сайта запускается только явно:
 
@@ -479,6 +480,7 @@ API:
 | `POST` | `/scoring/stock` | Оценка акции (`is_bank: true` направляет в банковскую модель) |
 | `POST` | `/scoring/bank` | Оценка банка |
 | `GET` | `/scoring/history/{ticker}` | История снимков оценок |
+| `GET` | `/instruments/{identifier}/score-history` | То же по тикеру, ISIN или id, с объяснением каждого изменения |
 | `GET` | `/scoring/snapshot/{id}` | Полная разбивка сохраненной оценки |
 
 Каждый ответ содержит сильные и слабые стороны, красные флаги, сработавшие и

@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_session
-from app.services.health_service import app_health, kase_browser_health, kase_health
+from app.services.health_service import (
+    app_health,
+    kase_browser_health,
+    kase_health,
+    monitoring_health,
+)
 
 router = APIRouter()
 
@@ -33,3 +38,16 @@ async def health_kase() -> dict:
 )
 async def health_kase_browser() -> dict:
     return await kase_browser_health()
+
+
+@router.get(
+    "/health/monitoring",
+    summary="Идёт ли непрерывный мониторинг",
+    description=(
+        "Отвечает по записанным циклам мониторинга, а не по конфигурации: "
+        "остановленный планировщик виден как stalled. Цикл без изменений — "
+        "это здоровый цикл: неизменившиеся данные намеренно не перезаписываются."
+    ),
+)
+def health_monitoring(session: Session = Depends(get_session)) -> dict:
+    return monitoring_health(session)

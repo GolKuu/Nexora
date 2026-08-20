@@ -105,11 +105,18 @@ keeps a direction-only assertion on the market factor.
 
 ## Work this audit authorises
 
-Only four gaps are real, and all four are extensions of existing architecture:
+Only four gaps were real, and all four were extensions of existing
+architecture rather than new subsystems. All four are now closed:
 
-1. **§41** — persist monitoring cycle telemetry and serve `GET /health/monitoring`.
-2. **§27** — add `GET /instruments/{identifier}/score-history`, resolving ticker *or* ISIN, for stocks and bonds alike.
-3. **§21** — add the `3y` and `5y` chart ranges.
-4. **§18** — raise the `/bonds/top` limit to 100.
+| # | Gap | What was done |
+| --- | --- | --- |
+| §41 | No `GET /health/monitoring`, no persisted cycle telemetry | New append-only `monitoring_cycles` table written by the loop itself, and a health endpoint that answers from those rows — a configured but dead scheduler reports `never_run` or `stalled` instead of looking healthy. |
+| §27 | Score history only at `/scoring/history/{ticker}`, ticker-only | `GET /instruments/{identifier}/score-history` resolves ticker, ISIN or id for stocks and bonds, and explains every transition from the two stored breakdowns. Fixed a latent bug: the repository upper-cased the ticker, so mixed-case KASE tickers such as `DBNKb1` returned an empty history. |
+| §21 | `3y` and `5y` chart ranges absent | Both added, anchored on the calendar like `2y`; `5y` aggregates to months. A range longer than the stored history reports the shortfall rather than implying history it lacks. |
+| §18 | `/bonds/top` capped `limit` at 50 | Raised to 100, the ceiling `/stocks/top` already allowed. |
 
-Nothing else in the brief requires new code.
+Nothing else in the brief required new code.
+
+After the work: **565 passed, 22 skipped, 0 failed**; `npm run typecheck` and
+`npm run build` clean; `alembic upgrade head` runs from an empty database and
+the resulting schema matches the model metadata exactly.
