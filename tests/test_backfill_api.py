@@ -138,3 +138,82 @@ def test_admin_endpoints_require_a_token_when_one_is_configured(client, monkeypa
         "/api/v1/admin/backfill/status", headers={"X-Admin-Token": "s3cret"}
     )
     assert ok.status_code == 200
+
+
+# -- the brief's canonical chart path, for both asset classes ---------------
+
+
+def test_instrument_chart_serves_a_stock_by_ticker(api, seeded_stock):
+    """The brief names GET /instruments/{identifier}/chart, not a per-asset path."""
+    body = api.get(
+        f"/instruments/{seeded_stock.ticker}/chart", params={"range": "2y"}
+    ).json()
+
+    assert body["instrument_kind"] == "stock"
+    assert body["range"] == "2y"
+    assert body["series"], body
+    assert body["source"] == "daily_market_snapshots"
+    # The brief asks for `historical_coverage`; the older per-asset routes
+    # already shipped `coverage`. Both must be present and identical.
+    assert body["historical_coverage"] == body["coverage"]
+    assert "insufficient_history" in body
+
+
+def test_instrument_chart_resolves_an_isin(api, seeded_stock):
+    if not seeded_stock.isin:
+        pytest.skip("fixture stock has no ISIN")
+    body = api.get(
+        f"/instruments/{seeded_stock.isin}/chart", params={"range": "1y"}
+    ).json()
+    assert body["instrument"]["ticker"] == seeded_stock.ticker
+
+
+def test_instrument_chart_matches_the_stock_route(api, seeded_stock):
+    """One instrument must not have two disagreeing charts."""
+    unified = api.get(
+        f"/instruments/{seeded_stock.ticker}/chart", params={"range": "6m"}
+    ).json()
+    per_asset = api.get(
+        f"/stocks/{seeded_stock.ticker}/chart", params={"range": "6m"}
+    ).json()
+    assert unified["series"] == per_asset["series"]
+    assert unified["resolution"] == per_asset["resolution"]
+
+
+def test_instrument_chart_can_drop_events_and_add_scores(api, seeded_stock):
+    body = api.get(
+        f"/instruments/{seeded_stock.ticker}/chart",
+        params={"range": "1y", "include_events": "false", "include_scores": "true"},
+    ).json()
+    assert body["events"] == []
+    assert isinstance(body["scores"], list)
+
+
+def test_instrument_chart_serves_a_bond(api, session):
+    """Bonds answer from their own stored snapshots, in the same envelope."""
+    from app.models.bond import Bond
+
+    bond = session.query(Bond).first()
+    if bond is None:
+        pytest.skip("no bond in the test database")
+    body = api.get(f"/instruments/{bond.ticker}/chart", params={"range": "1y"}).json()
+
+    assert body["instrument_kind"] == "bond"
+    assert body["instrument"]["ticker"] == bond.ticker
+    assert body["resolution"] == "1d"
+    assert isinstance(body["series"], list)
+    assert body["historical_coverage"] == body["coverage"]
+
+
+def test_instrument_chart_404s_on_an_unknown_identifier(api):
+    assert api.get("/instruments/NOSUCHTHING/chart").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "range_key", ["1d", "5d", "1m", "3m", "6m", "1y", "2y", "3y", "5y", "max"]
+)
+def test_instrument_chart_supports_every_briefed_range(api, seeded_stock, range_key):
+    body = api.get(
+        f"/instruments/{seeded_stock.ticker}/chart", params={"range": range_key}
+    ).json()
+    assert body["range"] == range_key

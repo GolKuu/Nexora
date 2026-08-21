@@ -415,3 +415,28 @@ def test_sources_endpoint_admits_the_demo_source(api):
     body = api.get("/meta/sources").json()
     assert body["configured_mode"] == "mock"
     assert any(s["kind"] == "mock" for s in body["sources"])
+
+
+def test_sqlite_engine_allows_concurrent_readers_and_a_writer():
+    """A background refresh must not fail a user's save.
+
+    The scheduler writes from a background task while requests write from the
+    event loop. In SQLite's default journal mode that combination raises
+    "database is locked"; WAL plus a busy timeout is what makes the development
+    database behave like the PostgreSQL one it stands in for.
+    """
+    from sqlalchemy import text
+
+    from app.db.session import engine
+
+    if engine.dialect.name != "sqlite":
+        pytest.skip("PostgreSQL needs no such pragma")
+
+    with engine.connect() as connection:
+        journal = connection.execute(text("PRAGMA journal_mode")).scalar()
+        busy = connection.execute(text("PRAGMA busy_timeout")).scalar()
+
+    # An in-memory database cannot use WAL; only the file-backed one must.
+    if str(engine.url).find(":memory:") == -1:
+        assert str(journal).lower() == "wal", journal
+    assert int(busy) >= 1000, busy

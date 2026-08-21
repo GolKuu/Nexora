@@ -62,7 +62,47 @@ curl http://localhost:8000/api/v1/health
 curl http://localhost:8000/api/v1/health/kase
 ```
 
-### Локальный запуск без Docker
+### Одна команда (рекомендуется для разработки)
+
+```bash
+npm run setup    # venv, зависимости backend и frontend, .env, alembic upgrade head
+npm run dev      # frontend + backend в одном терминале; планировщик внутри backend
+```
+
+`npm run setup` ставит и браузерный движок (`playwright install chromium`) —
+без него режим `KASE_DATA_MODE=browser` стартует, но каждый сбор падает, а
+`/health/kase-browser` честно сообщает об отсутствующем движке.
+
+На Windows `npm run dev` запускает backend **без** `--reload`: в режиме
+перезагрузки uvicorn создаёт SelectorEventLoop, в котором Playwright не может
+запустить браузер, и сборщик KASE молча перестаёт работать. Если браузерный
+сборщик не нужен, перезагрузку можно вернуть: `npm run dev -- --reload`.
+
+`npm run setup` идемпотентна: повторный запуск после `git pull` просто
+догоняет пропущенное. Ключ KASE не требуется — режим по умолчанию работает
+с публичных страниц.
+
+После старта:
+
+| адрес | что это |
+| --- | --- |
+| `http://localhost:3000` | frontend |
+| `http://localhost:8000/docs` | OpenAPI backend |
+| `http://localhost:8000/api/v1/health` | реальная проверка БД и источника |
+| `http://localhost:8000/api/v1/health/monitoring` | идёт ли десятиминутный цикл |
+
+Остальные команды репозитория:
+
+| команда | что делает |
+| --- | --- |
+| `npm run build` | production-сборка frontend (та же, что на Vercel) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | backend-тесты (`pytest`) |
+| `npm run migrate` | `alembic upgrade head` |
+| `npm run backfill` | двухлетняя историческая загрузка, см. ниже |
+| `npm run dev:frontend` / `npm run dev:backend` | половинки `npm run dev` по отдельности |
+
+### Локальный запуск без Docker (по шагам)
 
 ```bash
 # 1. база
@@ -389,6 +429,23 @@ Collector: сайт открывается как обычным посетит�
 .venv/Scripts/python scripts/sync_price_history.py KZTK   # выборочно
 ```
 
+**Запуск загрузки — отдельная команда, а не только класс.**
+
+```bash
+npm run backfill                        # прогнать очередь до конца
+python -m app.jobs.backfill_kase_stocks --status      # только отчёт, ничего не меняет
+python -m app.jobs.backfill_kase_stocks --once        # один вежливый батч
+python -m app.jobs.backfill_kase_stocks --ticker KZTK # одна бумага
+```
+
+(Команда запускается из корня репозитория; `npm run backfill` уже подставляет
+нужный `PYTHONPATH`.) Батчи, паузы, повторы и контрольные точки берутся из
+настроек `BACKFILL_*`. Ctrl-C не теряет работу: текущий инструмент дописывается,
+состояние фиксируется в `backfill_checkpoints`, и следующий запуск продолжает с
+этой точки, а не начинает историю заново. Тот же проход планировщик выполняет
+сам каждые `SCHEDULE_BACKFILL_SECONDS`, поэтому команда нужна для первичной
+загрузки и для операторского контроля, а не для штатной работы.
+
 **Исправления не стирают исходные данные.** Если KASE позже опубликовал другое
 значение за тот же момент, прежняя запись сохраняется и помечается
 `superseded_at`, исправленная сохраняется рядом, а изменение попадает в
@@ -416,7 +473,8 @@ API отдает `coverage.completeness` и `insufficient_history`, и инте�
 
 | Метод | Путь | Назначение |
 | --- | --- | --- |
-| `GET` | `/stocks/{identifier}/chart` | `range=1d 5d 1m 3m 6m 1y 2y 3y 5y max`, `resolution=auto…1mo`, `include_events` |
+| `GET` | `/instruments/{identifier}/chart` | Единый график для акций и облигаций по тикеру, ISIN или id: `range=1d 5d 1m 3m 6m 1y 2y 3y 5y max`, `resolution=auto…1mo`, `include_events`, `include_scores` |
+| `GET` | `/stocks/{identifier}/chart` | То же только для акций; отдаёт ту же серию, что и общий маршрут |
 | `GET` | `/stocks/{identifier}/history-status` | Покрытие и состояние загрузки по бумаге |
 | `GET` | `/admin/backfill/status` | Сводка по всей вселенной (заголовок `X-Admin-Token`) |
 | `GET` | `/admin/backfill/anomalies` | Отклоненные разборы с исходными данными |

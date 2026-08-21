@@ -378,6 +378,36 @@ def test_stock_action_ingestion_is_idempotent_and_updates_incremental_sections(s
     assert second == {"dividends_created": 0, "corporate_actions_created": 0}
 
 
+def test_two_actions_sharing_one_source_url_do_not_collide(session):
+    """One KASE publication can announce two things.
+
+    Sessions run with autoflush off, so the row added for the first item is not
+    visible to the second item's lookup. Before this was handled, the second
+    insert hit `uq_stock_corporate_action_source` and aborted the whole
+    backfill pass for that instrument.
+    """
+    stock = _seed_stock(session, "DUPX")
+    url = "https://kase.kz/en/information/news/show/999"
+    items = [
+        {"title": "Dividend per common share KZT 12.50", "url": url,
+         "dividend_per_share": 12.5, "record_date": "2026-07-01",
+         "publication_date": "2026-06-01T10:00:00Z"},
+        {"title": "Dividend per common share KZT 13.00", "url": url,
+         "dividend_per_share": 13.0, "record_date": "2026-07-02",
+         "publication_date": "2026-06-01T10:00:00Z"},
+    ]
+    result = StockActionIngestionService(session).ingest(
+        ticker=stock.instrument.ticker, items=items
+    )
+    session.flush()
+
+    # The pair collapses onto one row, and the last reading wins.
+    assert result["corporate_actions_created"] == 1
+    assert result["dividends_created"] == 1
+    stored = [row for row in stock.corporate_actions if row.source_url == url]
+    assert len(stored) == 1
+
+
 def test_stock_watchlist_is_separate_from_bond_watchlist(session, client):
     stock = _seed_stock(session, "WSTX")
     session.commit()

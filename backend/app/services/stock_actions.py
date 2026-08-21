@@ -148,22 +148,33 @@ class StockActionIngestionService:
             return {}
         created_dividends = created_actions = 0
         now = datetime.now(timezone.utc)
+        # Sessions run with autoflush disabled, so a row added earlier in this
+        # loop is invisible to the next iteration's SELECT. One KASE page can
+        # legitimately list two announcements sharing a source URL, and without
+        # these caches the second one would insert a duplicate and trip the
+        # unique constraint instead of updating the first.
+        pending_actions: dict[tuple[str, str], CorporateAction] = {}
+        pending_dividends: dict[str, Dividend] = {}
         for item in items:
             parsed = parse_public_kase_action(item)
             if parsed is None:
                 continue
-            matching_actions = list(self.session.execute(select(CorporateAction).where(
-                CorporateAction.stock_id == stock.id,
-                CorporateAction.action_type == parsed["action_type"],
-                CorporateAction.source_url == parsed["source_url"],
-            ).order_by(CorporateAction.id)).scalars())
-            existing_action = matching_actions[0] if matching_actions else None
-            for duplicate in matching_actions[1:]:
-                self.session.delete(duplicate)
+            action_key = (parsed["action_type"], parsed["source_url"])
+            existing_action = pending_actions.get(action_key)
+            if existing_action is None:
+                matching_actions = list(self.session.execute(select(CorporateAction).where(
+                    CorporateAction.stock_id == stock.id,
+                    CorporateAction.action_type == parsed["action_type"],
+                    CorporateAction.source_url == parsed["source_url"],
+                ).order_by(CorporateAction.id)).scalars())
+                existing_action = matching_actions[0] if matching_actions else None
+                for duplicate in matching_actions[1:]:
+                    self.session.delete(duplicate)
             if existing_action is None:
                 existing_action = CorporateAction(stock_id=stock.id, action_type=parsed["action_type"], title=parsed["title"])
                 self.session.add(existing_action)
                 created_actions += 1
+            pending_actions[action_key] = existing_action
             existing_action.status = parsed["status"]
             existing_action.event_date = parsed["event_date"]
             existing_action.details = {k: _json_value(v) for k, v in parsed.items() if k not in {"title", "source_url", "source_timestamp"}}
@@ -172,17 +183,20 @@ class StockActionIngestionService:
             existing_action.source_timestamp = parsed["source_timestamp"]
             existing_action.fetched_at = now
             if parsed["action_type"] == "dividend":
-                matching_dividends = list(self.session.execute(select(Dividend).where(
-                    Dividend.stock_id == stock.id,
-                    Dividend.source_url == parsed["source_url"],
-                ).order_by(Dividend.id)).scalars())
-                existing_dividend = matching_dividends[0] if matching_dividends else None
-                for duplicate in matching_dividends[1:]:
-                    self.session.delete(duplicate)
+                existing_dividend = pending_dividends.get(parsed["source_url"])
+                if existing_dividend is None:
+                    matching_dividends = list(self.session.execute(select(Dividend).where(
+                        Dividend.stock_id == stock.id,
+                        Dividend.source_url == parsed["source_url"],
+                    ).order_by(Dividend.id)).scalars())
+                    existing_dividend = matching_dividends[0] if matching_dividends else None
+                    for duplicate in matching_dividends[1:]:
+                        self.session.delete(duplicate)
                 if existing_dividend is None:
                     existing_dividend = Dividend(stock_id=stock.id, dividend_per_share=parsed["dividend_per_share"])
                     self.session.add(existing_dividend)
                     created_dividends += 1
+                pending_dividends[parsed["source_url"]] = existing_dividend
                 for field in ("dividend_per_share", "currency", "status", "ex_date", "record_date", "payment_date"):
                     setattr(existing_dividend, field, parsed[field])
                 existing_dividend.source = "kase_public_website"

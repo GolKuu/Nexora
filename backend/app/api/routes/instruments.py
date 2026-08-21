@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -11,7 +11,9 @@ from app.schemas.stocks import CrossAssetCompareRequest
 from app.services.browser_agent_service import BrowserAgentService, require_browser
 from app.services.bond_service import BondService
 from app.services.change_service import ChangeService, serialize_change
+from app.services.chart_service import ChartService, RANGES, resolve_range
 from app.services.score_history import ScoreHistoryService
+from app.services.series_service import MAX_DAYS as MAX_SERIES_DAYS, PublicSeriesService
 from app.services.stock_service import StockService
 
 router = APIRouter()
@@ -73,6 +75,80 @@ def cross_asset_compare(payload: CrossAssetCompareRequest, session: Session = De
     return {"items": items, "comparison_type": "cross_asset",
             "explanation": "Акция представляет долю в бизнесе и не имеет договорной доходности; облигация имеет купоны и погашение, но несёт кредитный риск.",
             "warning": "Сценарный рост акции не сопоставляется с YTM облигации как гарантированный доход."}
+
+
+@router.get("/{identifier}/chart", summary="Историческая серия инструмента")
+def instrument_chart(
+    identifier: str,
+    range: str = Query("1m", pattern="^(1d|5d|1m|3m|6m|1y|2y|3y|5y|max)$"),
+    resolution: str = Query("auto", pattern="^(auto|10m|1h|1d|1w|1mo)$"),
+    include_events: bool = Query(True),
+    include_scores: bool = Query(False),
+    session: Session = Depends(get_session),
+) -> dict:
+    """One chart endpoint for both asset classes, keyed by ticker, ISIN or id.
+
+    Stocks answer from the canonical observation history; bonds answer from the
+    stored public snapshots, whose bars carry the extra ``ytm`` the equity path
+    has no use for. Both come back in the same envelope so one frontend chart
+    can render either.
+
+    Only stored facts are returned. A range longer than the stored history
+    reports the shortfall in ``insufficient_history`` rather than padding the
+    line to make the window look complete.
+    """
+    kind, entity = _resolve_instrument(identifier, session)
+
+    if kind == "stock":
+        payload = ChartService(session).series(
+            entity.instrument, range_key=range, resolution=resolution
+        )
+    else:
+        days = RANGES.get(resolve_range(range))
+        series = PublicSeriesService(session).bond(
+            identifier, days=min(days or MAX_SERIES_DAYS, MAX_SERIES_DAYS)
+        )
+        coverage = series.get("coverage") or {}
+        sessions = series.get("sessions") or []
+        payload = {
+            "instrument": {
+                "id": entity.id,
+                "ticker": entity.ticker,
+                "isin": entity.isin,
+                "currency": entity.currency,
+                "type": "bond",
+                "is_active": entity.is_active,
+                "kase_url": entity.kase_url,
+            },
+            "range": resolve_range(range),
+            # Bond bars are folded per day; a finer resolution would imply
+            # intraday depth these snapshots do not carry.
+            "resolution": "1d",
+            "requested_start": None,
+            "requested_end": datetime.now(timezone.utc).isoformat(),
+            "series": sessions,
+            "points": len(sessions),
+            "traded_points": sum(1 for row in sessions if row.get("close") is not None),
+            "events": series.get("markers") or [],
+            "price_unit": series.get("price_unit"),
+            "source": coverage.get("sources") or series.get("basis"),
+            "data_mode": coverage.get("data_mode"),
+            "last_updated": sessions[-1]["timestamp"] if sessions else None,
+            "coverage": coverage,
+            "insufficient_history": series.get("warning"),
+        }
+
+    if not include_events:
+        payload["events"] = []
+    if include_scores:
+        payload["scores"] = ScoreHistoryService(session).history(
+            identifier, limit=200
+        ).get("snapshots", [])
+    # The brief names this field `historical_coverage`; the older per-asset
+    # chart routes already ship `coverage`. Both point at the same object.
+    payload["historical_coverage"] = payload.get("coverage")
+    payload["instrument_kind"] = kind
+    return payload
 
 
 @router.get("/{identifier}/score-history", summary="История оценки инструмента")

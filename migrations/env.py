@@ -27,12 +27,23 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# The process environment wins, then the app's own settings - which read the
+# same .env the backend reads. Without that fallback `alembic upgrade head`
+# would fail on a checkout whose DATABASE_URL lives only in .env, even though
+# the application itself starts fine.
 database_url = os.getenv("DATABASE_URL")
+if not database_url:
+    try:
+        from app.core.config import settings  # noqa: E402
+
+        database_url = settings.DATABASE_URL
+    except Exception:  # pragma: no cover - settings are optional for offline use
+        database_url = None
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 elif not config.get_main_option("sqlalchemy.url", None):
     raise RuntimeError(
-        "DATABASE_URL is not set and alembic.ini has no sqlalchemy.url."
+        "DATABASE_URL is not set, .env has none, and alembic.ini has no sqlalchemy.url."
     )
 
 target_metadata = Base.metadata
