@@ -32,6 +32,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { useSeries } from "@/hooks/useHistory";
+import { useInstrumentStream } from "@/hooks/useInstrumentStream";
+import type { StreamState } from "@/hooks/useInstrumentStream";
 import type { InstrumentKind, SeriesResponse, SeriesSession } from "@/types/api";
 import { formatCompact, formatMoney, formatNumber, formatPercent, formatRate } from "@/utils/format";
 
@@ -92,6 +94,10 @@ export function SeriesPanel({
   const [days, setDays] = useState(365);
   const [view, setView] = useState<"chart" | "table">("chart");
   const { data, isLoading, isValidating, error } = useSeries(kind, identifier, days);
+  // New validated observations reach the open page without a reload. The
+  // hook revalidates this panel's own query, so the chart can never show a
+  // number the API would not serve.
+  const stream = useInstrumentStream(kind, identifier);
 
   const markerByDate = useMemo(
     () => new Map((data?.markers ?? []).map((marker) => [marker.date, marker])),
@@ -399,7 +405,7 @@ export function SeriesPanel({
           </>
         )}
 
-        <CoverageNote data={data} />
+        <CoverageNote data={data} stream={stream} />
       </div>
     </div>
   );
@@ -542,7 +548,13 @@ function SessionTable({ data }: { data: SeriesResponse }) {
   );
 }
 
-function CoverageNote({ data }: { data: SeriesResponse }) {
+function CoverageNote({
+  data,
+  stream,
+}: {
+  data: SeriesResponse;
+  stream: StreamState;
+}) {
   const { coverage } = data;
   const sources = Object.keys(coverage.sources);
   return (
@@ -580,6 +592,14 @@ function CoverageNote({ data }: { data: SeriesResponse }) {
                   : ""
               }.`
             : "В серию включены строки лицензионного архива KASE."}
+        </p>
+        <p>
+          {stream.transport === "stream"
+            ? "Страница обновляется автоматически по мере поступления проверенных наблюдений (проверка каждые 10 минут, это не биржевой поток)."
+            : stream.transport === "polling"
+              ? "Поток недоступен: данные перечитываются периодически."
+              : " "}
+          {stream.revision > 0 ? ` Обновлений с момента открытия: ${stream.revision}.` : ""}
         </p>
         {data.warning ? (
           <p className="text-amber-700 dark:text-amber-400">{data.warning}</p>

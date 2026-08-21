@@ -1,9 +1,18 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session
+from app.core.config import settings
+from app.db.session import SessionLocal
+from app.models.history import MarketObservation
+from app.models.market import BondQuote
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.core.errors import NotFoundError, UpstreamError
 from app.repositories.bonds import BondRepository
@@ -17,6 +26,16 @@ from app.services.series_service import MAX_DAYS as MAX_SERIES_DAYS, PublicSerie
 from app.services.stock_service import StockService
 
 router = APIRouter()
+
+#: How often the stream re-reads stored state. Well under the ten-minute
+#: collection cadence, so a new observation surfaces promptly, and far too slow
+#: to be mistaken for a trading feed.
+_STREAM_POLL_SECONDS = 15
+
+
+def _sse(event: str, payload: dict) -> str:
+    """One server-sent event frame."""
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _resolve_instrument(identifier: str, session: Session) -> tuple[str, object]:
@@ -75,6 +94,115 @@ def cross_asset_compare(payload: CrossAssetCompareRequest, session: Session = De
     return {"items": items, "comparison_type": "cross_asset",
             "explanation": "Акция представляет долю в бизнесе и не имеет договорной доходности; облигация имеет купоны и погашение, но несёт кредитный риск.",
             "warning": "Сценарный рост акции не сопоставляется с YTM облигации как гарантированный доход."}
+
+
+@router.get(
+    "/{identifier}/stream",
+    summary="Поток обновлений инструмента (SSE)",
+    response_class=StreamingResponse,
+)
+async def instrument_stream(
+    identifier: str,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    """Server-sent events: one message when this instrument's stored data moves.
+
+    The page keeps its chart current without a reload and without ever talking
+    to KASE itself - the collector writes to the database, and this endpoint
+    reports what the database now holds. Nothing is pushed that was not first
+    validated and stored, so a reader can never see a number the API would
+    disagree with.
+
+    This is a ten-minute public-web cadence, not a trading feed: the event says
+    *something changed*, and the client re-reads the same endpoints it would
+    have read anyway.
+    """
+    if settings.is_serverless:
+        # A long-lived generator inside a serverless request handler would be
+        # billed for its whole life and killed mid-stream anyway. The client
+        # falls back to polling when it sees this.
+        raise UpstreamError(
+            "Поток недоступен в serverless-развёртывании; используйте опрос."
+        )
+
+    kind, entity = _resolve_instrument(identifier, session)
+    # A stock carries its identity on the linked Instrument row; a bond
+    # carries its own. Resolve both once rather than at every yield.
+    instrument_id = entity.instrument.id if kind == "stock" else entity.id
+    ticker = entity.instrument.ticker if kind == "stock" else entity.ticker
+
+    def latest(db: Session) -> str | None:
+        """The newest stored moment for this instrument, or None."""
+        if kind == "stock":
+            value = db.scalar(
+                select(func.max(MarketObservation.observed_at)).where(
+                    MarketObservation.instrument_id == instrument_id,
+                    MarketObservation.superseded_at.is_(None),
+                )
+            )
+        else:
+            value = db.scalar(
+                select(func.max(BondQuote.timestamp)).where(
+                    BondQuote.bond_id == instrument_id
+                )
+            )
+        return value.isoformat() if value else None
+
+    async def events() -> AsyncIterator[str]:
+        # A short-lived session per poll: holding one open for the life of the
+        # stream would pin a connection from the pool for hours.
+        probe = SessionLocal()
+        try:
+            last = latest(probe)
+        finally:
+            probe.close()
+
+        yield _sse(
+            "connected",
+            {
+                "instrument": ticker,
+                "kind": kind,
+                "last_updated": last,
+                "poll_seconds": _STREAM_POLL_SECONDS,
+                "data_mode": settings.KASE_DATA_MODE,
+            },
+        )
+
+        while True:
+            if await request.is_disconnected():
+                return
+            await asyncio.sleep(_STREAM_POLL_SECONDS)
+            probe = SessionLocal()
+            try:
+                current = latest(probe)
+            except Exception:  # a transient database blip must not kill the page
+                probe.rollback()
+                current = last
+            finally:
+                probe.close()
+
+            if current != last:
+                last = current
+                yield _sse(
+                    "update",
+                    {"instrument": ticker, "kind": kind, "last_updated": current},
+                )
+            else:
+                # A comment frame keeps proxies from closing an idle stream and
+                # is ignored by EventSource. Unchanged data is not an event:
+                # duplicate observations are never invented to fill the silence.
+                yield ": keep-alive\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/{identifier}/chart", summary="Историческая серия инструмента")
