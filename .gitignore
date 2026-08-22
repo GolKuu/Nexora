@@ -13,6 +13,10 @@ venv/
 *.db
 *.sqlite3
 tests/.test.db
+# WAL sidecars. SQLite runs in WAL mode (see app/db/session.py), so these
+# appear next to every SQLite file and must never be committed.
+*.db-wal
+*.db-shm
 
 # node / next
 node_modules/
