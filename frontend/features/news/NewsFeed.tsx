@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { marketService } from "@/services/market";
+import { useSettings } from "@/hooks/useSettings";
 import { cn } from "@/utils/cn";
 import { formatDate } from "@/utils/format";
 
@@ -29,11 +30,20 @@ const LABELS: Record<string, string> = {
 
 export function NewsFeed({ compact = false }: { compact?: boolean }) {
   const [eventType, setEventType] = useState("");
+  const { settings } = useSettings();
   const { data, isLoading, error } = useSWR(
     ["market-news", eventType, compact],
     () => marketService.news({ limit: compact ? 5 : 80, eventType: eventType || undefined }),
     { refreshInterval: 60_000, revalidateOnFocus: true },
   );
+  const items = (data?.items ?? []).filter((item) => {
+    const kase = item.source.toLocaleLowerCase("ru").includes("kase");
+    return kase ? settings?.kase_news_enabled !== false : settings?.external_news_enabled !== false;
+  });
+
+  if (settings?.news_enabled === false) {
+    return <Card><CardHeader title="Новости отключены" subtitle="Включить ленту можно в настройках." /></Card>;
+  }
 
   return <Card>
     <CardHeader title={compact ? "Важные новости" : "Новости и рыночные события"}
@@ -44,8 +54,8 @@ export function NewsFeed({ compact = false }: { compact?: boolean }) {
     </div> : null}
     {isLoading ? <CardBody className="space-y-2"><Skeleton className="h-20 w-full"/><Skeleton className="h-20 w-full"/></CardBody>
       : error ? <CardBody><EmptyState title="Новости временно недоступны" description="Сайт продолжает работать с последними сохранёнными рыночными данными."/></CardBody>
-      : !data?.items.length ? <CardBody><EmptyState title="Новых событий пока нет" description="Лента заполнится после следующего цикла сбора новостей."/></CardBody>
-      : <div>{data.items.map(item => <article key={item.id} className="border-t border-slate-100 px-4 py-4 first:border-0 dark:border-slate-800">
+      : !items.length ? <CardBody><EmptyState title="Новых событий пока нет" description="Лента заполнится после следующего цикла сбора новостей или после включения источников в настройках."/></CardBody>
+      : <div>{items.map(item => <article key={item.id} className="border-t border-slate-100 px-4 py-4 first:border-0 dark:border-slate-800">
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <Badge>{item.marker}</Badge><span>{LABELS[item.event_type] ?? item.event_type}</span>
           {item.ticker ? <Link href={`/stock/${item.ticker}`} className="font-semibold text-emerald-700 hover:underline dark:text-emerald-400">{item.ticker}</Link> : null}

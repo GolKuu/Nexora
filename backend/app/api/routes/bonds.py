@@ -430,9 +430,32 @@ def investment_calculation(
         else None
     )
 
-    result = InvestmentService(session).calculate(
+    investment_service = InvestmentService(session)
+    requested_quantity = payload.quantity if payload.mode == "quantity" else None
+    amount = float(payload.amount or 0)
+    if requested_quantity is not None:
+        probe = investment_service.calculate(
+            bond, amount=1e13, commission_type=payload.commission.type,
+            commission_value=payload.commission.value,
+            inflation_enabled=payload.inflation_enabled, inflation=inflation,
+            exit_mode=payload.exit_mode, exit_date=exit_date, scenario=payload.scenario,
+        )
+        probe_quantity = float(probe.get("quantity") or 0)
+        probe_gross = float(probe.get("principal_cost") or 0) + float(probe.get("accrued_interest_total") or 0)
+        unit_dirty = probe_gross / probe_quantity if probe_quantity > 0 and probe_gross > 0 else probe.get("unit_dirty_price")
+        if unit_dirty is None:
+            return InvestmentCalculationResponse(
+                **probe, input_mode="quantity", requested_quantity=requested_quantity
+            )
+        principal = requested_quantity * unit_dirty
+        commission = payload.commission.value if payload.commission.type == "fixed" else principal * payload.commission.value / 100.0
+        # A cent of headroom avoids dropping a whole lot because the public
+        # response rounds unit prices while the calculator uses full precision.
+        amount = principal + commission + 0.01
+
+    result = investment_service.calculate(
         bond,
-        amount=payload.amount,
+        amount=amount,
         commission_type=payload.commission.type,
         commission_value=payload.commission.value,
         inflation_enabled=payload.inflation_enabled,
@@ -441,4 +464,6 @@ def investment_calculation(
         exit_date=exit_date,
         scenario=payload.scenario,
     )
-    return InvestmentCalculationResponse(**result)
+    return InvestmentCalculationResponse(
+        **result, input_mode=payload.mode, requested_quantity=requested_quantity
+    )

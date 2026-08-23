@@ -98,8 +98,12 @@ def calculate_stock_investment(
                 "data_timestamp": data_timestamp, "source": source, "currency": currency}
     commission = commission or Commission()
     lot = max(1, int(lot_size or 1))
-    full_share_cost = price + commission.charge(price)
-    quantity = math.floor(amount / (full_share_cost * lot)) * lot
+    if commission.type == "fixed":
+        available_for_principal = max(0.0, amount - commission.value)
+        quantity = math.floor(available_for_principal / (price * lot)) * lot
+    else:
+        full_share_cost = price + commission.charge(price)
+        quantity = math.floor(amount / (full_share_cost * lot)) * lot
     principal = quantity * price
     fee = commission.charge(principal) if quantity else 0.0
     total_cost = principal + fee

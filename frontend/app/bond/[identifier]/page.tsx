@@ -5,10 +5,9 @@ import { use } from "react";
 
 import { FreshnessBadge } from "@/components/layout/DataModeBanner";
 import { Badge } from "@/components/ui/Badge";
-import { Card, CardBody } from "@/components/ui/Card";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { BondCharts } from "@/features/bonds/BondCardSections";
-import { ChangeHistoryPanel } from "@/features/charts/ChangeHistoryPanel";
 import { ScoreHistoryPanel } from "@/features/charts/ScoreHistoryPanel";
 import { Calculator } from "@/features/bonds/Calculator";
 import { KaseVerify } from "@/features/bonds/KaseVerify";
@@ -20,6 +19,7 @@ import { WatchButton } from "@/features/bonds/WatchButton";
 import { useBondCard } from "@/hooks/useBonds";
 import { useUiStore } from "@/stores/uiStore";
 import { bondTypeLabel } from "@/utils/score";
+import { formatDate } from "@/utils/format";
 
 export default function BondPage({
   params,
@@ -102,7 +102,6 @@ export default function BondPage({
           <SimpleSummary simple={simple} />
           <ScoreExplanation ticker={bond.ticker} />
           <BondCharts ticker={bond.ticker} currency={bond.currency} />
-          <ChangeHistoryPanel kind="bond" identifier={bond.ticker} />
           <ScoreHistoryPanel identifier={bond.ticker} />
           {uiMode === "pro" ? <ProDetails pro={pro} bond={bond} /> : null}
         </div>
@@ -110,6 +109,7 @@ export default function BondPage({
         <div className="space-y-4">
           <Calculator ticker={bond.ticker} currency={bond.currency} />
           <PeerList ticker={bond.ticker} />
+          <Card><CardHeader title="Эмитент и источники" subtitle="Каждое значение связано с сохранённым происхождением данных."/><CardBody className="space-y-2 text-sm"><p><span className="text-slate-500">Эмитент:</span> {bond.issuer?.name ?? "—"}</p><p><span className="text-slate-500">Сектор:</span> {bond.issuer?.sector ?? "—"}</p><p><span className="text-slate-500">Отрасль:</span> {bond.issuer?.industry ?? "—"}</p><p><span className="text-slate-500">Тип:</span> {bond.issuer?.is_financial_institution ? "финансовая организация" : bond.issuer?.is_state_owned ? "с государственным участием" : "компания"}</p><p><span className="text-slate-500">Источник:</span> {bond.provenance.source ?? "—"}</p><p><span className="text-slate-500">Получено:</span> {formatDate(bond.provenance.fetched_at)}</p><div className="flex flex-wrap gap-3 pt-1">{bond.issuer?.kase_url?<a href={bond.issuer.kase_url} target="_blank" rel="noreferrer" className="text-xs underline">страница эмитента ↗</a>:null}{bond.provenance.source_url?<a href={bond.provenance.source_url} target="_blank" rel="noreferrer" className="text-xs underline">первоисточник ↗</a>:null}</div></CardBody></Card>
           <KaseVerify ticker={bond.ticker} kaseUrl={bond.kase_url} />
         </div>
       </div>

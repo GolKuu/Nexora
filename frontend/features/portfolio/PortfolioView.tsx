@@ -17,6 +17,7 @@ function AddPositionForm({ portfolioId }: { portfolioId: number }) {
   const [identifier, setIdentifier] = useState("");
   const [quantity, setQuantity] = useState(100);
   const [price, setPrice] = useState<string>("");
+  const [purchaseDate, setPurchaseDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -28,9 +29,11 @@ function AddPositionForm({ portfolioId }: { portfolioId: number }) {
         [instrumentType]: identifier.trim(),
         instrument_type: instrumentType,
         quantity,
+        purchase_date: purchaseDate || undefined,
         ...(instrumentType === "bond" ? { purchase_clean_price: price ? Number(price) : undefined } : { purchase_price: price ? Number(price) : undefined }),
       });
       setIdentifier("");
+      setPurchaseDate("");
       await mutate(["portfolio", portfolioId]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось добавить позицию");
@@ -40,7 +43,7 @@ function AddPositionForm({ portfolioId }: { portfolioId: number }) {
   }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-5">
+    <div className="grid gap-3 sm:grid-cols-6">
       <Field label="Тип инструмента">
         <select value={instrumentType} onChange={(event) => setInstrumentType(event.target.value as "bond" | "stock")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900">
           <option value="bond">Облигация</option><option value="stock">Акция</option>
@@ -66,12 +69,15 @@ function AddPositionForm({ portfolioId }: { portfolioId: number }) {
           placeholder="98.5"
         />
       </Field>
+      <Field label="Дата покупки" hint="для корректного дохода">
+        <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+      </Field>
       <div className="flex items-end">
         <Button onClick={() => void submit()} disabled={busy || !identifier.trim()} className="w-full">
           Добавить
         </Button>
       </div>
-      {error ? <p className="text-sm text-rose-600 sm:col-span-5">{error}</p> : null}
+      {error ? <p className="text-sm text-rose-600 sm:col-span-6">{error}</p> : null}
     </div>
   );
 }

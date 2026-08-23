@@ -265,6 +265,14 @@ def test_stock_detail_calculator_recommend_and_compare_api(session, client):
     body = detail.json(); assert "ytm" not in body["metrics"] and body["metrics"]["pe"] == 2
     calc = client.post("/api/v1/stocks/TSTX/investment-calculation", json={"amount": 500_000, "commission": {"type": "percent", "value": .1}, "scenario": "good"})
     assert calc.status_code == 200 and calc.json()["calculation_price_type"] == "ask"
+    quantity_calc = client.post(
+        "/api/v1/stocks/TSTX/investment-calculation",
+        json={"mode": "quantity", "quantity": 100, "commission": {"type": "fixed", "value": 500}},
+    )
+    assert quantity_calc.status_code == 200
+    assert quantity_calc.json()["input_mode"] == "quantity"
+    assert quantity_calc.json()["requested_quantity"] == 100
+    assert quantity_calc.json()["quantity"] == 100
     rec = client.post("/api/v1/stocks/recommend", json={"amount": 500_000, "profile": "balanced", "limit": 5})
     assert rec.status_code == 200 and any(row["ticker"] == "TSTX" for row in rec.json()["items"])
     # A second independent stock makes the compare contract exercise its 2..10 validation.

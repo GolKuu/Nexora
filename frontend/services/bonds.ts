@@ -1,6 +1,7 @@
 import { api } from "@/services/client";
 import type {
   BondCard,
+  BondInvestmentCalculation,
   BondListResponse,
   CalculatorResult,
   CashFlow,
@@ -37,6 +38,11 @@ export const bondsService = {
     return api.get<BondListResponse>(`/bonds/top?${query}`);
   },
 
+  recommend: (amount: number, profile: "conservative" | "balanced" | "aggressive", limit = 6) =>
+    api.post<{ items: Array<{ ticker: string; issuer: string | null; currency: string; maturity_date: string | null; ytm_pct: number | null; investment_score: number | null; reason_codes: string[] }>; amount: number; profile: string; warnings: string[] }>("/bonds/recommend", {
+      amount, currency: "KZT", profile, limit, inflation_enabled: true,
+    }),
+
   search: (q: string, limit = 20) =>
     api.get<BondListResponse>(
       `/bonds/search?q=${encodeURIComponent(q)}&limit=${limit}`,
@@ -68,8 +74,18 @@ export const bondsService = {
       reinvest_coupons: reinvest,
     }),
 
-  compare: (identifiers: string[], mode: UiMode) =>
-    api.post<CompareResponse>("/compare", { identifiers, mode }),
+  calculateInvestment: (identifier: string, input: { mode: "amount" | "quantity"; value: number; commission: number; commissionType: "percent" | "fixed"; inflationEnabled: boolean; exitMode: "maturity" | "date"; exitDate?: string; scenario: "bad" | "base" | "good" }) =>
+    api.post<BondInvestmentCalculation>(`/bonds/${encodeURIComponent(identifier)}/investment-calculation`, {
+      mode: input.mode,
+      ...(input.mode === "amount" ? { amount: input.value } : { quantity: input.value }),
+      currency: "KZT", commission: { type: input.commissionType, value: input.commission },
+      inflation_enabled: input.inflationEnabled, exit_mode: input.exitMode,
+      exit_date: input.exitMode === "date" ? input.exitDate : undefined,
+      scenario: input.scenario,
+    }),
+
+  compare: (identifiers: string[], mode: UiMode, amount?: number) =>
+    api.post<CompareResponse>("/compare", { identifiers, mode, amount, inflation_enabled: true }),
 
   kaseHealth: () => api.get<KaseHealth>("/health/kase"),
 };

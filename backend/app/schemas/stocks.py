@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class CommissionRequest(BaseModel):
@@ -16,12 +16,21 @@ class CommissionRequest(BaseModel):
 
 
 class StockInvestmentRequest(BaseModel):
-    mode: str = "amount"
-    amount: float = Field(gt=0)
+    mode: str = Field(default="amount", pattern="^(amount|quantity)$")
+    amount: float | None = Field(default=None, gt=0)
+    quantity: float | None = Field(default=None, gt=0)
     currency: str = "KZT"
     commission: CommissionRequest = Field(default_factory=CommissionRequest)
     scenario: str = "base"
     target_period_months: int = Field(default=12, ge=1, le=120)
+
+    @model_validator(mode="after")
+    def validate_input(self):
+        if self.mode == "amount" and self.amount is None:
+            raise ValueError("amount is required in amount mode")
+        if self.mode == "quantity" and self.quantity is None:
+            raise ValueError("quantity is required in quantity mode")
+        return self
 
 
 class StockRecommendRequest(BaseModel):

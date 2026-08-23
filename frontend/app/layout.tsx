@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { DataModeBanner } from "@/components/layout/DataModeBanner";
 import { Header } from "@/components/layout/Header";
+import { ThemeController } from "@/components/layout/ThemeController";
 
 import "./globals.css";
 
@@ -17,6 +18,7 @@ export default function RootLayout({
   return (
     <html lang="ru">
       <body>
+        <ThemeController />
         <Header />
         <DataModeBanner />
         <main className="mx-auto max-w-6xl px-4 py-6 pb-24 sm:pb-6">{children}</main>

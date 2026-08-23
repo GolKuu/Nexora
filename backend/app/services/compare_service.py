@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationError
 from app.services.bond_service import BondService
+from app.services.investment_service import InvestmentService
+from app.providers.inflation import get_inflation
 
 MAX_COMPARE = 5
 
@@ -31,13 +33,30 @@ PRO_ROWS = [
     ("bid_ask_spread_pct", "Спред bid/ask", "доля"),
 ]
 
+INVESTMENT_ROWS = [
+    ("quantity", "Количество бумаг", "шт"),
+    ("total_purchase_cost", "Стоимость покупки", "money"),
+    ("cash_remaining", "Остаток", "money"),
+    ("total_cash_received", "Всего денежных поступлений", "money"),
+    ("total_profit", "Результат инвестиции", "money"),
+    ("annualized_return_percent", "Годовая доходность", "%"),
+    ("real_annualized_return_percent", "Доходность после инфляции", "%"),
+]
+
 
 class CompareService:
     def __init__(self, session: Session):
         self.session = session
         self.bonds = BondService(session)
 
-    def compare(self, identifiers: list[str], *, mode: str = "simple") -> dict:
+    def compare(
+        self,
+        identifiers: list[str],
+        *,
+        mode: str = "simple",
+        amount: float | None = None,
+        inflation_enabled: bool = True,
+    ) -> dict:
         if not identifiers:
             raise ValidationError("Укажите хотя бы одну облигацию для сравнения.")
         if len(identifiers) > MAX_COMPARE:
@@ -45,12 +64,25 @@ class CompareService:
                 f"За один раз можно сравнить не более {MAX_COMPARE} выпусков."
             )
 
-        cards = [self.bonds.card(self.bonds.require(i)) for i in identifiers]
+        bonds = [self.bonds.require(i) for i in identifiers]
+        cards = [self.bonds.card(bond) for bond in bonds]
 
         columns = []
-        for card in cards:
+        for bond, card in zip(bonds, cards, strict=True):
             simple = card["simple"]
             pro = card["pro"]
+            calculation = None
+            if amount is not None:
+                inflation = get_inflation(
+                    self.session,
+                    horizon_years=simple.get("years_to_maturity"),
+                ) if inflation_enabled else None
+                calculation = InvestmentService(self.session).calculate(
+                    bond,
+                    amount=amount,
+                    inflation_enabled=inflation_enabled,
+                    inflation=inflation,
+                )
             columns.append(
                 {
                     "id": card["bond"]["id"],
@@ -68,18 +100,24 @@ class CompareService:
                         "growth_score": simple["growth_potential"]["score"],
                         "investment_score": simple["overall"]["score"],
                         **{key: pro.get(key) for key, _, _ in PRO_ROWS},
+                        **({key: calculation.get(key) for key, _, _ in INVESTMENT_ROWS} if calculation else {}),
                     },
                 }
             )
 
         rows = SIMPLE_ROWS if mode == "simple" else SIMPLE_ROWS + PRO_ROWS
+        if amount is not None:
+            rows = rows + INVESTMENT_ROWS
         best = self._best_per_row(rows, columns)
+        for key, _, _ in INVESTMENT_ROWS:
+            best[key] = None
         return {
             "mode": mode,
             "rows": [{"key": k, "label": label, "unit": unit} for k, label, unit in rows],
             "columns": columns,
             "best": best,
             "winner": self._winner(columns),
+            "amount": amount,
         }
 
     @staticmethod

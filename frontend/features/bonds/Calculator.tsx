@@ -1,140 +1,54 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
-import { Input } from "@/components/ui/Field";
 import { Stat } from "@/components/ui/Stat";
 import { bondsService } from "@/services/bonds";
-import { useUiStore } from "@/stores/uiStore";
+import type { BondInvestmentCalculation } from "@/types/api";
 import { formatMoney, formatPercent, formatYears } from "@/utils/format";
-import type { CalculatorResult } from "@/types/api";
 
-const PRESETS = [100_000, 500_000, 1_000_000, 5_000_000];
-
-/** «Если вложить X ₸». Every figure is computed by the backend. */
 export function Calculator({ ticker, currency }: { ticker: string; currency: string }) {
-  const amount = useUiStore((s) => s.calculatorAmount);
-  const setAmount = useUiStore((s) => s.setCalculatorAmount);
-  const [result, setResult] = useState<CalculatorResult | null>(null);
+  const [mode, setMode] = useState<"amount" | "quantity">("amount");
+  const [input, setInput] = useState("1000000");
+  const [commission, setCommission] = useState("0.1");
+  const [commissionType, setCommissionType] = useState<"percent" | "fixed">("percent");
+  const [inflationEnabled, setInflationEnabled] = useState(true);
+  const [exitMode, setExitMode] = useState<"maturity" | "date">("maturity");
+  const [exitDate, setExitDate] = useState("");
+  const [scenario, setScenario] = useState<"bad" | "base" | "good">("base");
+  const [result, setResult] = useState<BondInvestmentCalculation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
-  async function run(value: number) {
-    setLoading(true);
-    setError(null);
-    try {
-      setResult(await bondsService.calculate(ticker, value));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось посчитать");
-      setResult(null);
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    const value = Number(input);
+    if (!(value > 0) || (exitMode === "date" && !exitDate)) { setResult(null); return; }
+    const timer = window.setTimeout(async () => {
+      const id = ++requestId.current; setLoading(true); setError(null);
+      try {
+        const next = await bondsService.calculateInvestment(ticker, { mode, value, commission: Number(commission) || 0, commissionType, inflationEnabled, exitMode, exitDate, scenario });
+        if (id === requestId.current) setResult(next);
+      } catch (reason) {
+        if (id === requestId.current) setError(reason instanceof Error ? reason.message : "Не удалось посчитать");
+      } finally {
+        if (id === requestId.current) setLoading(false);
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [commission, commissionType, exitDate, exitMode, inflationEnabled, input, mode, scenario, ticker]);
 
-  return (
-    <Card>
-      <CardHeader
-        title="Если вложить"
-        subtitle="Расчет по текущей цене и графику выплат выпуска"
-      />
-      <CardBody className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          {PRESETS.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => {
-                setAmount(preset);
-                void run(preset);
-              }}
-              className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
-            >
-              {formatMoney(preset, currency)}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-2">
-          <Input
-            type="number"
-            min={0}
-            step={10_000}
-            value={amount}
-            onChange={(e) => setAmount(Number(e.target.value))}
-            aria-label="Сумма вложения"
-          />
-          <Button onClick={() => void run(amount)} disabled={loading || amount <= 0}>
-            {loading ? "Считаем…" : "Посчитать"}
-          </Button>
-        </div>
-
-        {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-
-        {result && !result.available ? (
-          <p className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-            {result.reason}
-          </p>
-        ) : null}
-
-        {result?.available ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Stat
-                label="Купите"
-                value={`${result.quantity} шт`}
-                hint={`по ${formatMoney(result.price_per_bond, result.currency, 2)}`}
-              />
-              <Stat
-                label="Вложите"
-                value={formatMoney(result.invested, result.currency)}
-                hint={`остаток ${formatMoney(result.uninvested_remainder, result.currency)}`}
-              />
-              <Stat
-                label="Получите всего"
-                value={formatMoney(result.proceeds, result.currency)}
-                hint={`за ${formatYears(result.years)}`}
-              />
-              <Stat
-                label="Прибыль"
-                value={formatMoney(result.profit, result.currency)}
-                tone={(result.profit ?? 0) >= 0 ? "positive" : "negative"}
-                hint={`${formatPercent(result.annualized_return_pct)} в год`}
-              />
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                С учетом инфляции {formatPercent(result.inflation_pct)}
-              </p>
-              <div className="mt-2 grid grid-cols-2 gap-4">
-                <Stat
-                  label="Реальная прибыль"
-                  value={formatMoney(result.profit_real, result.currency)}
-                  tone={(result.profit_real ?? 0) >= 0 ? "positive" : "negative"}
-                  hint="в сегодняшних деньгах"
-                />
-                <Stat
-                  label="Реальная доходность"
-                  value={formatPercent(result.real_annualized_return_pct)}
-                  tone={
-                    (result.real_annualized_return_pct ?? 0) >= 0 ? "positive" : "negative"
-                  }
-                  hint="в год после инфляции"
-                />
-              </div>
-            </div>
-
-            <ul className="space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-              {result.assumptions?.map((line) => (
-                <li key={line}>• {line}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </CardBody>
-    </Card>
-  );
+  return <Card><CardHeader title="Калькулятор облигации" subtitle="Автоматический расчёт покупки, выплат, продажи и реального результата."/><CardBody className="space-y-3">
+    <div className="grid grid-cols-2 gap-1">{[["amount","По сумме"],["quantity","По количеству"]].map(([code,label])=><button key={code} onClick={()=>{setMode(code as "amount"|"quantity");setInput(code === "amount" ? "1000000" : "10");}} className={`rounded-lg px-2 py-2 text-xs ${mode === code ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "bg-slate-100 dark:bg-slate-800"}`}>{label}</button>)}</div>
+    <label className="text-xs text-slate-500">{mode === "amount" ? "Сумма" : "Количество облигаций"}<input value={input} inputMode="decimal" onChange={e=>setInput(e.target.value.replace(/[^\d.,]/g, "").replace(",", "."))} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-base dark:border-slate-700"/></label>
+    <div className="grid grid-cols-[1fr_7rem] gap-2"><label className="text-xs text-slate-500">Комиссия<input value={commission} inputMode="decimal" onChange={e=>setCommission(e.target.value.replace(/[^\d.,]/g, "").replace(",", "."))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-transparent px-3 dark:border-slate-700"/></label><label className="text-xs text-slate-500">Тип<select value={commissionType} onChange={e=>setCommissionType(e.target.value as "percent"|"fixed")} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-transparent px-2 dark:border-slate-700"><option value="percent">%</option><option value="fixed">₸</option></select></label></div>
+    <div className="grid grid-cols-3 gap-1">{[["bad","Негативный"],["base","Базовый"],["good","Позитивный"]].map(([code,label])=><button key={code} onClick={()=>setScenario(code as typeof scenario)} className={`rounded-lg px-2 py-2 text-xs ${scenario === code ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "bg-slate-100 dark:bg-slate-800"}`}>{label}</button>)}</div>
+    <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"><input type="checkbox" checked={inflationEnabled} onChange={e=>setInflationEnabled(e.target.checked)}/>учитывать инфляцию</label>
+    <div className="grid grid-cols-2 gap-2"><button onClick={()=>setExitMode("maturity")} className={`rounded-lg px-2 py-2 text-xs ${exitMode === "maturity" ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>До погашения</button><button onClick={()=>setExitMode("date")} className={`rounded-lg px-2 py-2 text-xs ${exitMode === "date" ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>Продать раньше</button></div>
+    {exitMode === "date" ? <label className="text-xs text-slate-500">Дата продажи<input type="date" value={exitDate} onChange={e=>setExitDate(e.target.value)} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-transparent px-3 dark:border-slate-700"/></label> : null}
+    <p className="text-xs text-slate-400">{loading ? "Обновляем расчёт…" : "Пересчёт выполняется без кнопки Calculate"}</p>
+    {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+    {result ? <div className="space-y-4 border-t border-slate-100 pt-3 dark:border-slate-800"><div className="grid grid-cols-2 gap-3"><Stat label="Количество" value={`${result.quantity} шт.`} hint={`dirty ${formatMoney(result.unit_dirty_price,currency,2)}`}/><Stat label="Стоимость покупки" value={formatMoney(result.total_purchase_cost,currency)} hint={`комиссия ${formatMoney(result.commission,currency,2)}`}/><Stat label="Остаток" value={formatMoney(result.cash_remaining,currency)}/><Stat label="Купоны" value={formatMoney(result.coupon_income,currency)}/><Stat label="Возврат номинала" value={formatMoney(result.principal_repayment,currency)}/><Stat label="Всего получено" value={formatMoney(result.total_cash_received,currency)}/><Stat label="Прибыль" value={formatMoney(result.total_profit,currency)} tone={(result.total_profit ?? 0) >= 0 ? "positive" : "negative"}/><Stat label="Годовая доходность" value={formatPercent(result.annualized_return_percent)} hint={formatYears(result.holding_period_years)}/><Stat label="Реальная прибыль" value={formatMoney(result.real_profit,currency)} tone={(result.real_profit ?? 0) >= 0 ? "positive" : "negative"}/><Stat label="После инфляции" value={formatPercent(result.real_annualized_return_percent)} hint={result.inflation_source ?? undefined}/></div>{result.liquidity_warning ? <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">{result.liquidity_warning}</p> : null}{result.warnings.map(warning=><p key={warning} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">{warning}</p>)}</div> : null}
+  </CardBody></Card>;
 }

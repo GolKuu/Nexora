@@ -68,5 +68,13 @@ class UserSettings(Base, TimestampMixin):
     remember_calculator_amount: Mapped[bool] = mapped_column(Boolean, default=True)
     calculator_amount: Mapped[float | None] = mapped_column(Float, default=None)
     language: Mapped[str] = mapped_column(String(8), default="ru")
+    conservative_missing_data_mode: Mapped[bool] = mapped_column(Boolean, default=True)
+    news_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    kase_news_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    external_news_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    chart_news_markers_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    forecast_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    uncertainty_intervals_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_chart_range: Mapped[str] = mapped_column(String(8), default="1y")
 
     user: Mapped["User | None"] = relationship(back_populates="settings")

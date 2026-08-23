@@ -286,6 +286,16 @@ def test_compare_pro_mode_adds_technical_rows(api):
     assert any(r["key"] == "modified_duration" for r in pro["rows"])
 
 
+def test_compare_same_amount_adds_investment_outcomes(api):
+    body = api.post(
+        "/compare",
+        json={"identifiers": [TICKER, "MOM072_2510"], "mode": "simple", "amount": 1_000_000},
+    ).json()
+    assert body["amount"] == 1_000_000
+    assert any(row["key"] == "total_profit" for row in body["rows"])
+    assert all("quantity" in column["values"] for column in body["columns"])
+
+
 def test_compare_limits_the_number_of_issues(api):
     response = api.post("/compare", json={"identifiers": ["a"] * 6})
     assert response.status_code == 422
@@ -303,6 +313,10 @@ def test_settings_defaults_are_simple_mode_with_inflation_on(api):
     assert body["inflation_enabled"] is True
     assert body["show_real_return"] is True
     assert body["base_currency"] == "KZT"
+    assert body["news_enabled"] is True
+    assert body["forecast_enabled"] is True
+    assert body["uncertainty_intervals_enabled"] is True
+    assert body["default_chart_range"] == "1y"
     assert body["persisted"] is False
 
 
@@ -310,10 +324,20 @@ def test_settings_persist_for_an_anonymous_token(api):
     token = uuid.uuid4().hex
     headers = {"X-Anon-Token": token}
     updated = api.put(
-        "/settings", json={"ui_mode": "pro", "risk_profile": "aggressive"}, headers=headers
+        "/settings",
+        json={
+            "ui_mode": "pro",
+            "risk_profile": "aggressive",
+            "forecast_enabled": False,
+            "default_chart_range": "5y",
+        },
+        headers=headers,
     ).json()
     assert updated["ui_mode"] == "pro"
-    assert api.get("/settings", headers=headers).json()["ui_mode"] == "pro"
+    persisted = api.get("/settings", headers=headers).json()
+    assert persisted["ui_mode"] == "pro"
+    assert persisted["forecast_enabled"] is False
+    assert persisted["default_chart_range"] == "5y"
     # A different visitor is unaffected.
     assert api.get("/settings").json()["ui_mode"] == "simple"
 
@@ -343,6 +367,23 @@ def test_effective_inflation_reports_its_source(api):
     assert body["enabled"] is True
     assert body["rate"] is not None
     assert body["kind"] in ("official", "forecast", "manual")
+
+
+def test_bond_investment_calculation_accepts_quantity(api):
+    response = api.post(
+        f"/bonds/{TICKER}/investment-calculation",
+        json={
+            "mode": "quantity",
+            "quantity": 10,
+            "commission": {"type": "fixed", "value": 500},
+            "inflation_enabled": False,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["input_mode"] == "quantity"
+    assert body["requested_quantity"] == 10
+    assert body["quantity"] == 10
 
 
 # -- watchlist and portfolio -------------------------------------------------

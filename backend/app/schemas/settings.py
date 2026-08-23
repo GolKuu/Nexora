@@ -16,6 +16,14 @@ class SettingsResponse(BaseModel):
     remember_calculator_amount: bool = True
     calculator_amount: float | None = None
     language: str = "ru"
+    conservative_missing_data_mode: bool = True
+    news_enabled: bool = True
+    kase_news_enabled: bool = True
+    external_news_enabled: bool = True
+    chart_news_markers_enabled: bool = True
+    forecast_enabled: bool = True
+    uncertainty_intervals_enabled: bool = True
+    default_chart_range: str = "1y"
 
 
 class SettingsUpdate(BaseModel):
@@ -30,6 +38,14 @@ class SettingsUpdate(BaseModel):
     remember_calculator_amount: bool | None = None
     calculator_amount: float | None = Field(default=None, ge=0)
     language: str | None = None
+    conservative_missing_data_mode: bool | None = None
+    news_enabled: bool | None = None
+    kase_news_enabled: bool | None = None
+    external_news_enabled: bool | None = None
+    chart_news_markers_enabled: bool | None = None
+    forecast_enabled: bool | None = None
+    uncertainty_intervals_enabled: bool | None = None
+    default_chart_range: str | None = None
 
     def changes(self) -> dict:
         return {k: v for k, v in self.model_dump().items() if v is not None}

@@ -125,9 +125,9 @@ class NewsQueryService:
 def marker_type(event_type: str) -> str:
     if event_type=="earnings": return "E"
     if event_type=="dividend": return "D"
-    if event_type=="product_launch": return "P"
-    if event_type in {"interest_rate","inflation","currency","geopolitics"}: return "M"
-    if event_type in {"rating_change","regulation","government_decision"}: return "R"
+    if event_type=="score_change": return "S"
+    if event_type in {"rating_change","regulation","government_decision","interest_rate","inflation","currency","geopolitics"}: return "R"
+    if event_type in {"revenue","profit","guidance","product_launch","new_contract","M&A","acquisition","sale","management_change","debt","default","lawsuit","capital_raise","share_issue","buyback","accident","production_change","commodity_change"}: return "C"
     return "N"
 
 

@@ -91,7 +91,20 @@ async def refresh_stocks(session: Session = Depends(get_session)) -> dict:
 
 @router.post("/{identifier}/investment-calculation")
 def investment_calculation(identifier: str, payload: StockInvestmentRequest, session: Session = Depends(get_session)) -> dict:
-    return StockService(session).calculate(identifier, payload)
+    service = StockService(session)
+    requested_quantity = payload.quantity if payload.mode == "quantity" else None
+    if requested_quantity is not None:
+        probe = service.calculate(identifier, payload.model_copy(update={"mode": "amount", "amount": 1e13}))
+        unit_price = probe.get("unit_price")
+        if unit_price is None:
+            return {**probe, "input_mode": "quantity", "requested_quantity": requested_quantity}
+        principal = requested_quantity * unit_price
+        commission = payload.commission.value if payload.commission.type == "fixed" else principal * payload.commission.value / 100.0
+        amount = principal + commission
+    else:
+        amount = float(payload.amount or 0)
+    result = service.calculate(identifier, payload.model_copy(update={"mode": "amount", "amount": amount}))
+    return {**result, "input_mode": payload.mode, "requested_quantity": requested_quantity}
 
 
 @router.get("/{identifier}")

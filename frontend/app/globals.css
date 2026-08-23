@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --font-sans:
@@ -15,13 +16,21 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light) {
     --surface: #0f1420;
     --surface-muted: #151b29;
     --border: #232c3f;
     --text: #e9edf5;
     --text-muted: #97a1b5;
   }
+}
+
+html.dark {
+  --surface: #0f1420;
+  --surface-muted: #151b29;
+  --border: #232c3f;
+  --text: #e9edf5;
+  --text-muted: #97a1b5;
 }
 
 html {
@@ -57,7 +66,7 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  .viz {
+  html:not(.light) .viz {
     --viz-series-1: #3987e5;
     --viz-series-2: #d95926;
     --viz-grid: #2c2c2a;
@@ -65,4 +74,13 @@ body {
     --viz-ink-muted: #898781;
     --viz-surface: #0f1420;
   }
+}
+
+html.dark .viz {
+  --viz-series-1: #3987e5;
+  --viz-series-2: #d95926;
+  --viz-grid: #2c2c2a;
+  --viz-axis: #383835;
+  --viz-ink-muted: #898781;
+  --viz-surface: #0f1420;
 }

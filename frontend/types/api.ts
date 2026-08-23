@@ -254,6 +254,7 @@ export interface CalculatorResult {
 
 export interface CompareResponse {
   mode: UiMode;
+  amount?: number | null;
   rows: { key: string; label: string; unit: string }[];
   columns: {
     id: number;
@@ -281,6 +282,14 @@ export interface UserSettings {
   remember_calculator_amount: boolean;
   calculator_amount: number | null;
   language: string;
+  conservative_missing_data_mode: boolean;
+  news_enabled: boolean;
+  kase_news_enabled: boolean;
+  external_news_enabled: boolean;
+  chart_news_markers_enabled: boolean;
+  forecast_enabled: boolean;
+  uncertainty_intervals_enabled: boolean;
+  default_chart_range: "1d" | "5d" | "1m" | "3m" | "6m" | "1y" | "2y" | "3y" | "5y" | "max";
 }
 
 export interface PortfolioSummary {
@@ -402,6 +411,24 @@ export interface StockCalculation {
   dividend_income_trailing: number | null; scenario_price: number | null;
   scenario_profit: number | null; total_return_percent: number | null;
   liquidity_warning: string | null; warnings: string[]; data_timestamp: string | null; source: string | null;
+  input_mode?: "amount" | "quantity"; requested_quantity?: number | null;
+}
+export interface BondInvestmentCalculation {
+  bond_identifier: string; currency: string; input_amount: number;
+  input_mode: "amount" | "quantity"; requested_quantity: number | null;
+  quantity: number; unit_clean_price: number | null; unit_dirty_price: number | null;
+  accrued_interest_per_bond: number | null; principal_cost: number;
+  accrued_interest_total: number; commission: number; total_purchase_cost: number;
+  cash_remaining: number; minimum_required_amount: number | null;
+  coupon_income: number; principal_repayment: number; estimated_price_return: number | null;
+  total_profit: number | null; total_cash_received: number | null;
+  total_return_percent: number | null; annualized_return_percent: number | null;
+  real_profit: number | null; real_return_percent: number | null;
+  real_annualized_return_percent: number | null; inflation_rate_percent: number | null;
+  inflation_source: string | null; holding_period_years: number | null;
+  price_basis: string | null; scenario: string; exit_mode: string; exit_date: string | null;
+  cashflows: Array<{ date: string; type: string; coupon_amount: number | null; principal_amount: number | null; total_amount: number | null; is_estimated: boolean }>;
+  liquidity_warning: string | null; warnings: string[];
 }
 export interface EventReaction {
   price_before: number | null; return_5m: number | null; return_30m: number | null; return_1h: number | null;
@@ -418,7 +445,7 @@ export interface HistoricalAnalogs {
 export interface MarketEventItem {
   id: number; news_id: number; title: string; source: string; source_url: string; event_type: string;
   event_timestamp: string; importance: number; sentiment: number | null; surprise: number | null;
-  source_confidence: number; analysis_confidence: number; impact_score: number | null; marker: "N"|"E"|"D"|"P"|"M"|"R";
+  source_confidence: number; analysis_confidence: number; impact_score: number | null; marker: "N"|"E"|"D"|"R"|"C"|"S";
   reaction: EventReaction | null; historical_analogs: HistoricalAnalogs; explanation: string;
 }
 export interface StockEventsResponse { ticker: string; items: MarketEventItem[]; total: number }

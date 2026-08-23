@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { useStockForecast, useStockForecastPerformance } from "@/hooks/useStocks";
+import { useSettings } from "@/hooks/useSettings";
 import { formatDate, formatMoney, formatRate } from "@/utils/format";
 
 const HORIZONS = [{key: "1d", label: "1Д"}, {key: "5d", label: "5Д"}, {key: "20d", label: "1М"}, {key: "60d", label: "3М"}];
@@ -24,6 +25,7 @@ function dayLabel(value: string) { return new Intl.DateTimeFormat("ru-RU", {day:
 
 export function ForecastPanel({ticker, currency}: {ticker: string; currency: string}) {
   const [horizon, setHorizon] = useState("20d");
+  const { settings } = useSettings();
   const {data, isLoading, error} = useStockForecast(ticker, horizon);
   const {data: performance} = useStockForecastPerformance(ticker);
   const selected = data?.horizons?.[horizon];
@@ -41,6 +43,8 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
     return [...history.slice(0, -1), current, ...future];
   }, [data]);
 
+  if (settings?.forecast_enabled === false) return <Card><CardHeader title="Прогноз отключён" subtitle="Включить вероятностный прогноз можно в настройках." /></Card>;
+
   if (isLoading) return <Card><CardBody><div className="h-[430px] animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" /></CardBody></Card>;
   if (error || !data) return <Card><CardBody><p className="text-sm text-rose-600">Не удалось загрузить прогнозный контур.</p></CardBody></Card>;
 
@@ -54,7 +58,7 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
       <div className="grid gap-px border-b border-slate-100 bg-slate-100 sm:grid-cols-4 dark:border-slate-800 dark:bg-slate-800">
         <ForecastStat label="Центральный сценарий" value={pct(selected?.median_return)} accent={selected?.median_return != null && selected.median_return >= 0} />
         <ForecastStat label="Вероятность роста" value={pct(selected?.probability_up)} />
-        <ForecastStat label="80% диапазон" value={selected?.q10 == null ? "—" : `${pct(selected.q10)} … ${pct(selected.q90)}`} />
+        <ForecastStat label="80% диапазон" value={settings?.uncertainty_intervals_enabled === false ? "скрыт" : selected?.q10 == null ? "—" : `${pct(selected.q10)} … ${pct(selected.q90)}`} />
         <ForecastStat label="Уверенность модели" value={pct(selected?.confidence)} />
       </div>
 
@@ -64,7 +68,7 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
 
       <div className="px-2 pt-5 sm:px-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-3 text-xs text-slate-500">
-          <div className="flex items-center gap-4"><Legend color="#16a34a" label="История" /><Legend color="#2563eb" label="Медиана модели" dashed /><Legend color="#93c5fd" label="50% диапазон" /><Legend color="#dbeafe" label="80% диапазон" /></div>
+          <div className="flex items-center gap-4"><Legend color="#16a34a" label="История" /><Legend color="#2563eb" label="Медиана модели" dashed />{settings?.uncertainty_intervals_enabled !== false ? <><Legend color="#93c5fd" label="50% диапазон" /><Legend color="#dbeafe" label="80% диапазон" /></> : null}</div>
           <span>NOW · {formatDate(data.as_of)}</span>
         </div>
         <div className="h-[330px] w-full"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chart} margin={{top: 8, right: 12, bottom: 2, left: 2}}>
@@ -73,10 +77,7 @@ export function ForecastPanel({ticker, currency}: {ticker: string; currency: str
           <XAxis dataKey="date" tickFormatter={dayLabel} minTickGap={46} tick={{fontSize: 11, fill: "#64748b"}} axisLine={false} tickLine={false} />
           <YAxis domain={["auto", "auto"]} orientation="right" tick={{fontSize: 11, fill: "#64748b"}} tickFormatter={(value) => Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 2})} axisLine={false} tickLine={false} width={58} />
           <Tooltip content={<ForecastTooltip currency={currency} />} />
-          <Area type="monotone" dataKey="base80" stackId="outer" stroke="none" fill="transparent" connectNulls={false} isAnimationActive={false} />
-          <Area type="monotone" dataKey="band80" stackId="outer" stroke="none" fill="url(#forecast80)" connectNulls={false} isAnimationActive={false} />
-          <Area type="monotone" dataKey="base50" stackId="inner" stroke="none" fill="transparent" connectNulls={false} isAnimationActive={false} />
-          <Area type="monotone" dataKey="band50" stackId="inner" stroke="none" fill="url(#forecast50)" connectNulls={false} isAnimationActive={false} />
+          {settings?.uncertainty_intervals_enabled !== false ? <><Area type="monotone" dataKey="base80" stackId="outer" stroke="none" fill="transparent" connectNulls={false} isAnimationActive={false} /><Area type="monotone" dataKey="band80" stackId="outer" stroke="none" fill="url(#forecast80)" connectNulls={false} isAnimationActive={false} /><Area type="monotone" dataKey="base50" stackId="inner" stroke="none" fill="transparent" connectNulls={false} isAnimationActive={false} /><Area type="monotone" dataKey="band50" stackId="inner" stroke="none" fill="url(#forecast50)" connectNulls={false} isAnimationActive={false} /></> : null}
           <Line type="monotone" dataKey="history" stroke="#16a34a" strokeWidth={2.4} dot={false} activeDot={{r: 4}} connectNulls={false} isAnimationActive={false} />
           <Line type="monotone" dataKey="forecast" stroke="#2563eb" strokeWidth={2.4} strokeDasharray="7 6" dot={false} activeDot={{r: 4}} connectNulls={false} isAnimationActive={false} />
           {data.as_of ? <ReferenceLine x={data.as_of} stroke="#64748b" strokeDasharray="4 5" label={{value: "NOW", position: "insideTopRight", fill: "#64748b", fontSize: 10}} /> : null}

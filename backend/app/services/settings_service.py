@@ -26,6 +26,14 @@ DEFAULTS = {
     "remember_calculator_amount": True,
     "calculator_amount": None,
     "language": "ru",
+    "conservative_missing_data_mode": True,
+    "news_enabled": True,
+    "kase_news_enabled": True,
+    "external_news_enabled": True,
+    "chart_news_markers_enabled": True,
+    "forecast_enabled": True,
+    "uncertainty_intervals_enabled": True,
+    "default_chart_range": "1y",
 }
 
 _ALLOWED = {
@@ -34,6 +42,7 @@ _ALLOWED = {
     "risk_profile": {e.value for e in RiskProfile},
     "theme": {"light", "dark", "system"},
     "language": {"ru", "kk", "en"},
+    "default_chart_range": {"1d", "5d", "1m", "3m", "6m", "1y", "2y", "3y", "5y", "max"},
 }
 
 
@@ -86,6 +95,14 @@ class SettingsService:
             "remember_calculator_amount": row.remember_calculator_amount,
             "calculator_amount": row.calculator_amount,
             "language": row.language,
+            "conservative_missing_data_mode": row.conservative_missing_data_mode,
+            "news_enabled": row.news_enabled,
+            "kase_news_enabled": row.kase_news_enabled,
+            "external_news_enabled": row.external_news_enabled,
+            "chart_news_markers_enabled": row.chart_news_markers_enabled,
+            "forecast_enabled": row.forecast_enabled,
+            "uncertainty_intervals_enabled": row.uncertainty_intervals_enabled,
+            "default_chart_range": row.default_chart_range,
         }
 
     def effective_inflation(self, settings_dict: dict, horizon_years: float | None = None) -> dict:

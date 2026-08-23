@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import useSWR from "swr";
 
 import { Badge } from "@/components/ui/Badge";
@@ -10,14 +11,15 @@ import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { bondsService } from "@/services/bonds";
 import { useUiStore } from "@/stores/uiStore";
 import { cn } from "@/utils/cn";
-import { formatNumber } from "@/utils/format";
+import { formatMoney, formatNumber } from "@/utils/format";
 import type { CompareResponse } from "@/types/api";
 
-function renderValue(key: string, value: number | null, unit: string): string {
+function renderValue(key: string, value: number | null, unit: string, currency: string): string {
   if (value === null || value === undefined) return "—";
   if (unit === "%") return `${formatNumber(value, 2)}%`;
   if (unit === "доля") return `${formatNumber(value * 100, 2)}%`;
   if (unit === "0-100") return String(Math.round(value));
+  if (unit === "money") return formatMoney(value, currency, 2);
   if (unit === "лет") return formatNumber(value, 2);
   return formatNumber(value, 3);
 }
@@ -27,10 +29,11 @@ export function CompareTable() {
   const clearCompare = useUiStore((s) => s.clearCompare);
   const toggleCompare = useUiStore((s) => s.toggleCompare);
   const uiMode = useUiStore((s) => s.uiMode);
+  const [amount, setAmount] = useState("1000000");
 
   const { data, isLoading, error } = useSWR<CompareResponse>(
-    compareList.length ? ["compare", compareList.join(","), uiMode] : null,
-    () => bondsService.compare(compareList, uiMode),
+    compareList.length ? ["compare", compareList.join(","), uiMode, amount] : null,
+    () => bondsService.compare(compareList, uiMode, Number(amount) || undefined),
     { revalidateOnFocus: false },
   );
 
@@ -66,6 +69,7 @@ export function CompareTable() {
         }
       />
       <CardBody className="overflow-x-auto">
+        <label className="mb-4 block max-w-xs text-xs text-slate-500">Одинаковая сумма на каждый выпуск<input value={amount} onChange={(event) => setAmount(event.target.value.replace(/\D/g, ""))} inputMode="numeric" className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-sm dark:border-slate-700" /></label>
         {isLoading ? (
           <Skeleton className="h-64 w-full" />
         ) : error || !data ? (
@@ -130,7 +134,7 @@ export function CompareTable() {
                               "font-semibold text-emerald-700 dark:text-emerald-400",
                           )}
                         >
-                          {renderValue(row.key, column.values[row.key] ?? null, row.unit)}
+                          {renderValue(row.key, column.values[row.key] ?? null, row.unit, column.currency)}
                         </td>
                       );
                     })}

@@ -50,7 +50,10 @@ BASIS = "own_public_snapshots"
 #: Sources whose rows come from the operator's licensed KASE archive purchase.
 LICENSED_SOURCES = {LICENSED_SOURCE}
 
-MAX_DAYS = 1825
+# The normalized history is append-only, so MAX must not silently become a
+# rolling five-year window. One hundred years is an operational ceiling rather
+# than a retention policy and comfortably covers the complete KASE record.
+MAX_DAYS = 36500
 
 
 def _is_trading_day(day: date) -> bool:

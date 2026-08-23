@@ -13,7 +13,7 @@
  *  view so no value is reachable only by hovering.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -33,21 +33,28 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { useSeries } from "@/hooks/useHistory";
 import { useInstrumentStream } from "@/hooks/useInstrumentStream";
+import { useSettings } from "@/hooks/useSettings";
 import type { StreamState } from "@/hooks/useInstrumentStream";
 import type { InstrumentKind, SeriesResponse, SeriesSession } from "@/types/api";
 import { formatCompact, formatMoney, formatNumber, formatPercent, formatRate } from "@/utils/format";
 
 const RANGES: Array<{ label: string; days: number }> = [
+  { label: "1Д", days: 1 },
+  { label: "5Д", days: 5 },
   { label: "1М", days: 30 },
   { label: "3М", days: 90 },
   { label: "6М", days: 180 },
   { label: "1 год", days: 365 },
   { label: "2 года", days: 730 },
   { label: "3 года", days: 1095 },
-  // The public daily series reaches five years back (series_service.MAX_DAYS),
-  // so this button is the whole stored record rather than a fixed window.
-  { label: "Всё", days: 1825 },
+  { label: "5 лет", days: 1825 },
+  { label: "MAX", days: 36500 },
 ];
+
+const RANGE_DAYS: Record<string, number> = {
+  "1d": 1, "5d": 5, "1m": 30, "3m": 90, "6m": 180,
+  "1y": 365, "2y": 730, "3y": 1095, "5y": 1825, max: 36500,
+};
 
 const AXIS = { fontSize: 11, fill: "var(--viz-ink-muted)" };
 const GRID = { stroke: "var(--viz-grid)", strokeWidth: 1 };
@@ -93,15 +100,23 @@ export function SeriesPanel({
 }) {
   const [days, setDays] = useState(365);
   const [view, setView] = useState<"chart" | "table">("chart");
+  const { settings } = useSettings();
+  const rangeInitialized = useRef(false);
+  useEffect(() => {
+    if (!settings || rangeInitialized.current) return;
+    setDays(RANGE_DAYS[settings.default_chart_range] ?? 365);
+    rangeInitialized.current = true;
+  }, [settings]);
   const { data, isLoading, isValidating, error } = useSeries(kind, identifier, days);
   // New validated observations reach the open page without a reload. The
   // hook revalidates this panel's own query, so the chart can never show a
   // number the API would not serve.
   const stream = useInstrumentStream(kind, identifier);
 
+  const visibleMarkers = settings?.chart_news_markers_enabled === false ? [] : (data?.markers ?? []);
   const markerByDate = useMemo(
-    () => new Map((data?.markers ?? []).map((marker) => [marker.date, marker])),
-    [data?.markers],
+    () => new Map(visibleMarkers.map((marker) => [marker.date, marker])),
+    [visibleMarkers],
   );
 
   if (isLoading && !data) {
@@ -246,7 +261,7 @@ export function SeriesPanel({
                         cursor={CURSOR}
                         content={<SessionTooltip series={data} markers={markerByDate} />}
                       />
-                      {data.markers.map((marker) => (
+                      {visibleMarkers.map((marker) => (
                         <ReferenceLine
                           key={marker.date}
                           x={marker.date}
@@ -296,10 +311,10 @@ export function SeriesPanel({
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                {data.markers.length ? (
+                {visibleMarkers.length ? (
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                     ◆ — сессия, в которой зафиксировано реальное изменение данных
-                    ({data.markers.length} шт.). Подробности — в истории изменений ниже.
+                    ({visibleMarkers.length} шт.). Подробности — в истории изменений ниже.
                   </p>
                 ) : null}
               </CardBody>

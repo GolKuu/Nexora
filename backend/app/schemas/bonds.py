@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import Freshness
 
@@ -118,7 +118,8 @@ class InvestmentCalculationRequest(BaseModel):
     """Request body of ``POST /bonds/{identifier}/investment-calculation`` (§16)."""
 
     mode: str = Field(default="amount", pattern="^(amount|quantity)$")
-    amount: float = Field(gt=0, le=1e13, description="Сумма вложения")
+    amount: float | None = Field(default=None, gt=0, le=1e13, description="Сумма вложения")
+    quantity: float | None = Field(default=None, gt=0, le=1e9, description="Количество облигаций")
     currency: str = "KZT"
     commission: CommissionSpec = Field(default_factory=CommissionSpec)
     inflation_enabled: bool = True
@@ -126,6 +127,14 @@ class InvestmentCalculationRequest(BaseModel):
     exit_mode: str = Field(default="maturity", pattern="^(maturity|date)$")
     exit_date: str | None = None
     scenario: str = Field(default="base", pattern="^(bad|base|good)$")
+
+    @model_validator(mode="after")
+    def _input_mode(self):
+        if self.mode == "amount" and self.amount is None:
+            raise ValueError("amount is required in amount mode")
+        if self.mode == "quantity" and self.quantity is None:
+            raise ValueError("quantity is required in quantity mode")
+        return self
 
     @field_validator("exit_date")
     @classmethod
@@ -157,6 +166,8 @@ class InvestmentCalculationResponse(BaseModel):
     bond_identifier: str
     currency: str = "KZT"
     input_amount: float
+    input_mode: str = "amount"
+    requested_quantity: float | None = None
     quantity: float = 0
 
     unit_clean_price: float | None = None
@@ -258,4 +269,3 @@ class RecommendResponse(BaseModel):
     candidates_considered: int = 0
     ranking_version: str | None = None
     warning: str | None = None
-

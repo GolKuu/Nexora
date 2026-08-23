@@ -9,7 +9,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { settingsService } from "@/services/user";
 import { useUiStore } from "@/stores/uiStore";
 import { formatPercent } from "@/utils/format";
-import type { InflationSource, RiskProfile, UiMode } from "@/types/api";
+import type { InflationSource, RiskProfile, UiMode, UserSettings } from "@/types/api";
 
 export function SettingsForm() {
   const { settings, isLoading, update } = useSettings();
@@ -132,11 +132,91 @@ export function SettingsForm() {
             </Select>
           </Field>
 
+          <Field label="Базовая валюта">
+            <Select
+              value={settings.base_currency}
+              onChange={(e) => void update({ base_currency: e.target.value })}
+            >
+              <option value="KZT">KZT · тенге</option>
+              <option value="USD">USD · доллар</option>
+              <option value="EUR">EUR · евро</option>
+              <option value="RUB">RUB · рубль</option>
+            </Select>
+          </Field>
+
+          <Field label="Язык">
+            <Select
+              value={settings.language}
+              onChange={(e) => void update({ language: e.target.value })}
+            >
+              <option value="ru">Русский</option>
+              <option value="kk">Қазақша</option>
+              <option value="en">English</option>
+            </Select>
+          </Field>
+
           <Switch
             label="Запоминать сумму в калькуляторе"
             checked={settings.remember_calculator_amount}
             onChange={(value) => void update({ remember_calculator_amount: value })}
           />
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Данные и анализ"
+          subtitle="Настройки меняют представление и рекомендации, но не переписывают объективные финансовые показатели."
+        />
+        <CardBody className="space-y-2">
+          <Switch
+            label="Консервативный режим при неполных данных"
+            description="Не делать оптимистичных выводов, если источников или истории недостаточно"
+            checked={settings.conservative_missing_data_mode}
+            onChange={(value) => void update({ conservative_missing_data_mode: value })}
+          />
+          <Switch
+            label="Новости"
+            checked={settings.news_enabled}
+            onChange={(value) => void update({ news_enabled: value })}
+          />
+          <Switch
+            label="Новости KASE"
+            checked={settings.kase_news_enabled}
+            onChange={(value) => void update({ kase_news_enabled: value })}
+          />
+          <Switch
+            label="Внешние новости"
+            checked={settings.external_news_enabled}
+            onChange={(value) => void update({ external_news_enabled: value })}
+          />
+          <Switch
+            label="Маркеры событий на графике"
+            checked={settings.chart_news_markers_enabled}
+            onChange={(value) => void update({ chart_news_markers_enabled: value })}
+          />
+          <Switch
+            label="Прогноз модели"
+            checked={settings.forecast_enabled}
+            onChange={(value) => void update({ forecast_enabled: value })}
+          />
+          <Switch
+            label="Интервалы неопределённости"
+            checked={settings.uncertainty_intervals_enabled}
+            onChange={(value) => void update({ uncertainty_intervals_enabled: value })}
+          />
+          <Field label="Диапазон графика по умолчанию">
+            <Select
+              value={settings.default_chart_range}
+              onChange={(e) => void update({ default_chart_range: e.target.value as UserSettings["default_chart_range"] })}
+            >
+              <option value="1d">1 день</option><option value="5d">5 дней</option>
+              <option value="1m">1 месяц</option><option value="3m">3 месяца</option>
+              <option value="6m">6 месяцев</option><option value="1y">1 год</option>
+              <option value="2y">2 года</option><option value="3y">3 года</option>
+              <option value="5y">5 лет</option><option value="max">Вся история</option>
+            </Select>
+          </Field>
         </CardBody>
       </Card>
 
