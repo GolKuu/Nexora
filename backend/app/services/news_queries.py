@@ -9,6 +9,7 @@ from app.models.news import EventCluster, EventMarketReaction, MarketEvent, News
 from app.services.historical_events import HistoricalEventMatcher
 from app.services.stock_service import StockService
 from app.core.errors import NotFoundError
+from app.models.instrument import Instrument
 from app.models.stock import CorporateAction, Stock
 
 
@@ -52,6 +53,45 @@ class NewsQueryService:
         payload=self.events(identifier,limit)
         payload["items"]=[{"id": x["news_id"], "event_id": x["id"], "title":x["title"], "source":x["source"], "source_url":x["source_url"], "published_at":x["event_timestamp"], "event_type":x["event_type"], "importance":x["importance"]} for x in payload["items"]]
         return payload
+
+    def feed(self, *, limit: int = 50, event_type: str | None = None,
+             source: str | None = None, min_importance: float = 0.0) -> dict:
+        """Latest classified news from the stored, deduplicated event stream."""
+        query = (select(MarketEvent, NewsArticle, EventMarketReaction,
+                        NewsImpactScore, Instrument)
+                 .join(NewsArticle, NewsArticle.id == MarketEvent.news_id)
+                 .outerjoin(EventMarketReaction,
+                            EventMarketReaction.event_id == MarketEvent.id)
+                 .outerjoin(NewsImpactScore,
+                            NewsImpactScore.event_id == MarketEvent.id)
+                 .outerjoin(Instrument, Instrument.id == MarketEvent.instrument_id)
+                 .where(MarketEvent.importance >= min_importance)
+                 .order_by(MarketEvent.event_timestamp.desc(), MarketEvent.id.desc())
+                 .limit(limit))
+        if event_type:
+            query = query.where(MarketEvent.event_type == event_type)
+        if source:
+            query = query.where(func.lower(NewsArticle.source) == source.lower())
+        items = []
+        for event, article, reaction, impact, instrument in self.session.execute(query):
+            items.append({
+                "id": event.id, "news_id": article.id, "title": article.title,
+                "summary": article.summary, "source": article.source,
+                "source_url": article.source_url, "published_at": article.published_at,
+                "event_type": event.event_type, "importance": event.importance,
+                "sentiment": event.sentiment,
+                "source_confidence": event.source_confidence,
+                "analysis_confidence": event.analysis_confidence,
+                "impact_score": impact.value if impact else None,
+                "reaction": _reaction(reaction), "marker": marker_type(event.event_type),
+                "ticker": instrument.ticker if instrument else None,
+                "instrument_type": instrument.instrument_type if instrument else None,
+                "explanation": factual_explanation(event, reaction),
+            })
+        return {"items": items, "total": len(items), "filters": {
+            "event_type": event_type, "source": source,
+            "min_importance": min_importance,
+        }}
 
     def event(self, event_id: int) -> dict:
         row=self.session.execute(select(MarketEvent,NewsArticle,EventMarketReaction,NewsImpactScore).join(NewsArticle,NewsArticle.id==MarketEvent.news_id).outerjoin(EventMarketReaction,EventMarketReaction.event_id==MarketEvent.id).outerjoin(NewsImpactScore,NewsImpactScore.event_id==MarketEvent.id).where(MarketEvent.id==event_id)).one_or_none()

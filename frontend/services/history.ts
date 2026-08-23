@@ -4,6 +4,7 @@ import type {
   ChangeSummary,
   InstrumentKind,
   SeriesResponse,
+  ScoreHistoryResponse,
 } from "@/types/api";
 
 const ROOT: Record<InstrumentKind, string> = { stock: "stocks", bond: "bonds" };
@@ -32,4 +33,7 @@ export const historyService = {
     api.get<ChangeSummary>(
       `/${ROOT[kind]}/${encodeURIComponent(identifier)}/change-summary`,
     ),
+
+  scoreHistory: (identifier: string) =>
+    api.get<ScoreHistoryResponse>(`/instruments/${encodeURIComponent(identifier)}/score-history?limit=100`),
 };

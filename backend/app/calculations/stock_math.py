@@ -56,7 +56,7 @@ def market_history_metrics(prices: list[float | None]) -> dict[str, float | None
     """Describe observed price history. These values are not forecasts."""
     values = [float(value) for value in prices if value is not None and value > 0 and math.isfinite(value)]
     if len(values) < 2:
-        return {"price_trend": None, "volatility": None, "max_drawdown": None}
+        return {"price_trend": None, "price_change_1d": None, "volatility": None, "max_drawdown": None}
     returns = [values[index] / values[index - 1] - 1.0 for index in range(1, len(values))]
     peak = values[0]
     max_drawdown = 0.0
@@ -64,7 +64,9 @@ def market_history_metrics(prices: list[float | None]) -> dict[str, float | None
         peak = max(peak, value)
         max_drawdown = max(max_drawdown, (peak - value) / peak)
     volatility = statistics.stdev(returns) * math.sqrt(252.0) if len(returns) >= 2 else None
-    return {"price_trend": values[-1] / values[0] - 1.0, "volatility": volatility, "max_drawdown": max_drawdown}
+    return {"price_trend": values[-1] / values[0] - 1.0,
+            "price_change_1d": returns[-1], "volatility": volatility,
+            "max_drawdown": max_drawdown}
 
 
 @dataclass(slots=True)

@@ -19,8 +19,8 @@ export default function RootLayout({
       <body>
         <Header />
         <DataModeBanner />
-        <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
-        <footer className="mx-auto max-w-6xl px-4 pb-10 pt-4 text-xs text-slate-400">
+        <main className="mx-auto max-w-6xl px-4 py-6 pb-24 sm:pb-6">{children}</main>
+        <footer className="mx-auto max-w-6xl px-4 pb-24 pt-4 text-xs text-slate-400 sm:pb-10">
           KASE Investment AI — аналитический сервис. Не является инвестиционной
           рекомендацией. Все расчеты выполняются детерминированным движком;
           языковая модель используется только для объяснений.

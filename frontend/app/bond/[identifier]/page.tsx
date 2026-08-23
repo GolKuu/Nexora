@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { BondCharts } from "@/features/bonds/BondCardSections";
+import { ChangeHistoryPanel } from "@/features/charts/ChangeHistoryPanel";
+import { ScoreHistoryPanel } from "@/features/charts/ScoreHistoryPanel";
 import { Calculator } from "@/features/bonds/Calculator";
 import { KaseVerify } from "@/features/bonds/KaseVerify";
 import { PeerList } from "@/features/bonds/PeerList";
@@ -100,6 +102,8 @@ export default function BondPage({
           <SimpleSummary simple={simple} />
           <ScoreExplanation ticker={bond.ticker} />
           <BondCharts ticker={bond.ticker} currency={bond.currency} />
+          <ChangeHistoryPanel kind="bond" identifier={bond.ticker} />
+          <ScoreHistoryPanel identifier={bond.ticker} />
           {uiMode === "pro" ? <ProDetails pro={pro} bond={bond} /> : null}
         </div>
 

@@ -16,6 +16,16 @@ def test_health_reports_environment_and_database(api):
     assert body["database"]["bonds"] > 0
 
 
+def test_global_news_feed_is_public_and_filterable(api):
+    response = api.get("/news", params={"limit": 5, "min_importance": 0.25, "event_type": "earnings"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == len(body["items"])
+    assert len(body["items"]) <= 5
+    assert body["filters"]["min_importance"] == 0.25
+    assert body["filters"]["event_type"] == "earnings"
+
+
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1"])
 def test_development_cors_accepts_both_loopback_names(client, host):
     origin = f"http://{host}:3000"

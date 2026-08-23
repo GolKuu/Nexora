@@ -232,7 +232,7 @@ class StockService:
         return {"id": stock.id, "ticker": instrument.ticker, "isin": instrument.isin, "company_name": instrument.issuer.short_name or instrument.issuer.name,
                 "issuer": instrument.issuer.name, "instrument_type": instrument.instrument_type, "type_label": "Привилегированная акция" if instrument.instrument_type == "preferred_stock" else "Акция",
                 "currency": instrument.currency, "price": metrics["price"], "bid": quote.bid if quote else None, "ask": quote.ask if quote else None,
-                "change_percent": None, "market_cap": metrics["market_cap"], "sector": stock.sector or instrument.issuer.sector,
+                "change_percent": metrics.get("price_change_1d"), "market_cap": metrics["market_cap"], "sector": stock.sector or instrument.issuer.sector,
                 "metrics": {k: v for k, v in metrics.items() if k not in {"is_bank"}}, "scores": scores,
                 "data_timestamp": quote.observed_at.isoformat() if quote else None, "data_mode": quote.data_mode if quote else None,
                 "price_origin": quote.origin if quote else None,

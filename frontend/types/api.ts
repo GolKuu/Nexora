@@ -29,6 +29,12 @@ export interface BondListItem {
   real_yield_pct: number | null;
   clean_price: number | null;
   investment_score: number | null;
+  credit_score?: number | null;
+  liquidity_score?: number | null;
+  growth_score?: number | null;
+  hold_score?: number | null;
+  trade_score?: number | null;
+  data_quality_score?: number | null;
   data_mode: DataMode | null;
   note?: string | null;
 }
@@ -372,7 +378,7 @@ export interface StockScoreValue { value: number | null; confidence: number; ver
 export interface StockListItem {
   id: number; ticker: string; isin: string; company_name: string; issuer: string;
   instrument_type: "stock" | "preferred_stock"; type_label: string; currency: string;
-  price: number | null; bid: number | null; ask: number | null; market_cap: number | null;
+  price: number | null; bid: number | null; ask: number | null; change_percent?: number | null; market_cap: number | null;
   sector: string | null; metrics: Record<string, number | null>;
   scores: Record<string, StockScoreValue>; data_timestamp: string | null;
   data_mode: DataMode | null; source: string | null; kase_url: string | null;
@@ -416,6 +422,18 @@ export interface MarketEventItem {
   reaction: EventReaction | null; historical_analogs: HistoricalAnalogs; explanation: string;
 }
 export interface StockEventsResponse { ticker: string; items: MarketEventItem[]; total: number }
+export interface NewsFeedItem {
+  id: number; news_id: number; title: string; summary: string | null;
+  source: string; source_url: string; published_at: string; event_type: string;
+  importance: number; sentiment: number | null; source_confidence: number;
+  analysis_confidence: number; impact_score: number | null; marker: string;
+  ticker: string | null; instrument_type: string | null;
+  reaction: EventReaction | null; explanation: string;
+}
+export interface NewsFeedResponse {
+  items: NewsFeedItem[]; total: number;
+  filters: { event_type: string | null; source: string | null; min_importance: number };
+}
 export interface StockHistoryResponse { ticker: string; quotes: Array<{timestamp:string; last:number|null; close:number|null; volume:number|null}> }
 
 export interface ForecastHorizon {
@@ -712,4 +730,24 @@ export interface ChangeSummary {
     last_changed_at: string | null;
     source_timestamp: string | null;
   };
+}
+
+export interface ScoreHistorySnapshot {
+  id: number; kind: string; model_version: string; as_of: string | null;
+  calculated_at: string; final_score: number; base_score: number;
+  data_quality: number; confidence: number; band: string;
+}
+export interface ScoreHistoryTransition {
+  from_snapshot_id: number; to_snapshot_id: number; from: number; to: number;
+  delta: number | null; direction: "up" | "down" | "unchanged";
+  components_changed: Array<{ code: string; label: string | null; from: number | null; to: number | null; delta: number | null; reason: string | null }>;
+  red_flags_raised: Array<{ code: string; label?: string }>;
+  red_flags_cleared: Array<{ code: string; label?: string }>;
+  caps_applied: Array<{ code: string; label?: string }>;
+  caps_lifted: Array<{ code: string; label?: string }>;
+  model_version_changed: boolean;
+}
+export interface ScoreHistoryResponse {
+  instrument_type: InstrumentKind; ticker: string; isin: string | null; name: string | null;
+  count: number; snapshots: ScoreHistorySnapshot[]; transitions: ScoreHistoryTransition[]; note: string;
 }

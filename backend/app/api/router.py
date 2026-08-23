@@ -10,6 +10,7 @@ from app.api.routes import (
     health,
     instruments,
     meta,
+    news,
     portfolios,
     scoring,
     settings as settings_routes,
@@ -25,6 +26,7 @@ api_router.include_router(admin.router, tags=["admin"])
 api_router.include_router(bonds.router, prefix="/bonds", tags=["bonds"])
 api_router.include_router(stocks.router, prefix="/stocks", tags=["stocks"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
+api_router.include_router(news.router, prefix="/news", tags=["news"])
 api_router.include_router(instruments.router, prefix="/instruments", tags=["instruments"])
 api_router.include_router(browser.router, tags=["browser"])
 api_router.include_router(compare.router, tags=["compare"])

@@ -1,4 +1,5 @@
 import { HomeExplorer } from "@/features/home/HomeExplorer";
+import { HomePulse } from "@/features/home/HomePulse";
 import { SearchBar } from "@/features/search/SearchBar";
 
 export default function HomePage() {
@@ -21,6 +22,7 @@ export default function HomePage() {
       </section>
 
       <HomeExplorer />
+      <HomePulse />
     </div>
   );
 }
