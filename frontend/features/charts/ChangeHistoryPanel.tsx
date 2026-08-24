@@ -136,8 +136,8 @@ export function ChangeHistoryPanel({
   return (
     <Card>
       <CardHeader
-        title="История изменений"
-        subtitle="Только зафиксированные различия в публичных данных KASE, со ссылкой на источник"
+        title="Изменения за последние 2 года"
+        subtitle="Только зафиксированные различия в публичных данных KASE за двухлетний период, со ссылкой на источник"
         action={
           summary ? (
             <div className="text-right text-xs text-slate-500 dark:text-slate-400">

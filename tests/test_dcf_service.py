@@ -46,6 +46,12 @@ def test_end_to_end_persists_audit_and_cache_does_not_consume_quota(session) -> 
     first = DCFService(session).analyze(stock.instrument.ticker, identity)
     assert first["status"] == "completed"
     assert first["scenarios"]["bear"]["fair_value"] <= first["scenarios"]["base"]["fair_value"] <= first["scenarios"]["bull"]["fair_value"]
+    history = first["financial_changes_2y"]
+    assert history["requested_years"] == 2
+    assert history["status"] == "complete" and len(history["periods"]) == 2
+    assert [row["period_end"] for row in history["periods"]] == ["2024-12-31", "2025-12-31"]
+    assert history["changes"]["revenue_change"] == pytest.approx(1 / 9)
+    assert history["changes"]["ebit_margin_change"] == pytest.approx(0)
     assert "not an individual investment recommendation" in first["disclaimer"]
     run = session.get(DCFRun, first["run_id"])
     assert run.dcf_model_version == "corporate-fcff-1.0.0"

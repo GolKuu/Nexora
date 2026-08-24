@@ -784,6 +784,38 @@ export interface DCFScenarioValue {
   difference_percent: number | null;
 }
 
+export interface DCFFinancialPeriod {
+  period_end: string;
+  currency: string;
+  revenue: number | null;
+  operating_profit: number | null;
+  ebitda: number | null;
+  operating_cash_flow: number | null;
+  free_cash_flow: number | null;
+  capex: number | null;
+  net_debt: number | null;
+  ebit_margin: number | null;
+  source: string | null;
+  source_url: string | null;
+}
+
+export interface DCFFinancialChanges2Y {
+  requested_years: 2;
+  periods_available: number;
+  status: "complete" | "insufficient_history";
+  periods: DCFFinancialPeriod[];
+  changes: {
+    revenue_change: number | null;
+    operating_profit_change: number | null;
+    ebitda_change: number | null;
+    operating_cash_flow_change: number | null;
+    free_cash_flow_change: number | null;
+    capex_change: number | null;
+    net_debt_change: number | null;
+    ebit_margin_change: number | null;
+  } | null;
+}
+
 export interface DCFResult {
   run_id: number;
   status: "completed" | "failed" | "running";
@@ -792,6 +824,7 @@ export interface DCFResult {
   current_price_timestamp: string | null;
   currency: string;
   scenarios: { bear?: DCFScenarioValue; base?: DCFScenarioValue; bull?: DCFScenarioValue };
+  financial_changes_2y: DCFFinancialChanges2Y;
   analysis_confidence: "low" | "medium" | "high";
   data_quality_score: number;
   data_as_of: string | null;

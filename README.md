@@ -4,6 +4,8 @@ The product includes an auditable **AI DCF Valuation** flow for eligible operati
 
 Retail DCF endpoint: `POST /api/v1/stocks/{ticker}/dcf`. Reopen with `GET /api/v1/dcf/{run_id}`; cached views do not consume another monthly unit. Usage is available at `GET /api/v1/me/dcf-usage`. Full inputs, assumptions, formulas and validations are only available through the admin-protected audit endpoint.
 
+The stock UI and DCF response include factual changes from exactly the two latest annual reporting periods. The general KASE change feed is constrained to the rolling last two years.
+
 See [DCF methodology](docs/dcf/methodology.md), [governance controls](docs/dcf/ai-governance.md), and [data requirements](docs/dcf/data-requirements.md). Apply schema changes with `npm run migrate`.
 
 For an offline local end-to-end flow, point `DATABASE_URL` at a development database, run `python scripts/seed_dcf_demo.py`, start the app, and open ticker `DCFDEMO`. The script refuses production and labels every value as synthetic mock data.

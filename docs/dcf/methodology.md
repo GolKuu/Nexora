@@ -2,6 +2,8 @@
 
 The retail result is an estimate of fair value, not an investment recommendation. The numerical model is `corporate-fcff-1.0.0`; AI is optional and cannot change its inputs or outputs.
 
+The result also carries an explicitly bounded two-year factual comparison: exactly the two latest available FY statements, their reporting dates and changes in revenue, EBIT, EBITDA, operating/free cash flow, capex, net debt and EBIT margin. Missing report lines remain null. This historical comparison is persisted in the financial input snapshot and is not a forecast.
+
 ## Routing and readiness
 
 The MVP routes ordinary operating companies to the corporate FCFF model. Banks, insurers, brokers and other financial institutions fail safely as unsupported. A run is blocked if the latest FY statement lacks revenue, EBIT, cash, debt, capex or share count, or if market price and governed macro inputs are unavailable. Missing values remain missing and are never converted to zero.

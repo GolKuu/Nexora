@@ -22,7 +22,7 @@ from app.models.macro import InflationData, YieldCurve
 from app.services.price_service import PriceService
 from app.services.stock_service import StockService
 
-ASSUMPTION_VERSION = "historical-policy-1.0.0"
+ASSUMPTION_VERSION = "historical-policy-1.1.0"
 DISCLAIMER_VERSION = "retail-dcf-1.0"
 DEFAULT_DISCLAIMER = (
     "AI-generated valuation based on available financial and market data. "
@@ -54,6 +54,65 @@ def _period_end(today: date | None = None) -> date:
     if today.month == 12:
         return date(today.year + 1, 1, 1)
     return date(today.year, today.month + 1, 1)
+
+
+def _two_year_financial_changes(statements: list[FinancialStatement]) -> dict:
+    """Two latest factual FY periods and their change; never fills a missing line."""
+    selected = list(reversed(statements[:2]))
+
+    def ratio(current: float | None, previous: float | None) -> float | None:
+        if current is None or previous in (None, 0):
+            return None
+        return current / previous - 1
+
+    def net_debt(row: FinancialStatement) -> float | None:
+        if row.total_debt is None or row.cash_and_equivalents is None:
+            return None
+        return row.total_debt - row.cash_and_equivalents
+
+    def margin(row: FinancialStatement) -> float | None:
+        if row.operating_profit is None or row.revenue in (None, 0):
+            return None
+        return row.operating_profit / row.revenue
+
+    periods = [{
+        "period_end": row.period_end,
+        "currency": row.currency,
+        "revenue": row.revenue,
+        "operating_profit": row.operating_profit,
+        "ebitda": row.ebitda,
+        "operating_cash_flow": row.operating_cash_flow,
+        "free_cash_flow": row.free_cash_flow,
+        "capex": row.capex,
+        "net_debt": net_debt(row),
+        "ebit_margin": margin(row),
+        "source": row.source,
+        "source_url": row.source_url,
+    } for row in selected]
+    changes: dict[str, float | None] | None = None
+    if len(selected) == 2:
+        previous, current = selected
+        previous_margin, current_margin = margin(previous), margin(current)
+        changes = {
+            "revenue_change": ratio(current.revenue, previous.revenue),
+            "operating_profit_change": ratio(current.operating_profit, previous.operating_profit),
+            "ebitda_change": ratio(current.ebitda, previous.ebitda),
+            "operating_cash_flow_change": ratio(current.operating_cash_flow, previous.operating_cash_flow),
+            "free_cash_flow_change": ratio(current.free_cash_flow, previous.free_cash_flow),
+            "capex_change": ratio(current.capex, previous.capex),
+            "net_debt_change": ratio(net_debt(current), net_debt(previous)),
+            "ebit_margin_change": (
+                current_margin - previous_margin
+                if current_margin is not None and previous_margin is not None else None
+            ),
+        }
+    return {
+        "requested_years": 2,
+        "periods_available": len(periods),
+        "status": "complete" if len(periods) == 2 else "insufficient_history",
+        "periods": periods,
+        "changes": changes,
+    }
 
 
 class DCFAccessService:
@@ -175,7 +234,8 @@ class DCFInputBuilder:
         lineage = {
             "financial": {"statement_id": latest.id, "period_end": latest.period_end, "available_at": available_at,
                 "source": latest.source or "unknown", "source_url": (report.document_url if report else latest.source_url),
-                "document_hash": report.document_hash if report else None, "version": report.version if report else 1},
+                "document_hash": report.document_hash if report else None, "version": report.version if report else 1,
+                "changes_2y": _two_year_financial_changes(statements)},
             "market": {**price.to_dict(), "instrument_id": stock.instrument_id},
             "macro": {"risk_free_rate": risk_free.yield_rate, "risk_free_id": risk_free.id, "as_of": risk_free.as_of_date,
                 "inflation": inflation.annual_rate, "inflation_id": inflation.id, "effective_date": inflation.period_end,
@@ -324,6 +384,11 @@ class DCFService:
             "data_as_of": price_payload.get("observed_at"), "analysis_date": run.completed_at, "warnings": run.warnings or [],
             "stale_due_to_new_financials": run.stale_due_to_new_financials, "cache_hit": cache_hit,
             "disclaimer": self._disclaimer(), "disclaimer_version": run.disclaimer_version}
+        financial_snapshot = next((x.payload for x in run.snapshots if x.kind == "financial"), {})
+        payload["financial_changes_2y"] = financial_snapshot.get("changes_2y", {
+            "requested_years": 2, "periods_available": 0,
+            "status": "insufficient_history", "periods": [], "changes": None,
+        })
         if usage is not None: payload["usage"] = usage
         if compact: return {k: payload[k] for k in ("run_id","status","scenarios","analysis_date","stale_due_to_new_financials")}
         return payload

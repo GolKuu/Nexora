@@ -9,6 +9,12 @@ import type {
 
 const ROOT: Record<InstrumentKind, string> = { stock: "stocks", bond: "bonds" };
 
+function yearsAgoIso(years: number): string {
+  const value = new Date();
+  value.setUTCFullYear(value.getUTCFullYear() - years);
+  return value.toISOString();
+}
+
 /** Charts and the change feed. Both are served from the data the backend
  *  collected itself from public KASE endpoints - no licensed archive. */
 export const historyService = {
@@ -20,18 +26,18 @@ export const historyService = {
   changes: (
     kind: InstrumentKind,
     identifier: string,
-    { section, limit = 200 }: { section?: string; limit?: number } = {},
+    { section, limit = 1000, years = 2 }: { section?: string; limit?: number; years?: number } = {},
   ) => {
-    const query = new URLSearchParams({ limit: String(limit) });
+    const query = new URLSearchParams({ limit: String(limit), since: yearsAgoIso(years) });
     if (section) query.set("section", section);
     return api.get<ChangeRecord[]>(
       `/${ROOT[kind]}/${encodeURIComponent(identifier)}/changes?${query}`,
     );
   },
 
-  changeSummary: (kind: InstrumentKind, identifier: string) =>
+  changeSummary: (kind: InstrumentKind, identifier: string, years = 2) =>
     api.get<ChangeSummary>(
-      `/${ROOT[kind]}/${encodeURIComponent(identifier)}/change-summary`,
+      `/${ROOT[kind]}/${encodeURIComponent(identifier)}/change-summary?since=${encodeURIComponent(yearsAgoIso(years))}`,
     ),
 
   scoreHistory: (identifier: string) =>
