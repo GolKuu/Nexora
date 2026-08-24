@@ -395,6 +395,26 @@ class ScoringEngine:
         hold = self.hold(ctx, now, parts)
         trade = self.trade(ctx, now, parts)
 
+        # Renormalising over available components is correct for non-critical
+        # gaps, but YTM and a positive remaining term are the minimum basis for
+        # an investment score. Without them a few structural components can
+        # otherwise misleadingly produce 100/100 for a matured instrument.
+        has_investment_basis = (
+            ctx.ytm is not None
+            and ctx.years_to_maturity is not None
+            and ctx.years_to_maturity > 0
+        )
+        if not has_investment_basis:
+            investment.value = None
+            investment.confidence = 0.0
+            investment.notes = "Инвестиционная оценка недоступна без YTM и положительного срока до погашения."
+            hold.value = None
+            hold.confidence = 0.0
+            data_quality.value = (
+                None if data_quality.value is None else min(data_quality.value, 40.0)
+            )
+            data_quality.notes = "Нет критических рыночных данных: YTM или срока до погашения."
+
         confidences = [
             s.confidence for s in (credit, liquidity, real_return, data_quality) if s.confidence is not None
         ]

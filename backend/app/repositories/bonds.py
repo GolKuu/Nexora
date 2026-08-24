@@ -52,7 +52,10 @@ class BondRepository:
     ) -> list[Bond]:
         stmt = select(Bond).options(joinedload(Bond.issuer))
         if active_only:
-            stmt = stmt.where(Bond.is_active.is_(True))
+            stmt = stmt.where(
+                Bond.is_active.is_(True),
+                or_(Bond.maturity_date.is_(None), Bond.maturity_date >= date.today()),
+            )
         if bond_type:
             stmt = stmt.where(Bond.bond_type == bond_type)
         if currency:
@@ -68,7 +71,10 @@ class BondRepository:
     def count(self, *, active_only: bool = True) -> int:
         stmt = select(func.count(Bond.id))
         if active_only:
-            stmt = stmt.where(Bond.is_active.is_(True))
+            stmt = stmt.where(
+                Bond.is_active.is_(True),
+                or_(Bond.maturity_date.is_(None), Bond.maturity_date >= date.today()),
+            )
         return int(self.session.execute(stmt).scalar_one())
 
     def search(self, query: str, limit: int = 20) -> list[Bond]:
@@ -160,7 +166,9 @@ class PeerGroupRepository:
 
     def members(self, group_id: int, exclude_bond_id: int | None = None) -> list[Bond]:
         stmt = select(Bond).where(
-            Bond.peer_group_id == group_id, Bond.is_active.is_(True)
+            Bond.peer_group_id == group_id,
+            Bond.is_active.is_(True),
+            or_(Bond.maturity_date.is_(None), Bond.maturity_date >= date.today()),
         )
         if exclude_bond_id:
             stmt = stmt.where(Bond.id != exclude_bond_id)

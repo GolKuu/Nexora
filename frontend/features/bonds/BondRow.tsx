@@ -50,7 +50,9 @@ export function BondRow({
         <div
           className={cn(
             "text-sm font-semibold",
-            (bond.real_yield_pct ?? 0) < 0
+            bond.real_yield_pct == null
+              ? "text-slate-400 dark:text-slate-500"
+              : bond.real_yield_pct < 0
               ? "text-rose-600 dark:text-rose-400"
               : "text-emerald-600 dark:text-emerald-400",
           )}
@@ -72,7 +74,7 @@ export function BondRow({
         )}
         title="Общая оценка"
       >
-        {bond.investment_score === null ? "—" : Math.round(bond.investment_score)}
+        {bond.investment_score == null ? "—" : Math.round(bond.investment_score)}
       </div>
 
       {showCompare ? (

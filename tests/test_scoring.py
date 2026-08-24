@@ -193,6 +193,17 @@ def test_empty_context_produces_no_fabricated_scores():
     assert results["investment"].value is None or results["investment"].value > 0
 
 
+@pytest.mark.parametrize("missing", ["ytm", "years_to_maturity"])
+def test_missing_critical_market_basis_cannot_produce_investment_score(missing):
+    ctx = strong_corporate()
+    setattr(ctx, missing, None)
+    results = ScoringEngine().compute_all(ctx)
+    assert results["investment"].value is None
+    assert results["investment"].confidence == 0
+    assert results["hold"].value is None
+    assert results["data_quality"].value <= 40
+
+
 def test_missing_data_lowers_confidence():
     full = ScoringEngine().compute_all(strong_corporate())
     sparse_ctx = strong_corporate()

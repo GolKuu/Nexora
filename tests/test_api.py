@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 import uuid
 
 import pytest
@@ -148,6 +149,34 @@ def test_top_can_exclude_government_and_filter_minimum_maturity(api):
     assert items
     assert all(item["bond_type"] != "government" for item in items)
     assert all(item["years_to_maturity"] >= 3 for item in items)
+
+
+def test_top_excludes_matured_and_unpriceable_bonds(session, client, seeded):
+    from sqlalchemy import select
+    from app.models.bond import Bond
+    from app.models.issuer import Issuer
+    from app.models.metrics import BondMetric
+    from app.models.scores import BondScore
+
+    issuer = session.scalar(select(Issuer).limit(1))
+    now = datetime.now(timezone.utc)
+    rows = []
+    for ticker, maturity, years in (
+        ("BUGMATURED", date.today() - timedelta(days=1), None),
+        ("BUGNOYTM", date.today() + timedelta(days=365), 1.0),
+    ):
+        bond = Bond(ticker=ticker, issuer_id=issuer.id, name=ticker, currency="KZT",
+            maturity_date=maturity, coupon_rate=0, coupon_type="zero", is_active=True)
+        session.add(bond); session.flush()
+        session.add(BondMetric(bond_id=bond.id, as_of=now, ytm=None,
+            years_to_maturity=years, data_mode="end_of_day"))
+        session.add(BondScore(bond_id=bond.id, kind="investment", value=100,
+            version="bug-fixture", calculated_at=now, confidence=.8))
+        rows.append(ticker)
+    session.commit()
+
+    top = client.get("/api/v1/bonds/top", params={"limit": 100}).json()["items"]
+    assert not set(rows) & {item["ticker"] for item in top}
 
 
 def test_search_matches_ticker_and_name(api):

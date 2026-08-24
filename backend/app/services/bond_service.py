@@ -102,6 +102,16 @@ class BondService:
 
     # -- payloads ----------------------------------------------------------
 
+    @staticmethod
+    def _has_investment_basis(bond: Bond, metric: BondMetric | None) -> bool:
+        return bool(
+            metric
+            and metric.ytm is not None
+            and metric.years_to_maturity is not None
+            and metric.years_to_maturity > 0
+            and (bond.maturity_date is None or bond.maturity_date >= date.today())
+        )
+
     def simple_view(self, bond: Bond, metric: BondMetric | None, scores: dict) -> dict:
         """Only the concepts a non-professional user needs."""
         investment = scores.get("investment")
@@ -109,7 +119,12 @@ class BondService:
         liquidity = scores.get("liquidity")
         growth = scores.get("growth")
 
-        investment_value = investment.value if investment else None
+        has_investment_basis = self._has_investment_basis(bond, metric)
+        investment_value = (
+            investment.value
+            if investment and has_investment_basis
+            else None
+        )
         label, summary = verdict(investment_value)
 
         years = metric.years_to_maturity if metric else None
@@ -135,7 +150,7 @@ class BondService:
                 "score": investment_value,
                 "verdict": label,
                 "summary": summary,
-                "confidence": investment.confidence if investment else None,
+                "confidence": investment.confidence if investment and has_investment_basis else 0.0,
             },
         }
 
@@ -223,6 +238,7 @@ class BondService:
         metric = self.metrics.latest(bond.id)
         quote = self.quotes.latest(bond.id)
         score_rows = self.scores.latest_all(bond.id)
+        has_investment_basis = self._has_investment_basis(bond, metric)
         scores = {
             kind: type("S", (), {"value": row.value, "confidence": row.confidence})()
             for kind, row in score_rows.items()
@@ -250,7 +266,11 @@ class BondService:
             "pro": self.pro_view(bond, metric, quote),
             "scores": {
                 kind: {
-                    "value": row.value,
+                    "value": (
+                        None
+                        if kind in {"investment", "hold"} and not has_investment_basis
+                        else row.value
+                    ),
                     "confidence": row.confidence,
                     "version": row.version,
                     "calculated_at": row.calculated_at.isoformat(),
@@ -275,6 +295,7 @@ class BondService:
             metric = metrics.get(bond.id)
             quote = quotes.get(bond.id)
             score = scores.get(bond.id)
+            has_investment_basis = self._has_investment_basis(bond, metric)
             others = extra.get(bond.id, {})
             rows.append(
                 {
@@ -297,11 +318,11 @@ class BondService:
                     "yield_pct": _pct(metric.ytm) if metric else None,
                     "real_yield_pct": _pct(metric.real_ytm) if metric else None,
                     "clean_price": metric.clean_price if metric else None,
-                    "investment_score": score.value if score else None,
+                    "investment_score": score.value if score and has_investment_basis else None,
                     "credit_score": others.get("credit"),
                     "liquidity_score": others.get("liquidity"),
                     "growth_score": others.get("growth"),
-                    "hold_score": others.get("hold"),
+                    "hold_score": others.get("hold") if has_investment_basis else None,
                     "trade_score": others.get("trade"),
                     "data_quality_score": others.get("data_quality"),
                     "data_mode": (metric.data_mode if metric else None)
@@ -344,6 +365,15 @@ class BondService:
             limit=500, currency=currency, max_years=max_maturity_years
         )
         rows = self.list_view(bonds)
+        # TOP is an actionable ranking, not an archive. An instrument without
+        # a factual YTM or positive remaining term must not enter it under any
+        # sort key, even if an older persisted score still exists.
+        rows = [
+            row for row in rows
+            if row.get("yield_pct") is not None
+            and row.get("years_to_maturity") is not None
+            and row["years_to_maturity"] > 0
+        ]
         if category:
             rows = [r for r in rows if r["bond_type"] == category]
         if exclude_government:
