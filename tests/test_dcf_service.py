@@ -74,7 +74,7 @@ def test_insufficient_data_never_returns_target(session) -> None:
     session.add(issuer); session.flush()
     instrument = Instrument(ticker="NODCF", issuer_id=issuer.id, instrument_type="stock", currency="KZT", is_active=True)
     session.add(instrument); session.flush(); session.add(Stock(instrument_id=instrument.id, shares_outstanding=10)); session.commit()
-    with pytest.raises(InsufficientDataError, match="quality gate") as error:
+    with pytest.raises(InsufficientDataError, match="опубликованных данных недостаточно") as error:
         DCFService(session).analyze("NODCF", Identity(None, "no-data-owner"))
     assert error.value.details["readiness"] == "NOT_READY"
 

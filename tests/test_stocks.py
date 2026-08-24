@@ -36,6 +36,22 @@ def test_stock_catalog_parsing_is_dynamic_and_rejects_delisted():
     assert items[1]["instrument_type"] == "preferred_stock"
 
 
+def test_public_trade_results_keep_real_ohlc_and_volume():
+    parsed = KaseStockCatalogCollector.parse_trade_results([{
+        "code": "TEST", "change_date": "2026-08-24T17:30:58",
+        "openprice": 120, "max_price": 128, "min_price": 119,
+        "last_deal_price": 125, "current_bid": 124, "current_offer": 126,
+        "vol": 500, "volkzt": 62_500, "dealcnt": 25,
+    }])
+
+    assert parsed["TEST"]["open"] == 120
+    assert parsed["TEST"]["high"] == 128
+    assert parsed["TEST"]["low"] == 119
+    assert parsed["TEST"]["close"] == 125
+    assert parsed["TEST"]["volume"] == 500
+    assert parsed["TEST"]["number_of_trades"] == 25
+
+
 @pytest.mark.anyio
 async def test_market_snapshot_updates_official_company_name(session):
     from app.models.issuer import Issuer
@@ -317,6 +333,34 @@ def test_offline_snapshot_carries_real_equity_inputs(session, tmp_path):
     assert any(
         row["instrument"]["ticker"] == "SNAP" for row in payload["stocks"]
     )
+
+
+def test_offline_snapshot_preserves_up_to_150_real_stock_sessions(session, tmp_path):
+    import json
+
+    from app.collectors.snapshot import export_snapshot
+    from app.models.history import DailyMarketSnapshot
+
+    stock = _seed_stock(session, "HIST150")
+    for offset in range(155):
+        day = date(2026, 1, 1) + timedelta(days=offset)
+        session.add(DailyMarketSnapshot(
+            instrument_id=stock.instrument_id, trading_date=day,
+            close=100 + offset, status="traded", data_mode="end_of_day",
+            coverage_quality="single_price", observation_count=1,
+            source="kase_public_website", source_url="https://kase.kz/",
+        ))
+    session.commit()
+    path = tmp_path / "history.json"
+
+    result = export_snapshot(session, path)
+    rows = [row for row in json.loads(path.read_text(encoding="utf-8"))["stock_history"]
+            if row["ticker"] == "HIST150"]
+
+    assert len(rows) == 150
+    assert result["stock_history"] >= 150
+    assert rows[0]["trading_date"]["__d__"] == "2026-01-06"
+    assert rows[-1]["trading_date"]["__d__"] == "2026-06-04"
 
 
 def test_stock_peers_and_cross_asset_compare_keep_models_separate(session, client, seeded):

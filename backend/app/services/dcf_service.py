@@ -193,7 +193,10 @@ class DCFInputBuilder:
         }
         missing = [name for name, ok in required.items() if not ok]
         if missing:
-            raise InsufficientDataError("DCF data quality gate failed", details={"readiness": "NOT_READY", "missing": missing})
+            raise InsufficientDataError(
+                "DCF недоступен: опубликованных данных недостаточно для расчёта",
+                details={"readiness": "NOT_READY", "missing": missing},
+            )
         assert latest is not None and price is not None and price.price is not None and inflation is not None
         risk_free = min(curves, key=lambda row: abs(row.tenor_years - 5.0))
         revenues = [row.revenue for row in reversed(statements) if row.revenue and row.revenue > 0]
@@ -204,7 +207,10 @@ class DCFInputBuilder:
         da_pct = max(0.0, min(0.20, ((latest.ebitda or latest.operating_profit) - latest.operating_profit) / latest.revenue))
         capex_pct = abs(latest.capex / latest.revenue) if latest.capex is not None else None
         if capex_pct is None:
-            raise InsufficientDataError("DCF data quality gate failed", details={"readiness": "NOT_READY", "missing": ["capex"]})
+            raise InsufficientDataError(
+                "DCF недоступен: опубликованных данных недостаточно для расчёта",
+                details={"readiness": "NOT_READY", "missing": ["capex"]},
+            )
         nwc_pct = 0.0
         if latest.current_assets is not None and latest.current_liabilities is not None:
             nwc_pct = max(0.0, min(0.40, (latest.current_assets-latest.current_liabilities) / latest.revenue))

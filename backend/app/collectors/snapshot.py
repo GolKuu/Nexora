@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.models.bond import Bond, BondCashFlow
 from app.models.financials import FinancialStatement
+from app.models.history import DailyMarketSnapshot
 from app.models.issuer import Issuer
 from app.models.instrument import Instrument
 from app.models.macro import InflationData, YieldCurve
@@ -45,7 +46,8 @@ from app.models.stock import (
 
 logger = get_logger(__name__)
 
-SNAPSHOT_VERSION = "1.0.0"
+SNAPSHOT_VERSION = "1.1.0"
+STOCK_HISTORY_LIMIT = 150
 DEFAULT_SNAPSHOT_DIR = Path("data/snapshots")
 
 
@@ -140,6 +142,13 @@ _STOCK_QUOTE_FIELDS = [
     "number_of_trades", "data_mode", "content_hash", "source",
     "source_identifier", "source_url", "source_timestamp", "fetched_at",
 ]
+_STOCK_HISTORY_FIELDS = [
+    "trading_date", "open", "high", "low", "close", "volume", "turnover",
+    "trade_count", "bid_close", "ask_close", "first_observation_at",
+    "last_observation_at", "observation_count", "coverage_quality", "status",
+    "data_mode", "source", "source_identifier", "source_url",
+    "source_timestamp", "fetched_at",
+]
 _STOCK_FINANCIAL_FIELDS = [
     "period_end", "period_type", "currency", "is_audited", "revenue",
     "ebitda", "operating_profit", "net_income", "total_assets", "total_equity",
@@ -184,6 +193,7 @@ def export_snapshot(
         for stock in stocks
     ]
     stock_quotes: list[dict] = []
+    stock_history: list[dict] = []
     for stock in stocks:
         newest = session.execute(
             select(StockQuote)
@@ -196,6 +206,16 @@ def export_snapshot(
                 "ticker": stock.instrument.ticker,
                 **_dump(newest, _STOCK_QUOTE_FIELDS),
             })
+        history = list(reversed(list(session.execute(
+            select(DailyMarketSnapshot)
+            .where(DailyMarketSnapshot.instrument_id == stock.instrument_id)
+            .order_by(DailyMarketSnapshot.trading_date.desc())
+            .limit(STOCK_HISTORY_LIMIT)
+        ).scalars())))
+        stock_history.extend({
+            "ticker": stock.instrument.ticker,
+            **_dump(row, _STOCK_HISTORY_FIELDS),
+        } for row in history)
     stock_financials = []
     stock_actions = []
     for stock in stocks:
@@ -273,6 +293,7 @@ def export_snapshot(
         ],
         "stocks": stock_payload,
         "stock_quotes": stock_quotes,
+        "stock_history": stock_history,
         "stock_financials": stock_financials,
         "dividends": [
             {
@@ -289,7 +310,7 @@ def export_snapshot(
     counts = {key: len(payload[key]) for key in
               ("issuers", "bonds", "quotes", "cashflows", "statements",
                "yield_curve", "inflation", "stocks", "stock_quotes",
-               "stock_financials", "dividends", "corporate_actions")}
+               "stock_history", "stock_financials", "dividends", "corporate_actions")}
     logger.info("snapshot written to %s: %s", path, counts)
     return {"path": str(path), "captured_at": payload["captured_at"], **counts}
 
@@ -450,7 +471,7 @@ def import_snapshot(
 
     stock_counts = {
         "stocks": len(stock_ids), "stock_quotes": 0, "stock_financials": 0,
-        "dividends": 0, "corporate_actions": 0,
+        "stock_history": 0, "dividends": 0, "corporate_actions": 0,
     }
     for key, model in (
         ("stock_quotes", StockQuote),
@@ -463,8 +484,54 @@ def import_snapshot(
             stock_id = stock_ids.get(values.pop("ticker", None))
             if stock_id is None:
                 continue
+            if model is StockQuote:
+                exists = session.execute(select(StockQuote.id).where(
+                    StockQuote.stock_id == stock_id,
+                    StockQuote.timestamp == values["timestamp"],
+                    StockQuote.content_hash == values.get("content_hash"),
+                )).first()
+            elif model is StockFinancialPeriod:
+                exists = session.execute(select(StockFinancialPeriod.id).where(
+                    StockFinancialPeriod.stock_id == stock_id,
+                    StockFinancialPeriod.period_end == values["period_end"],
+                    StockFinancialPeriod.period_type == values["period_type"],
+                )).first()
+            elif model is Dividend:
+                exists = session.execute(select(Dividend.id).where(
+                    Dividend.stock_id == stock_id,
+                    Dividend.record_date == values.get("record_date"),
+                    Dividend.dividend_per_share == values["dividend_per_share"],
+                )).first()
+            else:
+                exists = session.execute(select(CorporateAction.id).where(
+                    CorporateAction.stock_id == stock_id,
+                    CorporateAction.action_type == values["action_type"],
+                    CorporateAction.source_url == values.get("source_url"),
+                )).first()
+            if exists:
+                continue
             session.add(model(stock_id=stock_id, **values))
             stock_counts[key] += 1
+
+    instrument_ids = {
+        ticker: session.get(Stock, stock_id).instrument_id
+        for ticker, stock_id in stock_ids.items()
+    }
+    for row in payload.get("stock_history", []):
+        values = _load(row)
+        instrument_id = instrument_ids.get(values.pop("ticker", None))
+        if instrument_id is None:
+            continue
+        existing = session.execute(select(DailyMarketSnapshot).where(
+            DailyMarketSnapshot.instrument_id == instrument_id,
+            DailyMarketSnapshot.trading_date == values["trading_date"],
+        )).scalar_one_or_none()
+        if existing is None:
+            session.add(DailyMarketSnapshot(instrument_id=instrument_id, **values))
+            stock_counts["stock_history"] += 1
+        else:
+            for key, value in values.items():
+                setattr(existing, key, value)
 
     session.commit()
 

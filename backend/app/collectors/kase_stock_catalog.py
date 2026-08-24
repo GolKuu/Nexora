@@ -20,6 +20,7 @@ from app.services.incremental import IncrementalStateService, content_hash
 from app.services.stock_actions import KaseStockDocumentActionCollector
 
 CATALOG_URL = "https://kase.kz/api/instruments/securities/"
+TRADE_RESULTS_URL = "https://kase.kz/api/trade-results/shares/"
 SOURCE_NAME = "kase_public_website"
 PARSER_VERSION = "stock-catalog-v1"
 
@@ -98,6 +99,33 @@ class KaseStockCatalogCollector:
         return items
 
     @staticmethod
+    def parse_trade_results(payload: Any) -> dict[str, dict]:
+        """Current-session OHLC published on the public KASE market page."""
+        if not isinstance(payload, list):
+            return {}
+        result: dict[str, dict] = {}
+        for row in payload:
+            ticker = _text(row.get("code")) if isinstance(row, dict) else None
+            observed_at = _datetime(row.get("change_date")) if ticker else None
+            close = _float(row.get("last_deal_price")) if ticker else None
+            if not ticker or observed_at is None or close is None:
+                continue
+            result[ticker.upper()] = {
+                "price": close,
+                "close": close,
+                "open": _float(row.get("openprice")),
+                "high": _float(row.get("max_price")),
+                "low": _float(row.get("min_price")),
+                "bid": _float(row.get("current_bid")),
+                "ask": _float(row.get("current_offer")),
+                "volume": _float(row.get("vol")),
+                "turnover": _float(row.get("volkzt")),
+                "number_of_trades": _i(row.get("dealcnt")),
+                "source_timestamp": observed_at,
+            }
+        return result
+
+    @staticmethod
     def parse_delisted(payload: Any) -> dict[tuple[str, str], date | None]:
         """Shares the catalogue reports as finished, with the date KASE stated.
 
@@ -127,15 +155,27 @@ class KaseStockCatalogCollector:
     async def fetch(self) -> list[dict]:
         if self.client is not None:
             response = await self.client.get(CATALOG_URL, params={"sec_type": "share"})
+            trade_payload = None
         else:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": "KASE-Bond-AI/stock-collector"}) as client:
-                response = await client.get(CATALOG_URL, params={"sec_type": "share"})
+                response, trade_response = await asyncio.gather(
+                    client.get(CATALOG_URL, params={"sec_type": "share"}),
+                    client.get(TRADE_RESULTS_URL),
+                )
+                trade_response.raise_for_status()
+                trade_payload = trade_response.json()
         response.raise_for_status()
         payload = response.json()
         # Kept for one pass so the delisted rows - which discovery skips - can
         # still date a share that stopped trading.
         self._last_payload = payload
-        return self.parse_catalog(payload)
+        items = self.parse_catalog(payload)
+        current_by_ticker = self.parse_trade_results(trade_payload)
+        for item in items:
+            current = current_by_ticker.get(item["ticker"].upper())
+            if current:
+                item.update(current)
+        return items
 
     async def collect(self, *, deep: bool = True) -> dict:
         rows = await self.fetch()
@@ -186,7 +226,7 @@ class KaseStockCatalogCollector:
                                                  ticker=item["ticker"], isin=item["isin"], source_timestamp=item["source_timestamp"], parser_version=PARSER_VERSION)
             if profile_result.status == "unchanged": stats["unchanged_sections"] += 1
             else: stock.last_changed_at = now
-            quote_payload = {key: item[key] for key in ("bid", "ask", "price", "close", "turnover", "number_of_trades", "liquidity_class")}
+            quote_payload = {key: item.get(key) for key in ("bid", "ask", "price", "open", "high", "low", "close", "volume", "turnover", "number_of_trades", "liquidity_class")}
             quote_result = incremental.process(entity_type="stock", entity_id=str(stock.id), section="quote", payload=quote_payload, source_url=CATALOG_URL,
                                                ticker=item["ticker"], isin=item["isin"], source_timestamp=item["source_timestamp"], parser_version=PARSER_VERSION)
             incremental.process(entity_type="stock", entity_id=str(stock.id), section="order_book", payload={"bid": item["bid"], "ask": item["ask"]}, source_url=CATALOG_URL,
@@ -195,7 +235,8 @@ class KaseStockCatalogCollector:
                 stats["unchanged_sections"] += 1
             else:
                 digest = content_hash(quote_payload)
-                quote = StockQuote(stock_id=stock.id, timestamp=item["source_timestamp"] or now, bid=item["bid"], ask=item["ask"], last=item["price"], close=item["close"],
+                quote = StockQuote(stock_id=stock.id, timestamp=item["source_timestamp"] or now, bid=item["bid"], ask=item["ask"], last=item["price"],
+                                   open=item.get("open"), high=item.get("high"), low=item.get("low"), close=item["close"], volume=item.get("volume"),
                                    turnover=item["turnover"], number_of_trades=item["number_of_trades"], data_mode="end_of_day", content_hash=digest,
                                    source=SOURCE_NAME, source_url=CATALOG_URL, source_timestamp=item["source_timestamp"], fetched_at=now)
                 self.session.add(quote); stats["quotes_created"] += 1
@@ -340,4 +381,11 @@ class KaseStockCatalogCollector:
         return {"issuers_with_financials": issuers_with_data, "financial_periods_created": periods_saved}
 
 
-__all__ = ["KaseStockCatalogCollector", "CATALOG_URL"]
+def _i(value: Any) -> int | None:
+    try:
+        return None if value in (None, "") else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+__all__ = ["KaseStockCatalogCollector", "CATALOG_URL", "TRADE_RESULTS_URL"]

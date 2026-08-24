@@ -14,6 +14,17 @@ const SCENARIOS: Array<{ key: "bear" | "base" | "bull"; label: string; tone: str
   { key: "bull", label: "Оптимистичный", tone: "text-emerald-600 dark:text-emerald-400" },
 ];
 
+const DCF_INPUT_LABELS: Record<string, string> = {
+  latest_financial_report: "последний годовой финансовый отчёт",
+  revenue: "выручка",
+  operating_profit: "операционная прибыль",
+  cash_and_debt: "денежные средства и долг",
+  shares_outstanding: "число акций в обращении",
+  market_price: "рыночная цена",
+  macro_assumptions: "безрисковая ставка и инфляция",
+  capex: "капитальные затраты",
+};
+
 export function DCFValuationPanel({ ticker, currency, currentPrice }: { ticker: string; currency: string; currentPrice: number | null }) {
   const [result, setResult] = useState<DCFResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,8 +35,14 @@ export function DCFValuationPanel({ ticker, currency, currentPrice }: { ticker: 
     try { setResult(await stocksService.analyzeDcf(ticker)); }
     catch (caught) {
       if (caught instanceof ApiError) {
-        const missing = Array.isArray(caught.details.missing) ? ` Не хватает данных: ${caught.details.missing.join(", ")}.` : "";
-        setError(`${caught.message}.${missing}`);
+        if (caught.details.methodology === "unsupported_financial_institution") {
+          setError("DCF не применяется к банкам и другим финансовым организациям. Для них нужна отдельная модель собственного капитала.");
+        } else if (Array.isArray(caught.details.missing)) {
+          const missing = caught.details.missing.map((key) => DCF_INPUT_LABELS[String(key)] ?? String(key));
+          setError(`DCF пока недоступен: в опубликованных данных не хватает: ${missing.join(", ")}. Значения не подставляются искусственно.`);
+        } else {
+          setError(caught.message);
+        }
       } else setError("Не удалось выполнить оценку. Попробуйте позже.");
     } finally { setLoading(false); }
   }
