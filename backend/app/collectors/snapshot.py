@@ -178,10 +178,21 @@ def export_snapshot(
     path = Path(path) if path else DEFAULT_SNAPSHOT_DIR / "kase-latest.json"
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    issuers = list(session.execute(select(Issuer)).scalars())
-    bonds = list(session.execute(select(Bond)).scalars())
+    # Stable business-key ordering keeps routine public-data refreshes reviewable:
+    # database ids depend on import order and must not reshuffle the whole file.
+    issuers = sorted(
+        session.execute(select(Issuer)).scalars(),
+        key=lambda row: (row.code or "").casefold(),
+    )
+    bonds = sorted(
+        session.execute(select(Bond)).scalars(),
+        key=lambda row: (row.ticker or "").casefold(),
+    )
     issuer_code_by_id = {issuer.id: issuer.code for issuer in issuers}
-    stocks = list(session.execute(select(Stock)).scalars())
+    stocks = sorted(
+        session.execute(select(Stock)).scalars(),
+        key=lambda row: (row.instrument.ticker or "").casefold(),
+    )
     stock_ticker_by_id = {stock.id: stock.instrument.ticker for stock in stocks}
 
     stock_payload = [
