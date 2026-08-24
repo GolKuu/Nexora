@@ -468,6 +468,7 @@ def test_stock_watchlist_is_separate_from_bond_watchlist(session, client):
     assert created.status_code == 201 and created.json()["instrument_type"] == "stock"
     items = client.get("/api/v1/watchlist", headers=headers).json()["items"]
     assert [(item["ticker"], item["instrument_type"]) for item in items] == [("WSTX", "stock")]
+    assert items[0]["dcf_summary"]["status"] == "not_calculated"
     assert client.delete("/api/v1/watchlist/WSTX?instrument_type=stock", headers=headers).status_code == 204
 
 
@@ -534,8 +535,13 @@ def test_portfolio_mixes_stock_and_bond_without_crossing_formulas(session, seede
     from sqlalchemy import select
     from app.models.bond import Bond
     from app.models.portfolio import Portfolio, PortfolioPosition
+    from app.models.stock import StockQuote
     from app.services.portfolio_service import PortfolioService
     stock = _seed_stock(session, "MIXS")
+    session.add_all([
+        StockQuote(stock_id=stock.id, timestamp=datetime.now(timezone.utc) - timedelta(days=2), last=92, close=92, data_mode="end_of_day", source="kase_public_website"),
+        StockQuote(stock_id=stock.id, timestamp=datetime.now(timezone.utc) - timedelta(days=1), last=96, close=96, data_mode="end_of_day", source="kase_public_website"),
+    ])
     bond = session.scalar(select(Bond).limit(1))
     portfolio = Portfolio(anonymous_token="mixed-test", name="Mixed", base_currency="KZT")
     session.add(portfolio); session.flush()
@@ -551,3 +557,6 @@ def test_portfolio_mixes_stock_and_bond_without_crossing_formulas(session, seede
     assert result["summary"]["asset_allocation"]["stocks"] > 0
     assert result["summary"]["currency_allocation"]["KZT"] > 0
     assert result["summary"]["issuer_concentration"][0]["issuer_name"]
+    assert result["history"]["status"] == "available"
+    assert len(result["history"]["points"]) >= 2
+    assert result["history"]["basis"] == "stored_market_observations_current_positions"

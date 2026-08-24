@@ -75,6 +75,9 @@ class UserSettings(Base, TimestampMixin):
     chart_news_markers_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     forecast_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     uncertainty_intervals_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_dcf_explanation: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_dcf_confidence: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_dcf_scenario_differences: Mapped[bool] = mapped_column(Boolean, default=True)
     default_chart_range: Mapped[str] = mapped_column(String(8), default="1y")
 
     user: Mapped["User | None"] = relationship(back_populates="settings")

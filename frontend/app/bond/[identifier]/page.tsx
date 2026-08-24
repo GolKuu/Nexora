@@ -1,25 +1,46 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { use } from "react";
 
 import { FreshnessBadge } from "@/components/layout/DataModeBanner";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
-import { BondCharts } from "@/features/bonds/BondCardSections";
-import { ScoreHistoryPanel } from "@/features/charts/ScoreHistoryPanel";
 import { Calculator } from "@/features/bonds/Calculator";
-import { KaseVerify } from "@/features/bonds/KaseVerify";
-import { PeerList } from "@/features/bonds/PeerList";
-import { ProDetails } from "@/features/bonds/ProDetails";
-import { ScoreExplanation } from "@/features/bonds/ScoreExplanation";
 import { SimpleSummary } from "@/features/bonds/SimpleSummary";
 import { WatchButton } from "@/features/bonds/WatchButton";
 import { useBondCard } from "@/hooks/useBonds";
 import { useUiStore } from "@/stores/uiStore";
 import { bondTypeLabel } from "@/utils/score";
 import { formatDate } from "@/utils/format";
+
+const SectionFallback = () => <Skeleton className="h-44 w-full" />;
+const BondCharts = dynamic(
+  () => import("@/features/bonds/BondCardSections").then((module) => module.BondCharts),
+  { ssr: false, loading: SectionFallback },
+);
+const ScoreHistoryPanel = dynamic(
+  () => import("@/features/charts/ScoreHistoryPanel").then((module) => module.ScoreHistoryPanel),
+  { ssr: false, loading: SectionFallback },
+);
+const KaseVerify = dynamic(
+  () => import("@/features/bonds/KaseVerify").then((module) => module.KaseVerify),
+  { ssr: false, loading: SectionFallback },
+);
+const PeerList = dynamic(
+  () => import("@/features/bonds/PeerList").then((module) => module.PeerList),
+  { ssr: false, loading: SectionFallback },
+);
+const ProDetails = dynamic(
+  () => import("@/features/bonds/ProDetails").then((module) => module.ProDetails),
+  { ssr: false, loading: SectionFallback },
+);
+const ScoreExplanation = dynamic(
+  () => import("@/features/bonds/ScoreExplanation").then((module) => module.ScoreExplanation),
+  { ssr: false, loading: SectionFallback },
+);
 
 export default function BondPage({
   params,

@@ -1,17 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { use } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { ScoreBar, ScoreDial } from "@/components/ui/ScoreDial";
 import { EmptyState, Skeleton } from "@/components/ui/Stat";
 import { WatchButton } from "@/features/bonds/WatchButton";
-import { ChangeHistoryPanel } from "@/features/charts/ChangeHistoryPanel";
-import { SeriesPanel } from "@/features/charts/SeriesPanel";
-import { ScoreHistoryPanel } from "@/features/charts/ScoreHistoryPanel";
-import { NewsImpactPanel } from "@/features/stocks/NewsImpactPanel";
-import { ForecastPanel } from "@/features/stocks/ForecastPanel";
 import { DCFValuationPanel } from "@/features/stocks/DCFValuationPanel";
 import { StockAlerts } from "@/features/stocks/StockAlerts";
 import { StockCalculator } from "@/features/stocks/StockCalculator";
@@ -20,6 +16,28 @@ import { useUiStore } from "@/stores/uiStore";
 import { formatCompact, formatDate, formatMoney, formatNumber, formatRate } from "@/utils/format";
 
 const SCORE_LABELS:Record<string,string>={quality:"Качество",valuation:"Оценка",growth:"Рост",dividend:"Дивиденды",liquidity:"Ликвидность",risk:"Риск"};
+
+const deferredPanel = () => <Skeleton className="h-64 w-full" />;
+const SeriesPanel = dynamic(
+  () => import("@/features/charts/SeriesPanel").then(module => module.SeriesPanel),
+  { ssr: false, loading: deferredPanel },
+);
+const ChangeHistoryPanel = dynamic(
+  () => import("@/features/charts/ChangeHistoryPanel").then(module => module.ChangeHistoryPanel),
+  { ssr: false, loading: deferredPanel },
+);
+const ScoreHistoryPanel = dynamic(
+  () => import("@/features/charts/ScoreHistoryPanel").then(module => module.ScoreHistoryPanel),
+  { ssr: false, loading: deferredPanel },
+);
+const NewsImpactPanel = dynamic(
+  () => import("@/features/stocks/NewsImpactPanel").then(module => module.NewsImpactPanel),
+  { ssr: false, loading: deferredPanel },
+);
+const ForecastPanel = dynamic(
+  () => import("@/features/stocks/ForecastPanel").then(module => module.ForecastPanel),
+  { ssr: false, loading: deferredPanel },
+);
 
 export default function StockPage({params}:{params:Promise<{identifier:string}>}) {
   const {identifier}=use(params); const {data,isLoading,error}=useStockCard(decodeURIComponent(identifier)); const uiMode=useUiStore(s=>s.uiMode);

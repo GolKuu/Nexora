@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, timezone
 import hashlib
 import json
 import math
 import time
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import Identity
@@ -18,6 +18,7 @@ from app.models.dcf import (DCFAssumption, DCFCostEvent, DCFInputSnapshot, DCFRu
     DCFSubscription, DCFUsageEvent, DCFValidationResult, DisclaimerConfig)
 from app.models.financials import FinancialStatement
 from app.models.history import FinancialReportRelease
+from app.models.instrument import Instrument
 from app.models.macro import InflationData, YieldCurve
 from app.services.price_service import PriceService
 from app.services.stock_service import StockService
@@ -272,9 +273,9 @@ class DCFService:
 
     def analyze(self, identifier: str, identity: Identity, force_refresh: bool = False) -> dict:
         started = time.perf_counter()
-        built = DCFInputBuilder(self.session).build(identifier)
         access = DCFAccessService(self.session)
         usage = access.require(identity)
+        built = DCFInputBuilder(self.session).build(identifier)
         stock = built["stock"]
         # Historical evidence is immutable, but once a newer statement is in
         # the current cache basis older completed runs must be labelled stale.
@@ -311,7 +312,21 @@ class DCFService:
             currency=stock.instrument.currency, warnings=built["warnings"], disclaimer_version=DISCLAIMER_VERSION, shown_to_user_at=now)
         self.session.add(run); self.session.flush()
         try:
-            calculated = DCFValuationEngine().calculate_scenarios(built["inputs"], built["scenarios"])
+            engine = DCFValuationEngine()
+            calculated = engine.calculate_scenarios(built["inputs"], built["scenarios"])
+            sensitivity = self._sensitivity(
+                engine, built["inputs"], built["scenarios"]["base"],
+                calculated["base"]["fair_value_per_share"],
+            )
+            calculated["base"]["sensitivity"] = sensitivity
+            warnings = list(built["warnings"])
+            if sensitivity["uncertainty"] == "high":
+                run.analysis_confidence = "low"
+                warnings.append("Valuation sensitivity is high: small assumption changes materially affect fair value.")
+            elif sensitivity["uncertainty"] == "medium" and run.analysis_confidence == "high":
+                run.analysis_confidence = "medium"
+                warnings.append("Valuation sensitivity is elevated.")
+            run.warnings = warnings
             for name, result in calculated.items():
                 self.session.add(DCFScenarioResult(run_id=run.id, scenario_type=name, fair_value=result["fair_value_per_share"],
                     enterprise_value=result["enterprise_value"], equity_value=result["equity_value"], assumptions=result["assumptions"], calculation=result))
@@ -338,6 +353,16 @@ class DCFService:
                 source="deterministic policy + stored facts", source_url=None, payload=_jsonable({k: asdict(v) for k,v in built["scenarios"].items()}), payload_hash=_hash(built["snapshot"]["scenarios"])))
             self.session.add(DCFValidationResult(run_id=run.id, rule="data_quality_gate", passed=True, severity="critical", message="All critical inputs are present"))
             self.session.add(DCFValidationResult(run_id=run.id, rule="scenario_ordering", passed=True, severity="critical", message="Bear <= Base <= Bull"))
+            self.session.add(DCFValidationResult(
+                run_id=run.id,
+                rule="sensitivity_stability",
+                passed=sensitivity["uncertainty"] != "high",
+                severity="warning",
+                message=(
+                    f"Valuation uncertainty {sensitivity['uncertainty']}; "
+                    f"maximum tested deviation {sensitivity['max_deviation_percent']:.1f}%"
+                ),
+            ))
             self.session.add(DCFUsageEvent(user_id=identity.user_id, anonymous_token_hash=_token_hash(identity.token), run_id=run.id,
                 event_type="generated", period_start=_period_start(), counted=True))
             elapsed = (time.perf_counter()-started)*1000; run.total_latency_ms = elapsed
@@ -349,6 +374,45 @@ class DCFService:
             self.session.commit(); raise ValidationError("DCF model validation failed", details={"run_id": run.id, "reason": str(exc)})
         return self.get(run.id, identity)
 
+    @staticmethod
+    def _sensitivity(
+        engine: DCFValuationEngine,
+        inputs: ValuationInput,
+        base: ScenarioAssumptions,
+        base_value: float,
+    ) -> dict:
+        """Stress the persisted base case with the governed retail grid."""
+        variants = {
+            "wacc_minus_1pp": replace(base, wacc=max(0.001, base.wacc - 0.01)),
+            "wacc_plus_1pp": replace(base, wacc=base.wacc + 0.01),
+            "terminal_growth_minus_0_5pp": replace(base, terminal_growth=base.terminal_growth - 0.005),
+            "terminal_growth_plus_0_5pp": replace(base, terminal_growth=base.terminal_growth + 0.005),
+            "revenue_growth_minus_1pp": replace(base, revenue_growth=tuple(g - 0.01 for g in base.revenue_growth)),
+            "revenue_growth_plus_1pp": replace(base, revenue_growth=tuple(g + 0.01 for g in base.revenue_growth)),
+            "ebit_margin_minus_1pp": replace(base, ebit_margin=base.ebit_margin - 0.01),
+            "ebit_margin_plus_1pp": replace(base, ebit_margin=base.ebit_margin + 0.01),
+        }
+        cases = {}
+        for name, assumptions in variants.items():
+            try:
+                fair = engine.calculate(inputs, assumptions)["fair_value_per_share"]
+            except DCFValidationError:
+                cases[name] = {"fair_value": None, "deviation_percent": None, "valid": False}
+                continue
+            cases[name] = {
+                "fair_value": fair,
+                "deviation_percent": (fair / base_value - 1) * 100,
+                "valid": True,
+            }
+        deviations = [abs(case["deviation_percent"]) for case in cases.values() if case["deviation_percent"] is not None]
+        maximum = max(deviations, default=0.0)
+        uncertainty = "high" if maximum > 35 else "medium" if maximum > 20 else "low"
+        return {
+            "uncertainty": uncertainty,
+            "max_deviation_percent": maximum,
+            "cases": cases,
+        }
+
     def get(self, run_id: int, identity: Identity) -> dict:
         run = self.session.scalar(select(DCFRun).where(DCFRun.id == run_id).options(selectinload(DCFRun.scenarios)))
         if run is None: raise NotFoundError("DCF run not found")
@@ -356,6 +420,103 @@ class DCFService:
         if run.anonymous_token_hash and run.anonymous_token_hash != _token_hash(identity.token): raise ForbiddenError("This DCF run belongs to another session")
         run.shown_to_user_at=datetime.now(timezone.utc); self.session.commit()
         return self.serialize(run, DCFAccessService(self.session).usage(identity), cache_hit=run.cache_hit)
+
+    def latest(self, identifier: str, identity: Identity) -> dict:
+        """Return the owner's newest completed result without running DCF.
+
+        This stock-page read model never consumes quota, touches KASE, parses a
+        document or recalculates valuation.
+        """
+        stock = StockService(self.session).require(identifier)
+        owner = (
+            DCFRun.user_id == identity.user_id
+            if identity.user_id is not None
+            else DCFRun.anonymous_token_hash == _token_hash(identity.token)
+        )
+        run = self.session.scalar(
+            select(DCFRun)
+            .where(
+                DCFRun.instrument_id == stock.instrument_id,
+                DCFRun.status == "completed",
+                owner,
+            )
+            .order_by(DCFRun.completed_at.desc(), DCFRun.id.desc())
+            .options(selectinload(DCFRun.scenarios), selectinload(DCFRun.snapshots))
+        )
+        newest_statement_id = self.session.scalar(
+            select(FinancialStatement.id)
+            .where(
+                FinancialStatement.issuer_id == stock.instrument.issuer_id,
+                FinancialStatement.period_type == "FY",
+            )
+            .order_by(FinancialStatement.period_end.desc(), FinancialStatement.id.desc())
+            .limit(1)
+        )
+        stale = bool(
+            run is not None
+            and newest_statement_id is not None
+            and run.financial_statement_id != newest_statement_id
+        )
+        usage = DCFAccessService(self.session).usage(identity)
+        return {
+            "available": run is not None,
+            "result": self.serialize(run, usage, stale_override=stale) if run is not None else None,
+            "usage": usage,
+        }
+
+    def cached_summaries(
+        self, tickers: list[str], identity: Identity, market_prices: dict[str, float | None]
+    ) -> dict[str, dict]:
+        """One-query DCF read model for comparison/list surfaces."""
+        if not tickers:
+            return {}
+        owner = (
+            DCFRun.user_id == identity.user_id
+            if identity.user_id is not None
+            else DCFRun.anonymous_token_hash == _token_hash(identity.token)
+        )
+        newest_statement = (
+            select(FinancialStatement.id)
+            .where(
+                FinancialStatement.issuer_id == Instrument.issuer_id,
+                FinancialStatement.period_type == "FY",
+            )
+            .order_by(FinancialStatement.period_end.desc(), FinancialStatement.id.desc())
+            .limit(1)
+            .correlate(Instrument)
+            .scalar_subquery()
+        )
+        rows = self.session.execute(
+            select(DCFRun, newest_statement.label("newest_statement_id"))
+            .join(Instrument, Instrument.id == DCFRun.instrument_id)
+            .where(DCFRun.ticker.in_(tickers), DCFRun.status == "completed", owner)
+            .order_by(DCFRun.completed_at.desc(), DCFRun.id.desc())
+        )
+        summaries: dict[str, dict] = {}
+        for run, newest_statement_id in rows:
+            if run.ticker in summaries:
+                continue
+            price = market_prices.get(run.ticker)
+            stale = bool(
+                run.stale_due_to_new_financials
+                or (
+                    newest_statement_id is not None
+                    and run.financial_statement_id != newest_statement_id
+                )
+            )
+            summaries[run.ticker] = {
+                "status": "stale" if stale else "available",
+                "bear_fair_value": run.bear_target_price,
+                "base_fair_value": run.base_target_price,
+                "bull_fair_value": run.bull_target_price,
+                "base_difference_percent": (
+                    (run.base_target_price / price - 1) * 100
+                    if run.base_target_price is not None and price else None
+                ),
+                "analysis_confidence": run.analysis_confidence,
+                "analysis_date": run.completed_at,
+            }
+        return summaries
 
     def history(self, identifier: str, identity: Identity) -> dict:
         stock = StockService(self.session).require(identifier)
@@ -374,7 +535,14 @@ class DCFService:
                 "source": x.source, "reason": x.reason, "fallback_used": x.fallback_used, "confidence": x.confidence} for x in run.assumptions],
             "validations": [{"rule": x.rule, "passed": x.passed, "severity": x.severity, "message": x.message} for x in run.validations]}
 
-    def serialize(self, run: DCFRun, usage: dict | None, cache_hit: bool = False, compact: bool = False) -> dict:
+    def serialize(
+        self,
+        run: DCFRun,
+        usage: dict | None,
+        cache_hit: bool = False,
+        compact: bool = False,
+        stale_override: bool | None = None,
+    ) -> dict:
         # Fair value stays cached until a fundamental/cache-basis input changes;
         # upside/downside always compares it with the newest factual quote.
         stock = StockService(self.session).require(run.ticker)
@@ -388,13 +556,37 @@ class DCFService:
             "current_price": current, "current_price_timestamp": price_payload.get("observed_at"), "currency": run.currency,
             "scenarios": scenarios, "analysis_confidence": run.analysis_confidence, "data_quality_score": run.data_quality_score,
             "data_as_of": price_payload.get("observed_at"), "analysis_date": run.completed_at, "warnings": run.warnings or [],
-            "stale_due_to_new_financials": run.stale_due_to_new_financials, "cache_hit": cache_hit,
+            "stale_due_to_new_financials": (
+                run.stale_due_to_new_financials if stale_override is None else stale_override
+            ), "cache_hit": cache_hit,
             "disclaimer": self._disclaimer(), "disclaimer_version": run.disclaimer_version}
+        payload["data_quality_status"] = "READY_WITH_WARNINGS" if payload["warnings"] else "READY"
+        base_result = next((row for row in run.scenarios if row.scenario_type == "base"), None)
+        payload["valuation_uncertainty"] = (
+            (base_result.calculation or {}).get("sensitivity", {}).get("uncertainty")
+            if base_result is not None else None
+        )
         financial_snapshot = next((x.payload for x in run.snapshots if x.kind == "financial"), {})
         payload["financial_changes_2y"] = financial_snapshot.get("changes_2y", {
             "requested_years": 2, "periods_available": 0,
             "status": "insufficient_history", "periods": [], "changes": None,
         })
+        base_assumptions = (base_result.assumptions or {}) if base_result is not None else {}
+        growth = base_assumptions.get("revenue_growth") or []
+        payload["explanation"] = {
+            "summary": "Справедливая стоимость рассчитана из прогнозного FCFF и приведена к текущей стоимости через WACC.",
+            "drivers": [
+                {"label": "Рост выручки", "value": growth[0] if growth else None},
+                {"label": "Маржа EBIT", "value": base_assumptions.get("ebit_margin")},
+                {"label": "Ставка дисконтирования WACC", "value": base_assumptions.get("wacc")},
+                {"label": "Терминальный рост", "value": base_assumptions.get("terminal_growth")},
+            ],
+            "risks": [
+                "Фактический рост и рентабельность могут отличаться от сценарных допущений.",
+                "Стоимость капитала и долгосрочный рост существенно влияют на результат.",
+                "Рыночная цена может отклоняться от расчётной справедливой стоимости.",
+            ],
+        }
         if usage is not None: payload["usage"] = usage
         if compact: return {k: payload[k] for k in ("run_id","status","scenarios","analysis_date","stale_due_to_new_financials")}
         return payload
@@ -405,9 +597,45 @@ class DCFService:
 
 
 def dcf_health(session: Session) -> dict:
-    latest = session.scalar(select(DCFRun).where(DCFRun.status == "completed").order_by(DCFRun.completed_at.desc()))
-    return {"engine": {"status": "healthy", "version": DCFValuationEngine.version, "deterministic": True},
-        "database": {"status": "healthy"}, "financial_data": {"statements": int(session.scalar(select(func.count(FinancialStatement.id))) or 0)},
-        "macro_provider": {"status": "healthy" if session.scalar(select(YieldCurve.id).limit(1)) else "unavailable"},
-        "ai_explanation": {"status": "optional", "affects_numeric_result": False},
-        "latest_successful_run": latest.completed_at if latest else None}
+    checked_at = datetime.now(timezone.utc)
+    try:
+        probe = DCFValuationEngine().calculate(
+            ValuationInput(revenue=100.0, net_debt=10.0, shares_outstanding=10.0, forecast_years=2),
+            ScenarioAssumptions((0.03, 0.02), 0.15, 0.20, 0.03, 0.04, 0.05, 0.12, 0.04),
+        )
+        engine = {
+            "status": "healthy" if probe["fair_value_per_share"] > 0 else "unhealthy",
+            "version": DCFValuationEngine.version,
+            "deterministic": True,
+        }
+    except Exception as exc:
+        engine = {"status": "unhealthy", "version": DCFValuationEngine.version, "deterministic": True, "error": str(exc)}
+
+    try:
+        session.execute(text("SELECT 1"))
+        statement_count = int(session.scalar(select(func.count(FinancialStatement.id))) or 0)
+        latest_statement = session.scalar(select(func.max(FinancialStatement.period_end)))
+        latest = session.scalar(select(DCFRun).where(DCFRun.status == "completed").order_by(DCFRun.completed_at.desc()))
+        database = {"status": "healthy"}
+    except Exception as exc:
+        statement_count, latest_statement, latest = 0, None, None
+        database = {"status": "unhealthy", "error": str(exc)}
+
+    has_curve = bool(session.scalar(select(YieldCurve.id).limit(1))) if database["status"] == "healthy" else False
+    has_inflation = bool(session.scalar(select(InflationData.id).limit(1))) if database["status"] == "healthy" else False
+    macro_status = "healthy" if has_curve and has_inflation else "degraded"
+    overall = "healthy" if engine["status"] == database["status"] == "healthy" else "degraded"
+    return {
+        "status": overall,
+        "engine": engine,
+        "database": database,
+        "financial_data": {
+            "status": "available" if statement_count else "unavailable",
+            "statements": statement_count,
+            "latest_period": latest_statement,
+        },
+        "macro_provider": {"status": macro_status, "yield_curve": has_curve, "inflation": has_inflation},
+        "ai_explanation": {"status": "optional_not_configured", "affects_numeric_result": False},
+        "latest_successful_run": latest.completed_at if latest else None,
+        "checked_at": checked_at,
+    }

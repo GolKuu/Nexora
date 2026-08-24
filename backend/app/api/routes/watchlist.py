@@ -10,6 +10,7 @@ from app.repositories.portfolios import WatchlistRepository
 from app.schemas.portfolios import WatchlistCreate
 from app.services.bond_service import BondService
 from app.services.stock_service import StockService
+from app.services.dcf_service import DCFService
 
 router = APIRouter()
 
@@ -28,11 +29,20 @@ def list_watchlist(
         item["note"] = notes.get(item["id"])
         item["instrument_type"] = "bond"
     stocks = StockService(session)
+    stock_items = []
     for entry in entries:
         if entry.stock_id is not None and entry.stock is not None:
             item = stocks.item(entry.stock)
             item["note"] = entry.note
+            stock_items.append(item)
             items.append(item)
+    summaries = DCFService(session).cached_summaries(
+        [item["ticker"] for item in stock_items],
+        identity,
+        {item["ticker"]: item["price"] for item in stock_items},
+    )
+    for item in stock_items:
+        item["dcf_summary"] = summaries.get(item["ticker"], {"status": "not_calculated"})
     return {"items": items, "requires_identity": not identity.has_owner}
 
 

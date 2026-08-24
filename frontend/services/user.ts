@@ -1,6 +1,7 @@
 import { api } from "@/services/client";
 import type {
   BondListItem,
+  DCFResult,
   PortfolioDetail,
   StockListItem,
   UserSettings,
@@ -8,6 +9,9 @@ import type {
 
 export const settingsService = {
   get: () => api.get<UserSettings>("/settings"),
+  dcfUsage: () => api.get<DCFResult["usage"]>("/me/dcf-usage"),
+  dcfHealth: () => api.get<{engine:{status:string;version:string;deterministic:boolean};financial_data:{statements:number};macro_provider:{status:string};ai_explanation:{status:string}}>("/health/dcf"),
+  monitoringHealth: () => api.get<{status?:string;state?:string;last_success_at?:string|null;detail?:string|null}>("/health/monitoring"),
   update: (values: Partial<UserSettings>) => api.put<UserSettings>("/settings", values),
   inflation: (horizonYears?: number) =>
     api.get<{
@@ -63,7 +67,14 @@ export const portfolioService = {
       fees?: number;
     },
   ) => api.post<{ id: number; ticker: string }>(`/portfolios/${id}/positions`, payload),
-  updatePosition: (id: number, positionId: number, payload: { quantity?: number }) =>
+  updatePosition: (id: number, positionId: number, payload: {
+    quantity?: number;
+    purchase_clean_price?: number;
+    purchase_price?: number;
+    purchase_date?: string;
+    fees?: number;
+    note?: string;
+  }) =>
     api.put<{ id: number }>(`/portfolios/${id}/positions/${positionId}`, payload),
   removePosition: (id: number, positionId: number) =>
     api.delete<void>(`/portfolios/${id}/positions/${positionId}`),

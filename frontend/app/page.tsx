@@ -1,6 +1,7 @@
 import { HomeExplorer } from "@/features/home/HomeExplorer";
 import { HomePulse } from "@/features/home/HomePulse";
 import { SearchBar } from "@/features/search/SearchBar";
+import { DCFEntry } from "@/features/home/DCFEntry";
 
 export default function HomePage() {
   return (
@@ -21,6 +22,7 @@ export default function HomePage() {
         </p>
       </section>
 
+      <DCFEntry />
       <HomeExplorer />
       <HomePulse />
     </div>

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_session
+from app.api.deps import Identity, get_identity, get_session
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.models.stock import Stock
 from app.schemas.stocks import StockCompareRequest, StockInvestmentRequest, StockRecommendRequest, UniversalSearchRequest
@@ -16,10 +16,11 @@ from app.services.backfill.status import stock_history_coverage
 from app.services.chart_service import ChartService
 from app.services.stock_service import StockService
 from app.services.stock_analyst import StockAnalystService
-from app.services.stock_market import ensure_fresh_stock_market
+from app.services.stock_market import stored_stock_market_status
 from app.services.stock_ranking import rank_stocks
 from app.services.news_queries import NewsQueryService
 from app.services.stock_forecast import StockForecastService
+from app.services.dcf_service import DCFService
 
 router = APIRouter()
 
@@ -41,8 +42,23 @@ def stock_daily_drivers(identifier: str, session: Session = Depends(get_session)
 
 
 @router.get("")
-def list_stocks(q: str | None = None, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), profile: str = "balanced", session: Session = Depends(get_session)) -> dict:
-    return StockService(session).list(query=q, limit=limit, offset=offset, profile=profile)
+def list_stocks(
+    q: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    profile: str = "balanced",
+    session: Session = Depends(get_session),
+    identity: Identity = Depends(get_identity),
+) -> dict:
+    payload = StockService(session).list(query=q, limit=limit, offset=offset, profile=profile)
+    summaries = DCFService(session).cached_summaries(
+        [item["ticker"] for item in payload["items"]],
+        identity,
+        {item["ticker"]: item["price"] for item in payload["items"]},
+    )
+    for item in payload["items"]:
+        item["dcf_summary"] = summaries.get(item["ticker"], {"status": "not_calculated"})
+    return payload
 
 
 @router.get("/search")
@@ -56,11 +72,10 @@ def interpret_stock_search(payload: UniversalSearchRequest, session: Session = D
 
 
 @router.get("/top")
-async def top_stocks(category: str = "best", limit: int = Query(10, ge=1, le=100), session: Session = Depends(get_session)) -> dict:
-    refresh = await ensure_fresh_stock_market(session)
+def top_stocks(category: str = "best", limit: int = Query(10, ge=1, le=100), session: Session = Depends(get_session)) -> dict:
     payload = StockService(session).list(limit=500)
     ranking = rank_stocks(payload["items"], category, limit)
-    ranking["market_refresh"] = refresh
+    ranking["market_refresh"] = stored_stock_market_status(session)
     return ranking
 
 
@@ -70,12 +85,18 @@ def recommend_stocks(payload: StockRecommendRequest, session: Session = Depends(
 
 
 @router.post("/compare")
-def compare_stocks(payload: StockCompareRequest, session: Session = Depends(get_session)) -> dict:
+def compare_stocks(payload: StockCompareRequest, session: Session = Depends(get_session), identity: Identity = Depends(get_identity)) -> dict:
     service = StockService(session); columns = []
     for identifier in payload.identifiers:
         card = service.card(identifier)
         calculation = service.calculate(identifier, StockInvestmentRequest(amount=payload.amount, scenario=payload.scenario)) if payload.amount else None
         columns.append({"ticker": card["ticker"], "company_name": card["company_name"], "price": card["price"], "market_cap": card["market_cap"], "metrics": card["metrics"], "scores": card["scores"], "investment_calculation": calculation})
+    dcf = DCFService(session).cached_summaries(
+        [column["ticker"] for column in columns], identity,
+        {column["ticker"]: column["price"] for column in columns},
+    )
+    for column in columns:
+        column["dcf_summary"] = dcf.get(column["ticker"], {"status": "not_calculated"})
     return {"columns": columns, "amount": payload.amount, "scenario": payload.scenario, "warning": "Сценарии не являются прогнозом будущей цены."}
 
 
@@ -199,10 +220,9 @@ def stock_change_summary(
 
 
 @router.get("/{identifier}/forecast")
-async def stock_forecast(identifier: str, horizon: str = Query("20d", pattern=r"^(1|5|20|60)d$"), session: Session = Depends(get_session)) -> dict:
-    market_refresh = await ensure_fresh_stock_market(session)
+def stock_forecast(identifier: str, horizon: str = Query("20d", pattern=r"^(1|5|20|60)d$"), session: Session = Depends(get_session)) -> dict:
     payload = StockForecastService(session).forecast(identifier, int(horizon[:-1]))
-    payload["market_refresh"] = market_refresh
+    payload["market_refresh"] = stored_stock_market_status(session)
     return payload
 
 

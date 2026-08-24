@@ -289,6 +289,9 @@ export interface UserSettings {
   chart_news_markers_enabled: boolean;
   forecast_enabled: boolean;
   uncertainty_intervals_enabled: boolean;
+  show_dcf_explanation: boolean;
+  show_dcf_confidence: boolean;
+  show_dcf_scenario_differences: boolean;
   default_chart_range: "1d" | "5d" | "1m" | "3m" | "6m" | "1y" | "2y" | "3y" | "5y" | "max";
 }
 
@@ -347,6 +350,12 @@ export interface PortfolioDetail {
   name: string;
   base_currency: string;
   positions: PortfolioPosition[];
+  history: {
+    status: "available" | "insufficient_history" | "unavailable_mixed_currency";
+    currency: string;
+    basis: "stored_market_observations_current_positions";
+    points: Array<{ date: string; value: number; positions_valued: number }>;
+  };
   summary: PortfolioSummary;
 }
 
@@ -384,6 +393,15 @@ export interface PeersResponse {
 }
 
 export interface StockScoreValue { value: number | null; confidence: number; version: string }
+export interface DCFSummary {
+  status: "available" | "stale" | "not_calculated" | "unsupported" | "insufficient_data";
+  bear_fair_value?: number | null;
+  base_fair_value?: number | null;
+  bull_fair_value?: number | null;
+  base_difference_percent?: number | null;
+  analysis_confidence?: "low" | "medium" | "high" | null;
+  analysis_date?: string | null;
+}
 export interface StockListItem {
   id: number; ticker: string; isin: string; company_name: string; issuer: string;
   instrument_type: "stock" | "preferred_stock"; type_label: string; currency: string;
@@ -391,6 +409,7 @@ export interface StockListItem {
   sector: string | null; metrics: Record<string, number | null>;
   scores: Record<string, StockScoreValue>; data_timestamp: string | null;
   data_mode: DataMode | null; source: string | null; kase_url: string | null;
+  dcf_summary?: DCFSummary;
 }
 export interface StockListResponse {
   items: StockListItem[]; total: number; limit: number; offset?: number;
@@ -826,7 +845,9 @@ export interface DCFResult {
   scenarios: { bear?: DCFScenarioValue; base?: DCFScenarioValue; bull?: DCFScenarioValue };
   financial_changes_2y: DCFFinancialChanges2Y;
   analysis_confidence: "low" | "medium" | "high";
+  valuation_uncertainty: "low" | "medium" | "high" | null;
   data_quality_score: number;
+  data_quality_status: "READY" | "READY_WITH_WARNINGS";
   data_as_of: string | null;
   analysis_date: string | null;
   warnings: string[];
@@ -834,5 +855,16 @@ export interface DCFResult {
   cache_hit: boolean;
   disclaimer: string;
   disclaimer_version: string;
+  explanation: {
+    summary: string;
+    drivers: Array<{ label: string; value: number | null }>;
+    risks: string[];
+  };
   usage: { plan: string; monthly_limit: number; used: number; remaining: number; period_end: string; can_run: boolean };
+}
+
+export interface DCFLatestResponse {
+  available: boolean;
+  result: DCFResult | null;
+  usage: DCFResult["usage"];
 }

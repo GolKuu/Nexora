@@ -10,7 +10,8 @@ import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, Skeleton, Stat } from "@/components/ui/Stat";
 import { portfolioService } from "@/services/user";
 import { useUiStore } from "@/stores/uiStore";
-import { formatMoney, formatNumber, formatPercent, formatRate } from "@/utils/format";
+import { formatDate, formatMoney, formatNumber, formatPercent, formatRate } from "@/utils/format";
+import type { PortfolioDetail, PortfolioPosition } from "@/types/api";
 
 function AddPositionForm({ portfolioId }: { portfolioId: number }) {
   const [instrumentType, setInstrumentType] = useState<"bond" | "stock">("bond");
@@ -82,8 +83,42 @@ function AddPositionForm({ portfolioId }: { portfolioId: number }) {
   );
 }
 
+function EditPositionForm({ portfolioId, position, onClose }: { portfolioId: number; position: PortfolioPosition; onClose: () => void }) {
+  const [quantity, setQuantity] = useState(String(position.quantity));
+  const [price, setPrice] = useState(String(position.instrument_type === "stock" ? position.purchase_price ?? "" : position.purchase_clean_price ?? ""));
+  const [purchaseDate, setPurchaseDate] = useState(position.purchase_date ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      await portfolioService.updatePosition(portfolioId, position.id, {
+        quantity: Number(quantity),
+        purchase_date: purchaseDate || undefined,
+        ...(position.instrument_type === "stock"
+          ? { purchase_price: price ? Number(price) : undefined }
+          : { purchase_clean_price: price ? Number(price) : undefined }),
+      });
+      await mutate(["portfolio", portfolioId]);
+      onClose();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Не удалось изменить позицию");
+    } finally { setBusy(false); }
+  }
+
+  return <div className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_1fr_auto] dark:border-slate-700">
+    <Field label="Количество"><Input type="number" min="0.000001" step="any" value={quantity} onChange={event => setQuantity(event.target.value)} /></Field>
+    <Field label={position.instrument_type === "stock" ? "Цена покупки" : "Цена, % номинала"}><Input type="number" min="0.000001" step="any" value={price} onChange={event => setPrice(event.target.value)} /></Field>
+    <Field label="Дата покупки"><Input type="date" value={purchaseDate} onChange={event => setPurchaseDate(event.target.value)} /></Field>
+    <div className="flex items-end gap-2"><Button onClick={() => void save()} disabled={busy || Number(quantity) <= 0}>Сохранить</Button><button type="button" className="px-2 py-2 text-xs text-slate-500" onClick={onClose}>Отмена</button></div>
+    {error ? <p className="text-sm text-rose-600 sm:col-span-4">{error}</p> : null}
+  </div>;
+}
+
 function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
   const uiMode = useUiStore((s) => s.uiMode);
+  const [editingPosition, setEditingPosition] = useState<PortfolioPosition | null>(null);
   const { data, isLoading } = useSWR(["portfolio", portfolioId], () =>
     portfolioService.detail(portfolioId),
   );
@@ -178,6 +213,8 @@ function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
         </CardBody>
       </Card>
 
+      <PortfolioHistoryChart history={data.history} />
+
       <Card>
         <CardHeader title="Позиции" />
         <CardBody className="overflow-x-auto">
@@ -229,6 +266,7 @@ function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
                     </td>
                     <td className="tabular py-2 text-right">{position.instrument_type === "stock" ? formatMoney(position.dividend_income_trailing, position.currency) : formatRate(position.ytm)}</td>
                     <td className="py-2 text-right">
+                      <button type="button" className="mr-3 text-xs text-slate-400 hover:text-sky-600" onClick={() => setEditingPosition(position)}>изменить</button>
                       <button
                         type="button"
                         className="text-xs text-slate-400 hover:text-rose-600"
@@ -245,6 +283,7 @@ function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
               </tbody>
             </table>
           )}
+          {editingPosition ? <EditPositionForm portfolioId={portfolioId} position={editingPosition} onClose={() => setEditingPosition(null)} /> : null}
         </CardBody>
       </Card>
 
@@ -256,6 +295,24 @@ function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
       </Card>
     </div>
   );
+}
+
+function PortfolioHistoryChart({history}:{history: PortfolioDetail["history"]}) {
+  if (history.status !== "available" || history.points.length < 2) {
+    return <Card><CardHeader title="История портфеля" subtitle="По сохранённым рыночным наблюдениям за последний год"/><CardBody><EmptyState title={history.status === "unavailable_mixed_currency" ? "Нужна история валютных курсов" : "Истории пока недостаточно"} description={history.status === "unavailable_mixed_currency" ? "Портфель содержит разные валюты, поэтому значения не складываются без фактического FX-ряда." : "График появится после двух или более фактических наблюдений цен."}/></CardBody></Card>;
+  }
+  const values = history.points.map(point => point.value);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const spread = maximum - minimum || Math.max(maximum * .01, 1);
+  const coordinates = history.points.map((point,index) => {
+    const x = history.points.length === 1 ? 0 : index / (history.points.length - 1) * 600;
+    const y = 165 - (point.value - minimum) / spread * 145;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const first = history.points[0];
+  const last = history.points.at(-1)!;
+  return <Card><CardHeader title="История портфеля" subtitle="Текущий состав по фактическим сохранённым котировкам · без искусственного заполнения торговых дней"/><CardBody><div className="mb-3 flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{formatDate(first.date)} · {formatMoney(first.value, history.currency)}</span><strong className="text-slate-800 dark:text-slate-100">{formatDate(last.date)} · {formatMoney(last.value, history.currency)}</strong></div><svg viewBox="0 0 600 180" role="img" aria-label="График исторической стоимости портфеля" className="h-48 w-full overflow-visible"><path d="M0 165H600" stroke="currentColor" className="text-slate-200 dark:text-slate-700"/><polyline points={coordinates} fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" className="text-emerald-500"/></svg><p className="mt-2 text-[11px] text-slate-500">Историческая оценка использует текущий состав позиций и последнюю доступную на дату котировку. Это не график денежных потоков или доходности с учётом пополнений.</p></CardBody></Card>;
 }
 
 export function PortfolioView() {

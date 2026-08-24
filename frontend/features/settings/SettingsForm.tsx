@@ -17,11 +17,29 @@ export function SettingsForm() {
   const { data: inflation } = useSWR("inflation", () => settingsService.inflation(), {
     revalidateOnFocus: false,
   });
+  const { data: dcfUsage } = useSWR("dcf-usage", () => settingsService.dcfUsage(), {
+    revalidateOnFocus: false,
+  });
+  const { data: dcfHealth } = useSWR("dcf-health", () => settingsService.dcfHealth(), {
+    revalidateOnFocus: false,
+  });
+  const { data: monitoringHealth } = useSWR("monitoring-health", () => settingsService.monitoringHealth(), {
+    revalidateOnFocus: false,
+  });
 
   if (isLoading || !settings) return <Skeleton className="h-64 w-full" />;
 
   return (
     <div className="space-y-4">
+      <Card>
+        <CardHeader title="Аккаунт и подписка" subtitle="Доступ и лимит проверяются backend перед каждым новым расчётом." />
+        <CardBody className="grid gap-3 sm:grid-cols-3">
+          <div><p className="text-xs text-slate-500">План</p><p className="mt-1 font-semibold">{dcfUsage?.plan ?? "free"}</p></div>
+          <div><p className="text-xs text-slate-500">DCF в этом месяце</p><p className="mt-1 font-semibold">{dcfUsage ? `${dcfUsage.used} из ${dcfUsage.monthly_limit}` : "—"}</p></div>
+          <div><p className="text-xs text-slate-500">Осталось</p><p className="mt-1 font-semibold">{dcfUsage?.remaining ?? 0}</p></div>
+        </CardBody>
+      </Card>
+
       <Card>
         <CardHeader
           title="Инфляция и реальная доходность"
@@ -165,6 +183,30 @@ export function SettingsForm() {
 
       <Card>
         <CardHeader
+          title="DCF"
+          subtitle="Управляет детализацией результата, но не меняет числовую модель и её допущения."
+        />
+        <CardBody className="space-y-2">
+          <Switch
+            label="Показывать объяснение оценки"
+            checked={settings.show_dcf_explanation}
+            onChange={(value) => void update({ show_dcf_explanation: value })}
+          />
+          <Switch
+            label="Показывать уверенность анализа"
+            checked={settings.show_dcf_confidence}
+            onChange={(value) => void update({ show_dcf_confidence: value })}
+          />
+          <Switch
+            label="Показывать разницу сценариев с рынком"
+            checked={settings.show_dcf_scenario_differences}
+            onChange={(value) => void update({ show_dcf_scenario_differences: value })}
+          />
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
           title="Данные и анализ"
           subtitle="Настройки меняют представление и рекомендации, но не переписывают объективные финансовые показатели."
         />
@@ -217,6 +259,16 @@ export function SettingsForm() {
               <option value="5y">5 лет</option><option value="max">Вся история</option>
             </Select>
           </Field>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Расширенная диагностика" subtitle="Состояние сохранённых данных и моделей, а не обещание доступности внешнего сайта." />
+        <CardBody className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div><p className="text-xs text-slate-500">DCF модель</p><p className="mt-1 font-semibold">{dcfHealth?.engine.version ?? "—"}</p></div>
+          <div><p className="text-xs text-slate-500">Финансовые отчёты</p><p className="mt-1 font-semibold">{dcfHealth?.financial_data.statements ?? "—"}</p></div>
+          <div><p className="text-xs text-slate-500">Макро-данные</p><p className="mt-1 font-semibold">{dcfHealth?.macro_provider.status ?? "—"}</p></div>
+          <div><p className="text-xs text-slate-500">Мониторинг / parser</p><p className="mt-1 font-semibold">{monitoringHealth?.status ?? monitoringHealth?.state ?? "—"}</p></div>
         </CardBody>
       </Card>
 

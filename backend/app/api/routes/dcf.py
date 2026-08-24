@@ -25,6 +25,11 @@ def dcf_history(identifier: str, session: Session = Depends(get_session), identi
     return DCFService(session).history(identifier, identity)
 
 
+@router.get("/stocks/{identifier}/dcf-latest")
+def latest_dcf(identifier: str, session: Session = Depends(get_session), identity: Identity = Depends(get_identity)) -> dict:
+    return DCFService(session).latest(identifier, identity)
+
+
 @router.get("/dcf/{run_id}")
 def dcf_result(run_id: int, session: Session = Depends(get_session), identity: Identity = Depends(get_identity)) -> dict:
     return DCFService(session).get(run_id, identity)

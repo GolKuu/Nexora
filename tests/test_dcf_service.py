@@ -56,8 +56,16 @@ def test_end_to_end_persists_audit_and_cache_does_not_consume_quota(session) -> 
     run = session.get(DCFRun, first["run_id"])
     assert run.dcf_model_version == "corporate-fcff-1.0.0"
     assert run.prompt_version == "dcf-explanation-rules-1.0"
+    assert first["valuation_uncertainty"] in {"low", "medium", "high"}
+    assert first["data_quality_status"] in {"READY", "READY_WITH_WARNINGS"}
+    assert {driver["label"] for driver in first["explanation"]["drivers"]} >= {
+        "Рост выручки", "Ставка дисконтирования WACC"
+    }
     assert len(run.scenarios) == 3 and len(run.snapshots) == 4
     assert len(run.assumptions) == 24
+    base = next(row for row in run.scenarios if row.scenario_type == "base")
+    assert len(base.calculation["sensitivity"]["cases"]) == 8
+    assert any(row.rule == "sensitivity_stability" for row in run.validations)
     session.add(StockQuote(stock_id=stock.id, timestamp=datetime.now(timezone.utc)+timedelta(seconds=1), last=6_000, close=6_000,
         data_mode="mock", source="new-market-tick")); session.commit()
     second = DCFService(session).analyze(stock.instrument.ticker, identity)
@@ -67,6 +75,79 @@ def test_end_to_end_persists_audit_and_cache_does_not_consume_quota(session) -> 
     assert second["scenarios"]["base"]["difference_percent"] != first["scenarios"]["base"]["difference_percent"]
     counted = session.query(DCFUsageEvent).filter_by(anonymous_token_hash=run.anonymous_token_hash, counted=True).count()
     assert counted == 1
+
+
+def test_latest_result_is_read_only_and_owner_scoped(session) -> None:
+    stock = _eligible(session, "DCFLATEST")
+    owner = Identity(user_id=None, token="latest-owner")
+    created = DCFService(session).analyze(stock.instrument.ticker, owner)
+    before = session.query(DCFUsageEvent).count()
+
+    latest = DCFService(session).latest(stock.instrument.ticker, owner)
+    stranger = DCFService(session).latest(
+        stock.instrument.ticker, Identity(user_id=None, token="another-owner")
+    )
+
+    assert latest["available"] is True
+    assert latest["result"]["run_id"] == created["run_id"]
+    assert latest["usage"]["used"] == 1
+    assert stranger["available"] is False
+    assert session.query(DCFUsageEvent).count() == before
+
+
+def test_latest_marks_result_stale_when_new_report_exists_without_mutation(session) -> None:
+    stock = _eligible(session, "DCFSTALE")
+    identity = Identity(user_id=None, token="stale-owner")
+    created = DCFService(session).analyze(stock.instrument.ticker, identity)
+    now = datetime.now(timezone.utc)
+    session.add(FinancialStatement(
+        issuer_id=stock.instrument.issuer_id, period_end=date(2026, 12, 31),
+        period_type="FY", fiscal_year=2026, currency="KZT", is_audited=True,
+        is_consolidated=True, standard="IFRS", revenue=112e9,
+        operating_profit=18e9, ebitda=22e9, net_profit=11e9,
+        total_debt=18e9, cash_and_equivalents=7e9, current_assets=32e9,
+        current_liabilities=19e9, capex=6e9, operating_cash_flow=16e9,
+        source="new-report", source_timestamp=now, fetched_at=now,
+    ))
+    session.commit()
+
+    latest = DCFService(session).latest(stock.instrument.ticker, identity)
+
+    assert latest["result"]["run_id"] == created["run_id"]
+    assert latest["result"]["stale_due_to_new_financials"] is True
+    assert session.get(DCFRun, created["run_id"]).stale_due_to_new_financials is False
+    listed = DCFService(session).cached_summaries(
+        [stock.instrument.ticker], identity, {stock.instrument.ticker: 5_000}
+    )
+    assert listed[stock.instrument.ticker]["status"] == "stale"
+
+
+def test_stock_comparison_reuses_owner_cached_dcf_without_new_run(session, api) -> None:
+    stock = _eligible(session, "DCFCMP")
+    peer = _eligible(session, "DCFPEER")
+    headers = {"X-Anon-Token": "compare-owner"}
+    created = api.post(
+        f"/stocks/{stock.instrument.ticker}/dcf",
+        json={"force_refresh": False}, headers=headers,
+    ).json()
+    runs_before = session.query(DCFRun).count()
+
+    compared = api.post(
+        "/stocks/compare",
+        json={"identifiers": [stock.instrument.ticker, peer.instrument.ticker], "scenario": "base"},
+        headers=headers,
+    )
+
+    assert compared.status_code == 200
+    summary = compared.json()["columns"][0]["dcf_summary"]
+    assert summary["status"] == "available"
+    assert summary["base_fair_value"] == pytest.approx(created["scenarios"]["base"]["fair_value"])
+    assert session.query(DCFRun).count() == runs_before
+    assert compared.json()["columns"][1]["dcf_summary"]["status"] == "not_calculated"
+    listed = api.get("/stocks?limit=100", headers=headers).json()["items"]
+    listed_summary = next(item for item in listed if item["ticker"] == stock.instrument.ticker)["dcf_summary"]
+    assert listed_summary["status"] == "available"
+    assert listed_summary["base_fair_value"] == pytest.approx(created["scenarios"]["base"]["fair_value"])
 
 
 def test_insufficient_data_never_returns_target(session) -> None:

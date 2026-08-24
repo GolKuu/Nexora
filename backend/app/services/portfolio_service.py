@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.calculations.portfolio import (
@@ -15,6 +16,8 @@ from app.calculations.portfolio import (
 from app.calculations.returns import calculate_real_return
 from app.core.errors import NotFoundError
 from app.models.portfolio import Portfolio
+from app.models.market import BondQuote
+from app.models.stock import StockQuote
 from app.repositories.bonds import BondRepository
 from app.repositories.metrics import MetricRepository
 from app.repositories.portfolios import PortfolioRepository
@@ -195,6 +198,7 @@ class PortfolioService:
             "name": portfolio.name,
             "base_currency": portfolio.base_currency,
             "positions": positions,
+            "history": self._history(portfolio),
             "summary": {
                 "position_count": len(positions),
                 "market_value": round(total_value, 2) if total_value else None,
@@ -224,4 +228,103 @@ class PortfolioService:
                 },
                 "issuer_concentration": issuer_concentration,
             },
+        }
+
+    def _history(self, portfolio: Portfolio) -> dict:
+        """Value the current positions on factual stored daily observations.
+
+        This is intentionally one stock query plus one bond query, never one
+        request/query per position. Missing market days remain absent and a
+        mixed-currency portfolio is not summed without a real FX series.
+        """
+        currencies = {
+            position.stock.instrument.currency
+            if position.stock_id is not None and position.stock is not None
+            else position.bond.currency
+            for position in portfolio.positions
+            if position.stock is not None or position.bond is not None
+        }
+        if len(currencies) > 1:
+            return {
+                "status": "unavailable_mixed_currency", "currency": portfolio.base_currency,
+                "points": [], "basis": "stored_market_observations_current_positions",
+            }
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=365)
+        stock_positions = {p.stock_id: p for p in portfolio.positions if p.stock_id is not None}
+        bond_positions = {p.bond_id: p for p in portfolio.positions if p.bond_id is not None}
+        observations: dict[date, list[tuple[str, int, float]]] = {}
+
+        if stock_positions:
+            rows = self.session.scalars(
+                select(StockQuote)
+                .where(StockQuote.stock_id.in_(stock_positions), StockQuote.timestamp >= cutoff)
+                .order_by(StockQuote.timestamp, StockQuote.id)
+            )
+            for row in rows:
+                price = row.last if row.last is not None else row.close
+                if price is not None and price > 0:
+                    observations.setdefault(row.timestamp.date(), []).append(("stock", row.stock_id, price))
+
+        if bond_positions:
+            rows = self.session.scalars(
+                select(BondQuote)
+                .where(BondQuote.bond_id.in_(bond_positions), BondQuote.timestamp >= cutoff)
+                .order_by(BondQuote.timestamp, BondQuote.id)
+            )
+            for row in rows:
+                price = row.dirty_price
+                if price is None and row.clean_price is not None:
+                    price = row.clean_price + (row.accrued_interest or 0.0)
+                if price is not None and price > 0:
+                    observations.setdefault(row.timestamp.date(), []).append(("bond", row.bond_id, price))
+
+        latest: dict[tuple[str, int], float] = {}
+        points = []
+        for day in sorted(observations):
+            for kind, instrument_id, price in observations[day]:
+                latest[(kind, instrument_id)] = price
+            value = 0.0
+            valued = 0
+            for stock_id, position in stock_positions.items():
+                price = latest.get(("stock", stock_id))
+                if price is not None and (position.purchase_date is None or position.purchase_date <= day):
+                    value += price * position.quantity
+                    valued += 1
+            for bond_id, position in bond_positions.items():
+                price = latest.get(("bond", bond_id))
+                if price is not None and (position.purchase_date is None or position.purchase_date <= day):
+                    nominal = position.bond.nominal or 100.0
+                    value += price / 100.0 * nominal * position.quantity
+                    valued += 1
+            if valued:
+                points.append({"date": day.isoformat(), "value": round(value, 2), "positions_valued": valued})
+
+        if len(points) > 180:
+            step = max(1, len(points) // 179)
+            points = points[::step]
+            if points[-1]["date"] != max(observations).isoformat():
+                last_day = max(observations).isoformat()
+                # Keep the latest calculated point even when downsampling.
+                tail = next((point for point in reversed(points) if point["date"] == last_day), None)
+                if tail is None:
+                    # Reuse the undownsampled terminal valuation through the
+                    # final running state calculated above.
+                    value = 0.0
+                    valued = 0
+                    for stock_id, position in stock_positions.items():
+                        price = latest.get(("stock", stock_id))
+                        if price is not None:
+                            value += price * position.quantity; valued += 1
+                    for bond_id, position in bond_positions.items():
+                        price = latest.get(("bond", bond_id))
+                        if price is not None:
+                            value += price / 100.0 * (position.bond.nominal or 100.0) * position.quantity; valued += 1
+                    points.append({"date": last_day, "value": round(value, 2), "positions_valued": valued})
+
+        return {
+            "status": "available" if len(points) >= 2 else "insufficient_history",
+            "currency": next(iter(currencies), portfolio.base_currency),
+            "points": points,
+            "basis": "stored_market_observations_current_positions",
         }
