@@ -12,6 +12,7 @@ import { SeriesPanel } from "@/features/charts/SeriesPanel";
 import { ScoreHistoryPanel } from "@/features/charts/ScoreHistoryPanel";
 import { NewsImpactPanel } from "@/features/stocks/NewsImpactPanel";
 import { ForecastPanel } from "@/features/stocks/ForecastPanel";
+import { DCFValuationPanel } from "@/features/stocks/DCFValuationPanel";
 import { StockAlerts } from "@/features/stocks/StockAlerts";
 import { StockCalculator } from "@/features/stocks/StockCalculator";
 import { useStockCard } from "@/hooks/useStocks";
@@ -26,6 +27,7 @@ export default function StockPage({params}:{params:Promise<{identifier:string}>}
   if(error||!data)return <Card><CardBody><EmptyState title="Акция не найдена" description="Проверьте тикер или ISIN." action={<Link href="/stocks" className="underline">К акциям</Link>}/></CardBody></Card>;
   return <div className="space-y-4">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h1 className="text-3xl font-semibold">{data.ticker}</h1><Badge tone="success">{data.type_label}</Badge></div><p className="mt-1 text-sm text-slate-500">{data.company_name} · данные {formatDate(data.data_timestamp)}</p></div><div className="flex items-center gap-2"><WatchButton ticker={data.ticker} instrumentType="stock"/><a href={data.kase_url??"#"} target="_blank" rel="noreferrer" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">Открыть на KASE ↗</a></div></div>
+    <DCFValuationPanel ticker={data.ticker} currency={data.currency} currentPrice={data.price}/>
     <ForecastPanel ticker={data.ticker} currency={data.currency}/>
     <div className="grid gap-4 lg:grid-cols-3"><div className="space-y-4 lg:col-span-2">
       <Card><CardBody className="grid gap-5 sm:grid-cols-[auto_1fr]"><ScoreDial value={data.scores.investment?.value} label="из 100" caption="Общая оценка"/><div><p className="text-3xl font-semibold tabular">{formatMoney(data.price,data.currency,2)}</p><p className="mt-1 text-sm text-slate-500">{data.simple.valuation}. {data.simple.important}</p><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">{Object.entries(SCORE_LABELS).map(([kind,label])=><ScoreBar key={kind} label={label} value={data.scores[kind]?.value}/>)}</div></div></CardBody></Card>

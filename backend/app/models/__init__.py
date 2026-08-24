@@ -30,6 +30,9 @@ from app.models.scores import BondScore, ScoreComponent
 from app.models.strict_scores import StrictScoreSnapshot
 from app.models.source import DataSource, RawKaseData
 from app.models.user import User, UserSettings
+from app.models.dcf import (DCFAssumption, DCFCostEvent, DCFInputSnapshot, DCFModelVersion, DCFRun,
+    DCFScenarioResult, DCFSubscription, DCFUsageEvent, DCFValidationResult,
+    DisclaimerConfig)
 from app.models.news import (CompanyAlias, EventCluster, EventMarketReaction, MarketEvent,
     NewsArticle, NewsClusterMember, NewsImpactScore, NotificationCandidate)
 from app.models.forecast import ForecastChange, ForecastEvaluation, ForecastModelVersion, ForecastSnapshot
@@ -82,6 +85,9 @@ __all__ = [
     "StrictScoreSnapshot",
     "User",
     "UserSettings",
+    "DCFAssumption", "DCFCostEvent", "DCFInputSnapshot", "DCFModelVersion", "DCFRun",
+    "DCFScenarioResult", "DCFSubscription", "DCFUsageEvent",
+    "DCFValidationResult", "DisclaimerConfig",
     "Watchlist",
     "YieldCurve",
     "Stock",

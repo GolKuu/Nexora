@@ -220,6 +220,16 @@ class Settings(BaseSettings):
     SCORING_MODEL_VERSION: str = "1.0.0"
     FORMULA_VERSION: str = "1.0.0"
 
+    # --- deterministic DCF ----------------------------------------------
+    DCF_MODELS_PER_MONTH: int = 3
+    DCF_ENABLED_PLANS: str = "strategy,premium"
+    DCF_POLICY_TAX_RATE: float = 0.20
+    DCF_EQUITY_RISK_PREMIUM: float = 0.055
+    DCF_FALLBACK_BETA: float = 1.0
+    DCF_DEBT_SPREAD: float = 0.03
+    DCF_TERMINAL_GROWTH_CAP: float = 0.06
+    DCF_STALE_PRICE_DAYS: int = 7
+
     # --- inflation -------------------------------------------------------
     DEFAULT_INFLATION_RATE: float = 0.0
     INFLATION_SOURCE_URL: str = "https://stat.gov.kz"
@@ -272,6 +282,10 @@ class Settings(BaseSettings):
             "max_rows": self.BROWSER_MAX_ROWS,
             "max_runtime_s": self.BROWSER_MAX_RUNTIME_S,
         }
+
+    @property
+    def dcf_enabled_plans(self) -> set[str]:
+        return {value.strip().lower() for value in self.DCF_ENABLED_PLANS.split(",") if value.strip()}
 
 
 @lru_cache

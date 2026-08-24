@@ -778,3 +778,28 @@ export interface ScoreHistoryResponse {
   instrument_type: InstrumentKind; ticker: string; isin: string | null; name: string | null;
   count: number; snapshots: ScoreHistorySnapshot[]; transitions: ScoreHistoryTransition[]; note: string;
 }
+
+export interface DCFScenarioValue {
+  fair_value: number;
+  difference_percent: number | null;
+}
+
+export interface DCFResult {
+  run_id: number;
+  status: "completed" | "failed" | "running";
+  instrument: { ticker: string; instrument_id: number };
+  current_price: number | null;
+  current_price_timestamp: string | null;
+  currency: string;
+  scenarios: { bear?: DCFScenarioValue; base?: DCFScenarioValue; bull?: DCFScenarioValue };
+  analysis_confidence: "low" | "medium" | "high";
+  data_quality_score: number;
+  data_as_of: string | null;
+  analysis_date: string | null;
+  warnings: string[];
+  stale_due_to_new_financials: boolean;
+  cache_hit: boolean;
+  disclaimer: string;
+  disclaimer_version: string;
+  usage: { plan: string; monthly_limit: number; used: number; remaining: number; period_end: string; can_run: boolean };
+}

@@ -1,4 +1,12 @@
-# KASE Bond AI
+# KASE Investment AI
+
+The product includes an auditable **AI DCF Valuation** flow for eligible operating-company shares: ticker → validated stored financial/macro/market data → deterministic FCFF engine → Bear/Base/Bull fair values. AI can explain a result but never calculates its numeric target prices.
+
+Retail DCF endpoint: `POST /api/v1/stocks/{ticker}/dcf`. Reopen with `GET /api/v1/dcf/{run_id}`; cached views do not consume another monthly unit. Usage is available at `GET /api/v1/me/dcf-usage`. Full inputs, assumptions, formulas and validations are only available through the admin-protected audit endpoint.
+
+See [DCF methodology](docs/dcf/methodology.md), [governance controls](docs/dcf/ai-governance.md), and [data requirements](docs/dcf/data-requirements.md). Apply schema changes with `npm run migrate`.
+
+For an offline local end-to-end flow, point `DATABASE_URL` at a development database, run `python scripts/seed_dcf_demo.py`, start the app, and open ticker `DCFDEMO`. The script refuses production and labels every value as synthetic mock data.
 
 News-to-market alignment, event clustering, historical analogs, and the leakage-safe event dataset are documented in [News Intelligence](docs/news-intelligence.md).
 
