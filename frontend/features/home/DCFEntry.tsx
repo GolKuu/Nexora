@@ -2,19 +2,13 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import useSWR from "swr";
 
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody } from "@/components/ui/Card";
-import { settingsService } from "@/services/user";
 
 export function DCFEntry() {
   const [ticker, setTicker] = useState("");
   const router = useRouter();
-  const { data: usage } = useSWR("home-dcf-usage", settingsService.dcfUsage, {
-    revalidateOnFocus: false,
-    dedupingInterval: 60_000,
-  });
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -34,9 +28,9 @@ export function DCFEntry() {
         </form>
       </div>
       <div className="rounded-xl bg-white/80 px-4 py-3 text-sm dark:bg-slate-900/70">
-        <p className="text-xs text-slate-500">Ваш план</p>
-        <p className="font-semibold">{usage?.plan ?? "free"}</p>
-        <p className="mt-1 text-xs text-slate-500">Осталось {usage?.remaining ?? 0} из {usage?.monthly_limit ?? 0}</p>
+        <p className="text-xs text-slate-500">Доступ</p>
+        <p className="font-semibold">Бесплатно</p>
+        <p className="mt-1 text-xs text-slate-500">Без подписки и без лимита расчётов</p>
       </div>
     </CardBody>
   </Card>;

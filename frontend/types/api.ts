@@ -860,7 +860,7 @@ export interface DCFResult {
     drivers: Array<{ label: string; value: number | null }>;
     risks: string[];
   };
-  usage: { plan: string; monthly_limit: number; used: number; remaining: number; period_end: string; can_run: boolean };
+  usage: { plan: string; monthly_limit: number | null; used: number; remaining: number | null; period_end: string; can_run: boolean; unlimited?: boolean };
 }
 
 export interface DCFLatestResponse {

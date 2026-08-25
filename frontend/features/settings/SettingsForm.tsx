@@ -17,9 +17,6 @@ export function SettingsForm() {
   const { data: inflation } = useSWR("inflation", () => settingsService.inflation(), {
     revalidateOnFocus: false,
   });
-  const { data: dcfUsage } = useSWR("dcf-usage", () => settingsService.dcfUsage(), {
-    revalidateOnFocus: false,
-  });
   const { data: dcfHealth } = useSWR("dcf-health", () => settingsService.dcfHealth(), {
     revalidateOnFocus: false,
   });
@@ -32,11 +29,11 @@ export function SettingsForm() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader title="Аккаунт и подписка" subtitle="Доступ и лимит проверяются backend перед каждым новым расчётом." />
+        <CardHeader title="Аккаунт" subtitle="Все функции сервиса доступны бесплатно и без ограничений." />
         <CardBody className="grid gap-3 sm:grid-cols-3">
-          <div><p className="text-xs text-slate-500">План</p><p className="mt-1 font-semibold">{dcfUsage?.plan ?? "free"}</p></div>
-          <div><p className="text-xs text-slate-500">DCF в этом месяце</p><p className="mt-1 font-semibold">{dcfUsage ? `${dcfUsage.used} из ${dcfUsage.monthly_limit}` : "—"}</p></div>
-          <div><p className="text-xs text-slate-500">Осталось</p><p className="mt-1 font-semibold">{dcfUsage?.remaining ?? 0}</p></div>
+          <div><p className="text-xs text-slate-500">Доступ</p><p className="mt-1 font-semibold">Бесплатный</p></div>
+          <div><p className="text-xs text-slate-500">DCF-расчёты</p><p className="mt-1 font-semibold">Без лимита</p></div>
+          <div><p className="text-xs text-slate-500">Подписка</p><p className="mt-1 font-semibold">Не требуется</p></div>
         </CardBody>
       </Card>
 

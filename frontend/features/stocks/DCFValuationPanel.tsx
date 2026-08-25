@@ -37,7 +37,6 @@ export function DCFValuationPanel({ ticker, currency, currentPrice }: { ticker: 
     dedupingInterval: 60_000,
   });
   const displayedResult = result ?? latest.data?.result ?? null;
-  const usage = displayedResult?.usage ?? latest.data?.usage;
 
   async function analyze() {
     setLoading(true); setError(null);
@@ -65,9 +64,8 @@ export function DCFValuationPanel({ ticker, currency, currentPrice }: { ticker: 
     <CardBody>
       {!displayedResult ? <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center">
         <div><p className="text-sm text-slate-600 dark:text-slate-300">Текущая рыночная цена</p><p className="mt-1 text-2xl font-semibold tabular-nums">{formatMoney(currentPrice, currency, 2)}</p></div>
-        <Button size="lg" onClick={analyze} disabled={loading || latest.isLoading || usage?.can_run === false} className="w-full sm:w-auto">{loading ? "Подготовка и расчёт…" : latest.isLoading ? "Проверяем доступ…" : usage?.can_run === false ? "Требуется подписка Strategy" : "Рассчитать справедливую стоимость"}</Button>
+        <Button size="lg" onClick={analyze} disabled={loading || latest.isLoading} className="w-full sm:w-auto">{loading ? "Подготовка и расчёт…" : "Рассчитать справедливую стоимость"}</Button>
         {loading ? <p className="text-xs text-slate-500 sm:col-span-2">Подготавливаем данные · проверяем отчётность · рассчитываем три сценария</p> : null}
-        {!loading && usage?.can_run === false ? <p className="text-xs text-slate-500 sm:col-span-2">DCF — платная аналитика. Просмотр уже созданной оценки не списывает лимит.</p> : null}
         {error ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 sm:col-span-2 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">{error}</div> : null}
       </div> : <div className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2"><div><p className="text-xs uppercase tracking-wide text-slate-500">Текущая цена</p><p className="text-xl font-semibold tabular-nums">{formatMoney(displayedResult.current_price, displayedResult.currency, 2)}</p></div><p className="text-xs text-slate-500">{displayedResult.cache_hit || !result ? "Готовая актуальная модель" : "Новая модель"} · данные {formatDate(displayedResult.data_as_of)}</p></div>
@@ -80,7 +78,7 @@ export function DCFValuationPanel({ ticker, currency, currentPrice }: { ticker: 
           <div className="mt-3 grid gap-2 sm:grid-cols-2">{displayedResult.explanation.drivers.map(driver => <div key={driver.label} className="flex justify-between gap-3 text-xs"><span className="text-slate-500">{driver.label}</span><strong>{formatRate(driver.value)}</strong></div>)}</div>
           <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-slate-500">{displayedResult.explanation.risks.map(risk => <li key={risk}>{risk}</li>)}</ul>
         </details> : null}
-        <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500 dark:border-slate-700">{settings?.show_dcf_confidence !== false ? <><span>Уверенность: <strong className="text-slate-700 dark:text-slate-200">{confidenceLabel(displayedResult.analysis_confidence)}</strong></span><span>Неопределённость: {uncertaintyLabel(displayedResult.valuation_uncertainty)}</span></> : null}<span>Готовность: {displayedResult.data_quality_status === "READY" ? "готово" : "готово с предупреждениями"}</span><span>Качество данных: {Math.round(displayedResult.data_quality_score * 100)}%</span>{usage ? <span>Осталось расчётов: {usage.remaining} из {usage.monthly_limit}</span> : null}</div>
+        <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500 dark:border-slate-700">{settings?.show_dcf_confidence !== false ? <><span>Уверенность: <strong className="text-slate-700 dark:text-slate-200">{confidenceLabel(displayedResult.analysis_confidence)}</strong></span><span>Неопределённость: {uncertaintyLabel(displayedResult.valuation_uncertainty)}</span></> : null}<span>Готовность: {displayedResult.data_quality_status === "READY" ? "готово" : "готово с предупреждениями"}</span><span>Качество данных: {Math.round(displayedResult.data_quality_score * 100)}%</span><span>Расчёты доступны бесплатно и без лимита</span></div>
         {displayedResult.warnings.map(warning => <p key={warning} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{warning}</p>)}
         <p className="text-[11px] leading-relaxed text-slate-500">{displayedResult.disclaimer}</p>
       </div>}

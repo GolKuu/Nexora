@@ -182,7 +182,7 @@ def test_retail_result_api_and_admin_audit_are_separated(session, api) -> None:
     assert audit.status_code == 200
     assert len(audit.json()["assumptions"]) == 24
     usage = api.get("/me/dcf-usage", headers=headers).json()
-    assert usage["used"] == 1 and usage["remaining"] == 2
+    assert usage["used"] == 1 and usage["can_run"] is True and usage["unlimited"] is True
 
 
 def test_new_available_report_invalidates_old_run(session) -> None:

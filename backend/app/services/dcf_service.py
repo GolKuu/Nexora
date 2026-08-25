@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.errors import ForbiddenError, InsufficientDataError, NotFoundError, ValidationError
 from app.dcf.engine import DCFValidationError, DCFValuationEngine, ScenarioAssumptions, ValuationInput, calculate_wacc
 from app.models.dcf import (DCFAssumption, DCFCostEvent, DCFInputSnapshot, DCFRun, DCFScenarioResult,
-    DCFSubscription, DCFUsageEvent, DCFValidationResult, DisclaimerConfig)
+    DCFUsageEvent, DCFValidationResult, DisclaimerConfig)
 from app.models.financials import FinancialStatement
 from app.models.history import FinancialReportRelease
 from app.models.instrument import Instrument
@@ -117,37 +117,27 @@ def _two_year_financial_changes(statements: list[FinancialStatement]) -> dict:
 
 
 class DCFAccessService:
+    """Every feature is free and unlimited: usage is tracked for statistics only."""
+
     def __init__(self, session: Session):
         self.session = session
 
     def usage(self, identity: Identity) -> dict:
-        subscription = None
-        if identity.user_id is not None:
-            subscription = self.session.scalar(select(DCFSubscription).where(DCFSubscription.user_id == identity.user_id))
-        demo = not settings.is_production and identity.user_id is None and bool(identity.token)
-        plan = subscription.plan if subscription else ("strategy_demo" if demo else "free")
-        limit = subscription.monthly_limit if subscription and subscription.status == "active" else (
-            settings.DCF_MODELS_PER_MONTH if demo else 0
-        )
+        used = 0
         conditions = [DCFUsageEvent.period_start == _period_start(), DCFUsageEvent.counted.is_(True)]
         if identity.user_id is not None:
             conditions.append(DCFUsageEvent.user_id == identity.user_id)
         elif identity.token:
             conditions.append(DCFUsageEvent.anonymous_token_hash == _token_hash(identity.token))
         else:
-            used = 0
-            return {"plan": plan, "monthly_limit": limit, "used": used, "remaining": limit, "period_end": _period_end().isoformat(), "can_run": demo}
-        used = int(self.session.scalar(select(func.count(DCFUsageEvent.id)).where(*conditions)) or 0)
-        active = demo or bool(subscription and subscription.status == "active" and subscription.plan in settings.dcf_enabled_plans)
-        return {"plan": plan, "monthly_limit": limit, "used": used, "remaining": max(0, limit-used), "period_end": _period_end().isoformat(), "can_run": active and used < limit}
+            conditions = None
+        if conditions is not None:
+            used = int(self.session.scalar(select(func.count(DCFUsageEvent.id)).where(*conditions)) or 0)
+        return {"plan": "free", "monthly_limit": None, "used": used, "remaining": None,
+            "period_end": _period_end().isoformat(), "can_run": True, "unlimited": True}
 
     def require(self, identity: Identity) -> dict:
-        usage = self.usage(identity)
-        if not usage["can_run"]:
-            if usage["monthly_limit"] and usage["remaining"] == 0:
-                raise ForbiddenError("Monthly DCF usage limit reached", details=usage)
-            raise ForbiddenError("DCF valuation requires an active Strategy subscription", details=usage)
-        return usage
+        return self.usage(identity)
 
 
 class DCFInputBuilder:
