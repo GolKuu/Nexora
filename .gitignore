@@ -45,6 +45,8 @@ var/
 dist/
 build/
 coverage/
+playwright-report/
+test-results/
 
 # --- AI ---------------------------------------------------------------------
 # Model weights and checkpoints: too large for git, and reproducible from the
