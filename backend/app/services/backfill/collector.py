@@ -27,6 +27,7 @@ from app.browser.extractors.tables import extract_dynamic_table, extract_tables
 from app.browser.network import KaseNetworkObserver
 from app.browser.types import BrowserStatus
 from app.core.config import settings
+from app.services.backfill.chart_api import KaseChartHistoryClient
 from app.core.logging import get_logger
 from app.services.backfill.parser import (
     looks_like_dividend_table,
@@ -63,9 +64,16 @@ class PageHistory:
 class KaseHistoryCollector:
     """Browser-driven historical collection for one instrument at a time."""
 
-    def __init__(self, *, delay_ms: int | None = None, page_limit: int | None = None):
+    def __init__(
+        self,
+        *,
+        delay_ms: int | None = None,
+        page_limit: int | None = None,
+        chart_client: KaseChartHistoryClient | None = None,
+    ):
         self.delay_ms = settings.BACKFILL_REQUEST_DELAY_MS if delay_ms is None else delay_ms
         self.page_limit = settings.BACKFILL_PAGE_LIMIT if page_limit is None else page_limit
+        self.chart_client = chart_client or KaseChartHistoryClient()
 
     async def _pace(self) -> None:
         """Deliberate politeness: kase.kz is a public site, not a target."""
@@ -144,6 +152,11 @@ class KaseHistoryCollector:
         result.source_urls.append(page.url or target)
         result.pages_visited += 1
 
+        # Structured public data first: the page's own chart feed carries the
+        # full daily series, so the rendered tables only have to cover what it
+        # does not (trades, dividends, documents).
+        await self._harvest_chart_history(result, ticker, window)
+
         # The landing tab first, then whatever sections the page itself offers.
         await self._harvest_current_page(agent, result, page.url or target, window)
         for tab in getattr(page, "tabs", []) or []:
@@ -161,6 +174,29 @@ class KaseHistoryCollector:
         return PageHistory(
             result=result, status=BrowserStatus.OK.value, observed_endpoints=endpoints
         )
+
+    async def _harvest_chart_history(
+        self, result: CollectionResult, ticker: str, window: BackfillWindow
+    ) -> None:
+        """Read the daily series from the public chart feed the page itself uses.
+
+        Failure here is not fatal: the DOM tables below remain the fallback, and
+        an instrument the feed does not cover simply yields no bars.
+        """
+        await self._pace()
+        try:
+            bars = await self.chart_client.daily_history(ticker, window)
+        except Exception as exc:  # a feed outage must not kill the crawl
+            logger.info("chart history failed for %s: %s", ticker, exc)
+            result.notes.append(f"публичный график недоступен для {ticker}: {exc}")
+            return
+        if not bars:
+            result.notes.append(f"публичный график не вернул истории для {ticker}")
+            return
+        result.observations.extend(bars)
+        source_url = bars[0].source_url
+        if source_url and source_url not in result.source_urls:
+            result.source_urls.append(source_url)
 
     async def _harvest_current_page(
         self,

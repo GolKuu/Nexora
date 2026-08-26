@@ -28,6 +28,7 @@ from app.models.history import (
 from app.models.instrument import Instrument
 from app.models.issuer import Issuer
 from app.models.stock import Stock
+from app.services.backfill.chart_api import parse_history
 from app.services.backfill.collector import PageHistory
 from app.services.backfill.coverage import CoverageService
 from app.services.backfill.parser import (
@@ -1051,3 +1052,46 @@ def test_history_is_never_deleted_for_being_old(session, instrument):
     assert session.query(MarketObservation).filter_by(instrument_id=instrument.id).count() == 1
     payload = ChartService(session).series(instrument, range_key="max", now=NOW)
     assert payload["points"] == 1, "MAX still shows history older than the window"
+
+
+# --- the public chart feed -------------------------------------------------
+
+
+def _udf(times: list[int], closes: list[float], **series) -> dict:
+    return {"s": "ok", "t": times, "c": closes, **series}
+
+
+def test_chart_feed_yields_one_observation_per_daily_bar():
+    window = backfill_window(now=datetime(2026, 8, 25, 12, tzinfo=timezone.utc), years=2)
+    day = int(datetime(2026, 8, 24, tzinfo=timezone.utc).timestamp())
+    payload = _udf(
+        [day, day + 86_400],
+        [38841.0, 39078.99],
+        o=[39194.49, 38880.0], h=[39194.49, 39089.0], l=[38810.01, 38801.0],
+        v=[1485712.0, 6451308.0],
+    )
+    records = parse_history(payload, window, "https://kase.kz/tv-charts/securities/history")
+    assert len(records) == 2
+    first = records[0]
+    assert first.close == 38841.0 and first.price == 38841.0
+    assert first.open == 39194.49 and first.high == 39194.49 and first.low == 38810.01
+    assert first.volume == 1485712.0
+    assert first.trading_date == date(2026, 8, 24)
+    assert first.source == "kase_public_chart_api" and first.data_mode == "public_api"
+    assert validate_observations(records).accepted == records
+
+
+def test_chart_feed_bars_outside_the_window_are_dropped():
+    window = backfill_window(now=datetime(2026, 8, 25, 12, tzinfo=timezone.utc), years=2)
+    stale = int(datetime(2019, 5, 6, tzinfo=timezone.utc).timestamp())
+    inside = int(datetime(2026, 8, 24, tzinfo=timezone.utc).timestamp())
+    records = parse_history(_udf([stale, inside], [100.0, 200.0]), window, "https://kase.kz/x")
+    assert [record.close for record in records] == [200.0]
+
+
+def test_chart_feed_refusal_and_missing_closes_produce_no_history():
+    window = backfill_window(now=datetime(2026, 8, 25, 12, tzinfo=timezone.utc), years=2)
+    day = int(datetime(2026, 8, 24, tzinfo=timezone.utc).timestamp())
+    assert parse_history({"s": "no_data"}, window, "https://kase.kz/x") == []
+    # A bar the feed left blank is a gap, not a zero and not the previous close.
+    assert parse_history(_udf([day], [None]), window, "https://kase.kz/x") == []
