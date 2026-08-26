@@ -40,12 +40,14 @@ from app.services.backfill.parser import (
     parse_trades,
 )
 from app.services.backfill.queue import (
+    LEASE,
     BackfillQueue,
     PRIORITY_PORTFOLIO,
     PRIORITY_UNIVERSE,
     PRIORITY_WATCHLIST,
     STATUS_COMPLETED,
     STATUS_PARTIAL,
+    STATUS_PROCESSING,
 )
 from app.services.backfill.records import (
     CollectionResult,
@@ -693,6 +695,31 @@ def test_checkpoint_records_progress_and_survives_a_failure(session, instrument)
     assert reloaded.last_processed_timestamp == NOW - timedelta(days=200)
     assert reloaded.attempts == 1
     assert reloaded.last_error == "boom"
+
+
+def test_a_killed_run_does_not_strand_its_instrument(session, instrument):
+    """A claim nobody is working on expires and the instrument is crawled again."""
+    window = backfill_window(now=NOW)
+    queue = BackfillQueue(session)
+    checkpoint = queue.enqueue(instrument, window)
+    queue.start(checkpoint)
+    # The process died here: the row stays claimed with nobody behind it.
+    assert checkpoint.status == STATUS_PROCESSING
+    assert queue.next_batch(now=NOW) == []
+
+    checkpoint.updated_at = NOW - LEASE - timedelta(minutes=1)
+    session.flush()
+    assert [row.id for row in queue.next_batch(now=NOW)] == [checkpoint.id]
+
+
+def test_a_live_run_keeps_the_instrument_it_is_working_on(session, instrument):
+    window = backfill_window(now=NOW)
+    queue = BackfillQueue(session)
+    checkpoint = queue.enqueue(instrument, window)
+    queue.start(checkpoint)
+    checkpoint.updated_at = NOW - LEASE + timedelta(minutes=1)
+    session.flush()
+    assert queue.next_batch(now=NOW) == []
 
 
 @pytest.mark.anyio

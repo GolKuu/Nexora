@@ -9,13 +9,19 @@ Checkpoints make a long crawl resumable. A run that dies two thirds of the way
 through a two-year window continues from ``last_processed_timestamp`` instead of
 restarting, which matters both for finishing and for not re-requesting pages
 from kase.kz that we already read.
+
+Resuming has to survive the ugly case too. A process killed mid-instrument -
+OOM, a lost console, a crashed batch - leaves its row claimed as ``processing``
+with nobody working on it. Such a claim expires (see ``LEASE``) and the row
+returns to the queue, because a crawl that silently drops an instrument forever
+is worse than one that crawls it twice.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -39,6 +45,11 @@ STATUS_COMPLETED = "completed"
 STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
 STATUS_BLOCKED = "blocked"
+
+#: How long a claim on an instrument stays valid without progress. Longer than
+#: any single instrument can legitimately take, so a live run is never robbed of
+#: work it is still doing.
+LEASE = timedelta(minutes=30)
 
 
 class BackfillQueue:
@@ -118,11 +129,22 @@ class BackfillQueue:
         """The next instruments to crawl, in priority order."""
         now = now or datetime.now(timezone.utc)
         limit = limit or settings.BACKFILL_BATCH_SIZE
+        # A ``processing`` row whose claim has expired belongs to a run that is
+        # no longer alive; leaving it claimed would strand that instrument.
+        expired_claim = and_(
+            BackfillCheckpoint.status == STATUS_PROCESSING,
+            BackfillCheckpoint.updated_at < now - LEASE,
+        )
         rows = self.session.execute(
             select(BackfillCheckpoint)
             .where(
                 BackfillCheckpoint.job_type == self.job_type,
-                BackfillCheckpoint.status.in_((STATUS_QUEUED, STATUS_PARTIAL, STATUS_FAILED)),
+                or_(
+                    BackfillCheckpoint.status.in_(
+                        (STATUS_QUEUED, STATUS_PARTIAL, STATUS_FAILED)
+                    ),
+                    expired_claim,
+                ),
                 BackfillCheckpoint.attempts < settings.BACKFILL_MAX_RETRIES,
             )
             .order_by(
@@ -209,6 +231,7 @@ __all__ = [
     "STATUS_COMPLETED",
     "STATUS_FAILED",
     "STATUS_PARTIAL",
+    "LEASE",
     "STATUS_PROCESSING",
     "STATUS_QUEUED",
 ]
