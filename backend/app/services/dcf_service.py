@@ -24,11 +24,16 @@ from app.services.price_service import PriceService
 from app.services.stock_service import StockService
 
 ASSUMPTION_VERSION = "historical-policy-1.1.0"
-DISCLAIMER_VERSION = "retail-dcf-1.0"
+DISCLAIMER_VERSION = "retail-dcf-2.0"
+#: The three statements the product may not ship a target price without: what
+#: produced the number, what it is not, and that the past does not bind the
+#: future. Shown to the client in the language of the app.
 DEFAULT_DISCLAIMER = (
-    "AI-generated valuation based on available financial and market data. "
-    "It is not an individual investment recommendation. Valuation depends on "
-    "assumptions and may differ materially from future market prices."
+    "Оценка рассчитана искусственным интеллектом по доступной финансовой "
+    "отчётности и рыночным данным. Это не является индивидуальной "
+    "инвестиционной рекомендацией. Прошлые результаты не гарантируют будущие; "
+    "расчёт зависит от допущений и может существенно отличаться от будущих "
+    "рыночных цен."
 )
 
 
@@ -146,6 +151,14 @@ class DCFInputBuilder:
 
     def build(self, identifier: str) -> dict:
         stock = StockService(self.session).require(identifier)
+        allowed = settings.dcf_allowed_tickers
+        if allowed and stock.instrument.ticker.upper() not in allowed:
+            # Coverage is opened one reviewed issuer at a time, so a security
+            # outside the pilot is refused by name rather than valued quietly.
+            raise ValidationError(
+                "DCF-оценка для этой бумаги пока не открыта",
+                details={"methodology": "outside_pilot_coverage", "ticker": stock.instrument.ticker},
+            )
         issuer = stock.instrument.issuer
         if issuer.is_financial_institution or issuer.sector in {"bank", "financial", "insurance", "broker"}:
             raise ValidationError("DCF valuation is not currently available for this issuer type", details={"methodology": "unsupported_financial_institution"})
@@ -544,39 +557,16 @@ class DCFService:
             if fair is not None: scenarios[name] = {"fair_value": round(fair, 2), "difference_percent": round((fair/current-1)*100, 1) if current else None}
         payload = {"run_id": run.id, "status": run.status, "instrument": {"ticker": run.ticker, "instrument_id": run.instrument_id},
             "current_price": current, "current_price_timestamp": price_payload.get("observed_at"), "currency": run.currency,
-            "scenarios": scenarios, "analysis_confidence": run.analysis_confidence, "data_quality_score": run.data_quality_score,
+            "scenarios": scenarios, "analysis_confidence": run.analysis_confidence,
             "data_as_of": price_payload.get("observed_at"), "analysis_date": run.completed_at, "warnings": run.warnings or [],
             "stale_due_to_new_financials": (
                 run.stale_due_to_new_financials if stale_override is None else stale_override
-            ), "cache_hit": cache_hit,
+            ), "cache_hit": cache_hit, "model_version": run.dcf_model_version,
             "disclaimer": self._disclaimer(), "disclaimer_version": run.disclaimer_version}
-        payload["data_quality_status"] = "READY_WITH_WARNINGS" if payload["warnings"] else "READY"
-        base_result = next((row for row in run.scenarios if row.scenario_type == "base"), None)
-        payload["valuation_uncertainty"] = (
-            (base_result.calculation or {}).get("sensitivity", {}).get("uncertainty")
-            if base_result is not None else None
-        )
-        financial_snapshot = next((x.payload for x in run.snapshots if x.kind == "financial"), {})
-        payload["financial_changes_2y"] = financial_snapshot.get("changes_2y", {
-            "requested_years": 2, "periods_available": 0,
-            "status": "insufficient_history", "periods": [], "changes": None,
-        })
-        base_assumptions = (base_result.assumptions or {}) if base_result is not None else {}
-        growth = base_assumptions.get("revenue_growth") or []
-        payload["explanation"] = {
-            "summary": "Справедливая стоимость рассчитана из прогнозного FCFF и приведена к текущей стоимости через WACC.",
-            "drivers": [
-                {"label": "Рост выручки", "value": growth[0] if growth else None},
-                {"label": "Маржа EBIT", "value": base_assumptions.get("ebit_margin")},
-                {"label": "Ставка дисконтирования WACC", "value": base_assumptions.get("wacc")},
-                {"label": "Терминальный рост", "value": base_assumptions.get("terminal_growth")},
-            ],
-            "risks": [
-                "Фактический рост и рентабельность могут отличаться от сценарных допущений.",
-                "Стоимость капитала и долгосрочный рост существенно влияют на результат.",
-                "Рыночная цена может отклоняться от расчётной справедливой стоимости.",
-            ],
-        }
+        # The retail surface is deliberately the three target prices and nothing
+        # that would reconstruct the model: no assumptions, no sensitivity, no
+        # statement tables. Every one of those stays on the run and is served in
+        # full by the audit endpoint, which is what the model-risk review reads.
         if usage is not None: payload["usage"] = usage
         if compact: return {k: payload[k] for k in ("run_id","status","scenarios","analysis_date","stale_due_to_new_financials")}
         return payload

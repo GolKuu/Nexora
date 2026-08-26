@@ -289,7 +289,6 @@ export interface UserSettings {
   chart_news_markers_enabled: boolean;
   forecast_enabled: boolean;
   uncertainty_intervals_enabled: boolean;
-  show_dcf_explanation: boolean;
   show_dcf_confidence: boolean;
   show_dcf_scenario_differences: boolean;
   default_chart_range: "1d" | "5d" | "1m" | "3m" | "6m" | "1y" | "2y" | "3y" | "5y" | "max";
@@ -803,38 +802,6 @@ export interface DCFScenarioValue {
   difference_percent: number | null;
 }
 
-export interface DCFFinancialPeriod {
-  period_end: string;
-  currency: string;
-  revenue: number | null;
-  operating_profit: number | null;
-  ebitda: number | null;
-  operating_cash_flow: number | null;
-  free_cash_flow: number | null;
-  capex: number | null;
-  net_debt: number | null;
-  ebit_margin: number | null;
-  source: string | null;
-  source_url: string | null;
-}
-
-export interface DCFFinancialChanges2Y {
-  requested_years: 2;
-  periods_available: number;
-  status: "complete" | "insufficient_history";
-  periods: DCFFinancialPeriod[];
-  changes: {
-    revenue_change: number | null;
-    operating_profit_change: number | null;
-    ebitda_change: number | null;
-    operating_cash_flow_change: number | null;
-    free_cash_flow_change: number | null;
-    capex_change: number | null;
-    net_debt_change: number | null;
-    ebit_margin_change: number | null;
-  } | null;
-}
-
 export interface DCFResult {
   run_id: number;
   status: "completed" | "failed" | "running";
@@ -843,23 +810,15 @@ export interface DCFResult {
   current_price_timestamp: string | null;
   currency: string;
   scenarios: { bear?: DCFScenarioValue; base?: DCFScenarioValue; bull?: DCFScenarioValue };
-  financial_changes_2y: DCFFinancialChanges2Y;
   analysis_confidence: "low" | "medium" | "high";
-  valuation_uncertainty: "low" | "medium" | "high" | null;
-  data_quality_score: number;
-  data_quality_status: "READY" | "READY_WITH_WARNINGS";
   data_as_of: string | null;
   analysis_date: string | null;
   warnings: string[];
   stale_due_to_new_financials: boolean;
   cache_hit: boolean;
+  model_version: string;
   disclaimer: string;
   disclaimer_version: string;
-  explanation: {
-    summary: string;
-    drivers: Array<{ label: string; value: number | null }>;
-    risks: string[];
-  };
   usage: { plan: string; monthly_limit: number | null; used: number; remaining: number | null; period_end: string; can_run: boolean; unlimited?: boolean };
 }
 

@@ -23,7 +23,6 @@ class SettingsResponse(BaseModel):
     chart_news_markers_enabled: bool = True
     forecast_enabled: bool = True
     uncertainty_intervals_enabled: bool = True
-    show_dcf_explanation: bool = True
     show_dcf_confidence: bool = True
     show_dcf_scenario_differences: bool = True
     default_chart_range: str = "1y"
@@ -48,7 +47,6 @@ class SettingsUpdate(BaseModel):
     chart_news_markers_enabled: bool | None = None
     forecast_enabled: bool | None = None
     uncertainty_intervals_enabled: bool | None = None
-    show_dcf_explanation: bool | None = None
     show_dcf_confidence: bool | None = None
     show_dcf_scenario_differences: bool | None = None
     default_chart_range: str | None = None

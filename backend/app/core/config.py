@@ -221,6 +221,10 @@ class Settings(BaseSettings):
     FORMULA_VERSION: str = "1.0.0"
 
     # --- deterministic DCF ----------------------------------------------
+    #: The pilot ships against a named list of securities rather than the whole
+    #: universe, so coverage grows only as each issuer's inputs are reviewed.
+    #: Empty means no restriction, which is the setting for a full rollout.
+    DCF_ALLOWED_TICKERS: str = ""
     DCF_POLICY_TAX_RATE: float = 0.20
     DCF_EQUITY_RISK_PREMIUM: float = 0.055
     DCF_FALLBACK_BETA: float = 1.0
@@ -240,6 +244,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def dcf_allowed_tickers(self) -> set[str]:
+        return {v.strip().upper() for v in self.DCF_ALLOWED_TICKERS.split(",") if v.strip()}
 
     @property
     def is_production(self) -> bool:

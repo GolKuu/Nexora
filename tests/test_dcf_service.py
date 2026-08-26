@@ -46,21 +46,26 @@ def test_end_to_end_persists_audit_and_cache_does_not_consume_quota(session) -> 
     first = DCFService(session).analyze(stock.instrument.ticker, identity)
     assert first["status"] == "completed"
     assert first["scenarios"]["bear"]["fair_value"] <= first["scenarios"]["base"]["fair_value"] <= first["scenarios"]["bull"]["fair_value"]
-    history = first["financial_changes_2y"]
+    # The client is shown target prices and the disclaimer - never anything that
+    # would let the model be reconstructed.
+    assert "не является индивидуальной инвестиционной рекомендацией" in first["disclaimer"]
+    assert "Прошлые результаты не гарантируют будущие" in first["disclaimer"]
+    for internal in (
+        "explanation", "financial_changes_2y", "valuation_uncertainty",
+        "data_quality_score", "data_quality_status",
+    ):
+        assert internal not in first, internal
+    run = session.get(DCFRun, first["run_id"])
+    assert run.dcf_model_version == "corporate-fcff-1.0.0"
+    assert run.prompt_version == "dcf-explanation-rules-1.0"
+    # Withheld from the client, but retained in full for the audit trail.
+    financial = next(x for x in run.snapshots if x.kind == "financial")
+    history = financial.payload["changes_2y"]
     assert history["requested_years"] == 2
     assert history["status"] == "complete" and len(history["periods"]) == 2
     assert [row["period_end"] for row in history["periods"]] == ["2024-12-31", "2025-12-31"]
     assert history["changes"]["revenue_change"] == pytest.approx(1 / 9)
     assert history["changes"]["ebit_margin_change"] == pytest.approx(0)
-    assert "not an individual investment recommendation" in first["disclaimer"]
-    run = session.get(DCFRun, first["run_id"])
-    assert run.dcf_model_version == "corporate-fcff-1.0.0"
-    assert run.prompt_version == "dcf-explanation-rules-1.0"
-    assert first["valuation_uncertainty"] in {"low", "medium", "high"}
-    assert first["data_quality_status"] in {"READY", "READY_WITH_WARNINGS"}
-    assert {driver["label"] for driver in first["explanation"]["drivers"]} >= {
-        "Рост выручки", "Ставка дисконтирования WACC"
-    }
     assert len(run.scenarios) == 3 and len(run.snapshots) == 4
     assert len(run.assumptions) == 24
     base = next(row for row in run.scenarios if row.scenario_type == "base")
@@ -158,6 +163,28 @@ def test_insufficient_data_never_returns_target(session) -> None:
     with pytest.raises(InsufficientDataError, match="опубликованных данных недостаточно") as error:
         DCFService(session).analyze("NODCF", Identity(None, "no-data-owner"))
     assert error.value.details["readiness"] == "NOT_READY"
+
+
+def test_a_security_outside_the_pilot_list_is_refused_by_name(session, monkeypatch) -> None:
+    """Coverage opens one reviewed issuer at a time; the rest are told so."""
+    from app.core.config import settings as app_settings
+
+    stock = _eligible(session, "DCFPILOT")
+    monkeypatch.setattr(app_settings, "DCF_ALLOWED_TICKERS", "SOMEOTHER")
+    with pytest.raises(ValidationError, match="пока не открыта") as error:
+        DCFService(session).analyze("DCFPILOT", Identity(None, "pilot-owner"))
+    assert error.value.details["methodology"] == "outside_pilot_coverage"
+
+    monkeypatch.setattr(app_settings, "DCF_ALLOWED_TICKERS", "SOMEOTHER, DCFPILOT")
+    assert DCFService(session).analyze("DCFPILOT", Identity(None, "pilot-owner"))["status"] == "completed"
+
+
+def test_an_empty_pilot_list_means_the_whole_universe(session, monkeypatch) -> None:
+    from app.core.config import settings as app_settings
+
+    stock = _eligible(session, "DCFOPEN")
+    monkeypatch.setattr(app_settings, "DCF_ALLOWED_TICKERS", "")
+    assert DCFService(session).analyze("DCFOPEN", Identity(None, "open-owner"))["status"] == "completed"
 
 
 def test_bank_routes_to_unsupported_model(session) -> None:

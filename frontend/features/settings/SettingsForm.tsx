@@ -181,14 +181,9 @@ export function SettingsForm() {
       <Card>
         <CardHeader
           title="DCF"
-          subtitle="Управляет детализацией результата, но не меняет числовую модель и её допущения."
+          subtitle="Управляет подачей результата. Допущения и расчёт модели клиенту не раскрываются."
         />
         <CardBody className="space-y-2">
-          <Switch
-            label="Показывать объяснение оценки"
-            checked={settings.show_dcf_explanation}
-            onChange={(value) => void update({ show_dcf_explanation: value })}
-          />
           <Switch
             label="Показывать уверенность анализа"
             checked={settings.show_dcf_confidence}
