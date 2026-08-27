@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from app.collectors.kase_collector import KaseCollector, full_sync
 from app.core.logging import get_logger
 from app.db.session import SessionLocal
-from app.providers.factory import get_provider
+from app.providers.factory import build_provider, get_provider
 from app.collectors.incremental_catalog import incremental_catalog_sync
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
 from app.core.config import settings
@@ -25,6 +25,21 @@ from app.services.ai_change_worker import run_ai_change_tasks
 from app.models.incremental import AIChangeTask
 
 logger = get_logger(__name__)
+
+
+async def _close_provider(provider) -> None:
+    """Release browser sessions owned by a one-shot scheduled provider.
+
+    HTTP providers already scope their clients to individual requests.  Browser
+    providers intentionally support reuse for interactive API calls, but a
+    scheduled collector is a one-shot visitor: open KASE, persist the verified
+    result, then close its browser context before returning.
+    """
+    for child in getattr(provider, "providers", ()):
+        await _close_provider(child)
+    closer = getattr(provider, "aclose", None)
+    if closer is not None:
+        await closer()
 
 
 async def refresh_all() -> dict:
@@ -127,11 +142,12 @@ async def refresh_forecast_models() -> dict:
 async def refresh_quotes(*, idempotency_key: str | None = None) -> dict:
     """Quotes plus the derived metrics and scores that depend on them."""
     session = SessionLocal()
+    provider = build_provider()
     try:
         job = JobTracker(session, "quotes", idempotency_key or f"quotes:{uuid4().hex}")
         if job.reused and job.row.status == "completed":
             return {**(job.row.metrics_json or {}), "status": "already_completed", "job_id": job.row.id}
-        collector = KaseCollector(session, get_provider())
+        collector = KaseCollector(session, provider)
         result = await collector.sync_quotes(prioritized_tickers(session))
         result.update(collector.recompute_changed(result.get("changed_tickers") or []))
         result["ai_calls_saved"] = result.get("unchanged", 0)
@@ -161,6 +177,7 @@ async def refresh_quotes(*, idempotency_key: str | None = None) -> dict:
         session.commit()
         return {**result, "status": "completed", "job_id": tracker.id}
     finally:
+        await _close_provider(provider)
         session.close()
 
 

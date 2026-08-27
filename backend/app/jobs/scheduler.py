@@ -42,6 +42,26 @@ class PeriodicRefresh:
         ]
         self._tasks: list[asyncio.Task] = []
 
+    async def _initial_market_refresh(self) -> None:
+        """Populate market data once on startup without blocking FastAPI.
+
+        The recurring loops deliberately sleep before each pass.  This separate
+        warm-up avoids serving a stale snapshot for the first ten minutes while
+        keeping the application startup responsive.  The steps are sequential
+        so SQLite and KASE never receive three simultaneous startup jobs.
+        """
+        initial_jobs = {"quotes", "stock_forecasts", "monitoring"}
+        for name, _interval, action in self.jobs:
+            if name not in initial_jobs:
+                continue
+            try:
+                result = await action()
+                logger.info("startup %s refresh: %s", name, result)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("startup %s refresh failed: %s", name, exc)
+
     async def _loop(self, name: str, interval: float, action: Callable[[], Awaitable[dict]]) -> None:
         while True:
             try:
@@ -56,8 +76,15 @@ class PeriodicRefresh:
     def start(self) -> None:
         if not self._tasks:
             self._tasks = [
-                asyncio.create_task(self._loop(name, interval, action), name=f"kase-{name}")
-                for name, interval, action in self.jobs
+                asyncio.create_task(
+                    self._initial_market_refresh(), name="kase-startup-market"
+                ),
+                *[
+                    asyncio.create_task(
+                        self._loop(name, interval, action), name=f"kase-{name}"
+                    )
+                    for name, interval, action in self.jobs
+                ],
             ]
             logger.info("incremental scheduler started: %s", {name: seconds for name, seconds, _ in self.jobs})
 
