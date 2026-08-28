@@ -16,6 +16,7 @@ import asyncio
 import csv
 import json
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -240,13 +241,31 @@ async def discover_universe(
 def write_manifest(entries: Iterable[ManifestEntry], root: Path = CAPTURE_ROOT) -> None:
     root.mkdir(parents=True, exist_ok=True)
     rows = [asdict(item) for item in entries]
-    (root / "instruments.json").write_text(
+    json_path = root / "instruments.json"
+    json_tmp = root / "instruments.json.tmp"
+    json_tmp.write_text(
         json.dumps(rows, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
-    with (root / "instruments.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+    _replace_with_retry(json_tmp, json_path)
+    csv_path = root / "instruments.csv"
+    csv_tmp = root / "instruments.csv.tmp"
+    with csv_tmp.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(ManifestEntry.__dataclass_fields__))
         writer.writeheader()
         writer.writerows(rows)
+    _replace_with_retry(csv_tmp, csv_path)
+
+
+def _replace_with_retry(source: Path, target: Path) -> None:
+    """Atomically publish an artefact despite short-lived Windows file locks."""
+    for attempt in range(5):
+        try:
+            source.replace(target)
+            return
+        except OSError:
+            if attempt == 4:
+                raise
+            time.sleep(0.1 * (attempt + 1))
 
 
 def load_manifest(root: Path = CAPTURE_ROOT) -> dict[tuple[str, str], dict]:
@@ -607,7 +626,11 @@ async def run(args: argparse.Namespace) -> int:
                     entry.capture_status = "FAILED"
                     entry.error_reason = entry.error_reason or "UNKNOWN_ERROR"
                     print(f"capture {entry.ticker}: {exc}")
-            write_manifest(manifest_entries, root)
+            # DB coverage/checkpoints are committed per instrument. Publishing
+            # the large human-readable manifest in batches avoids thousands of
+            # Windows file-lock races while bounding file-only resume loss.
+            if index % 25 == 0 or index == total:
+                write_manifest(manifest_entries, root)
             counts = {status: sum(x.history_status == status for x in manifest_entries) for status in ("COMPLETE", "PARTIAL", "UNAVAILABLE", "FAILED")}
             print(f"[{index}/{total}] {entry.ticker}: screenshot={entry.capture_status} history={entry.history_status}; complete={counts['COMPLETE']} partial={counts['PARTIAL']} unavailable={counts['UNAVAILABLE']} failed={counts['FAILED']} remaining={total-index}")
         report = write_report(manifest_entries, root)
