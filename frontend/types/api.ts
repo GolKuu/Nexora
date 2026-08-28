@@ -481,6 +481,41 @@ export interface NewsFeedResponse {
 }
 export interface StockHistoryResponse { ticker: string; quotes: Array<{timestamp:string; last:number|null; close:number|null; volume:number|null}> }
 
+export type TechnicalStatus = "READY" | "INSUFFICIENT_HISTORY" | "NO_VOLUME_DATA" | "NO_OHLC_DATA" | "UNAVAILABLE";
+export interface TechnicalLevel {
+  kind: "support" | "resistance"; level_low: number; level_high: number;
+  strength_score: number; touch_count: number; last_tested_at: string;
+}
+export interface TechnicalAnalysisResponse {
+  instrument: { id?: number; ticker?: string; isin?: string | null; name?: string; currency?: string };
+  as_of: string | null;
+  last_trade: { price: number; trading_date: string; timestamp: string | null; source: string | null; price_basis: string };
+  trend: { state: "STRONG_UPTREND"|"UPTREND"|"MIXED"|"DOWNTREND"|"STRONG_DOWNTREND"; confidence: number; status: TechnicalStatus };
+  levels: { status: TechnicalStatus; support: TechnicalLevel[]; resistance: TechnicalLevel[] };
+  moving_averages: Record<string, { period: number; status: TechnicalStatus; value: number | null; slope: number | null }>;
+  rsi: { status: TechnicalStatus; period: number; value: number | null; zone: string | null; divergence: {state:string;confidence:number;from?:string;to?:string} };
+  macd: { status: TechnicalStatus; macd: number | null; signal: number | null; histogram: number | null; zero_state: string | null };
+  bollinger: { status: TechnicalStatus; upper: number|null; middle:number|null; lower:number|null; band_width:number|null; percent_b:number|null; state:string|null };
+  volume: { status: TechnicalStatus; current:number|null; average_20d:number|null; average_50d:number|null; ratio_20d:number|null; confirmation:string };
+  obv: { status: TechnicalStatus; value:number|null; trend:string|null };
+  atr: { status: TechnicalStatus; value:number|null; percent:number|null; illustrative_1_5_atr_level:number|null; warning:string };
+  fibonacci: { status: TechnicalStatus; direction?:string; swing_low?:number; swing_high?:number; levels:Array<{ratio:number;level_low:number;level_high:number;label:string}> };
+  crosses: Array<{type:string;timestamp:string;short_ma:number;long_ma:number;cross_price:number;warning:string}>;
+  signals: Array<{type:string;timestamp?:string|null;confidence?:number;warning?:string}>;
+  historical_evaluation?: {status:TechnicalStatus;events:Record<string,Record<string,{observations:number;median_return_percent:number|null;positive_rate:number|null;status:TechnicalStatus}>>;warning:string};
+  technical_momentum_score: { value:number|null;confidence:number;separate_from_investment_score:true };
+  technical_risk: { label:"LOW"|"MODERATE"|"ELEVATED"|"HIGH"|"UNAVAILABLE";score:number|null;reasons:string[] };
+  confluence: { confluence_score:number;supporting_signals:string[];conflicting_signals:string[];state:string };
+  data_quality: { observations:number;first_trade_date:string;last_trade_date:string;historical_coverage_days:number;volume_status:TechnicalStatus;ohlc_status:TechnicalStatus;technical_confidence:"LOW"|"MEDIUM"|"HIGH";no_interpolation:true;config_version:string;licensed_rows_excluded?:number;liquidity:{trading_days_last_30:number;days_since_last_trade:number;spread_percent:number|null;reasons:string[]} };
+  explanation: string[]; disclaimer: string; cache:{hit:boolean;key:string};
+}
+export interface TechnicalSeriesResponse {
+  instrument: {id?:number;ticker?:string;currency?:string}; range:string; indicators:string[]; as_of:string|null;
+  series:Array<Record<string,number|string|null>>; signals:TechnicalAnalysisResponse["signals"];
+  levels:TechnicalAnalysisResponse["levels"]; fibonacci:TechnicalAnalysisResponse["fibonacci"];
+  data_quality:TechnicalAnalysisResponse["data_quality"]; basis:string;
+}
+
 export interface ForecastHorizon {
   forecast_available: boolean; reason?: string; minimum_observations?: number; observations?: number;
   expected_return?: number; median_return?: number; probability_up?: number; probability_down?: number;

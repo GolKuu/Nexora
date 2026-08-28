@@ -9,6 +9,9 @@ const KINDS = [
   ["price_below", "Цена ниже"], ["price_above", "Цена выше"], ["pe_below", "P/E ниже"],
   ["dividend_announced", "Объявлен дивиденд"], ["financial_report", "Новая отчётность"],
   ["profit_change", "Сильное изменение прибыли"], ["score_change", "Изменение score"], ["company_news", "Новости компании"],
+  ["price_approaches_support", "Цена приближается к поддержке"], ["support_broken", "Поддержка пробита"],
+  ["resistance_broken", "Сопротивление пробито"], ["golden_cross", "Golden Cross"], ["death_cross", "Death Cross"],
+  ["rsi_extreme", "Экстремум RSI"], ["volume_spike", "Всплеск объёма"], ["technical_risk_changed", "Изменение технического риска"],
 ] as const;
 
 export function StockAlerts({ ticker }: { ticker: string }) {

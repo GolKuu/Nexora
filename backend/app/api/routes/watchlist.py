@@ -11,6 +11,7 @@ from app.schemas.portfolios import WatchlistCreate
 from app.services.bond_service import BondService
 from app.services.stock_service import StockService
 from app.services.dcf_service import DCFService
+from app.services.technical_service import TechnicalAnalysisService
 
 router = APIRouter()
 
@@ -43,6 +44,7 @@ def list_watchlist(
     )
     for item in stock_items:
         item["dcf_summary"] = summaries.get(item["ticker"], {"status": "not_calculated"})
+        item["technical_summary"] = TechnicalAnalysisService(session).compact(item["ticker"])
     return {"items": items, "requires_identity": not identity.has_owner}
 
 

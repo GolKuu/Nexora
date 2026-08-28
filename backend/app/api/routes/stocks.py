@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.services.stock_ranking import rank_stocks
 from app.services.news_queries import NewsQueryService
 from app.services.stock_forecast import StockForecastService
 from app.services.dcf_service import DCFService
+from app.services.technical_service import ALLOWED_INDICATORS, RANGE_DAYS, TechnicalAnalysisService
 
 router = APIRouter()
 
@@ -97,6 +98,7 @@ def compare_stocks(payload: StockCompareRequest, session: Session = Depends(get_
     )
     for column in columns:
         column["dcf_summary"] = dcf.get(column["ticker"], {"status": "not_calculated"})
+        column["technical_summary"] = TechnicalAnalysisService(session).compact(column["ticker"])
     return {"columns": columns, "amount": payload.amount, "scenario": payload.scenario, "warning": "Сценарии не являются прогнозом будущей цены."}
 
 
@@ -108,6 +110,40 @@ async def refresh_stocks(session: Session = Depends(get_session)) -> dict:
         service.persist_metrics_and_scores(stock)
     session.commit()
     return result
+
+
+@router.get("/{identifier}/technical-analysis")
+def stock_technical_analysis(
+    identifier: str, session: Session = Depends(get_session)
+) -> dict:
+    """Deterministic indicators calculated only from stored factual trades."""
+    return TechnicalAnalysisService(session).analysis(identifier)
+
+
+@router.get("/{identifier}/technical-summary")
+def stock_technical_summary(
+    identifier: str, session: Session = Depends(get_session)
+) -> dict:
+    """Small payload for compare/watchlist surfaces; never returns chart series."""
+    return TechnicalAnalysisService(session).compact(identifier)
+
+
+@router.get("/{identifier}/technical-series")
+def stock_technical_series(
+    identifier: str,
+    range: str = Query("1y", pattern="^(1m|3m|6m|1y|2y|max)$"),
+    indicators: str = Query("sma50,sma200"),
+    session: Session = Depends(get_session),
+) -> dict:
+    requested = [item.strip().lower() for item in indicators.split(",") if item.strip()]
+    if not requested:
+        raise HTTPException(status_code=422, detail="At least one indicator is required")
+    unknown = sorted(set(requested) - ALLOWED_INDICATORS)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unsupported indicators: {', '.join(unknown)}")
+    return TechnicalAnalysisService(session).series(
+        identifier, range_key=range if range in RANGE_DAYS else "1y", indicators=requested
+    )
 
 
 @router.post("/{identifier}/investment-calculation")

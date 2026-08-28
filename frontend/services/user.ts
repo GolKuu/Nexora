@@ -4,6 +4,7 @@ import type {
   DCFResult,
   PortfolioDetail,
   StockListItem,
+  TechnicalAnalysisResponse,
   UserSettings,
 } from "@/types/api";
 
@@ -27,7 +28,7 @@ export const settingsService = {
 
 export const watchlistService = {
   list: () =>
-    api.get<{ items: Array<(BondListItem & { instrument_type: "bond" }) | StockListItem>; requires_identity: boolean }>("/watchlist"),
+    api.get<{ items: Array<(BondListItem & { instrument_type: "bond" }) | (StockListItem & {technical_summary?:Pick<TechnicalAnalysisResponse,"trend"|"rsi"|"technical_risk"|"technical_momentum_score"|"as_of">})>; requires_identity: boolean }>("/watchlist"),
   add: (identifier: string, instrumentType: "bond" | "stock" = "bond", note?: string) =>
     api.post<{ id: number; ticker: string; already_present: boolean }>("/watchlist", {
       [instrumentType]: identifier,

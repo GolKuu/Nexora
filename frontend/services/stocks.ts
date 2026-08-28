@@ -1,5 +1,5 @@
 import { api } from "@/services/client";
-import type { CrossAssetCompareResponse, DCFLatestResponse, DCFResult, InstrumentSearchResponse, StockCalculation, StockCard, StockEventsResponse, StockForecastPerformanceResponse, StockForecastResponse, StockHistoryResponse, StockListResponse } from "@/types/api";
+import type { CrossAssetCompareResponse, DCFLatestResponse, DCFResult, InstrumentSearchResponse, StockCalculation, StockCard, StockEventsResponse, StockForecastPerformanceResponse, StockForecastResponse, StockHistoryResponse, StockListResponse, TechnicalAnalysisResponse, TechnicalSeriesResponse } from "@/types/api";
 
 export const stocksService = {
   list: (limit = 100) => api.get<StockListResponse>(`/stocks?limit=${limit}`),
@@ -11,6 +11,8 @@ export const stocksService = {
   card: (identifier: string) => api.get<StockCard>(`/stocks/${encodeURIComponent(identifier)}`),
   events: (identifier: string) => api.get<StockEventsResponse>(`/stocks/${encodeURIComponent(identifier)}/event-impact`),
   history: (identifier: string) => api.get<StockHistoryResponse>(`/stocks/${encodeURIComponent(identifier)}/history`),
+  technicalAnalysis: (identifier: string) => api.get<TechnicalAnalysisResponse>(`/stocks/${encodeURIComponent(identifier)}/technical-analysis`),
+  technicalSeries: (identifier: string, range: string, indicators: string[]) => api.get<TechnicalSeriesResponse>(`/stocks/${encodeURIComponent(identifier)}/technical-series?range=${encodeURIComponent(range)}&indicators=${encodeURIComponent(indicators.join(","))}`),
   forecast: (identifier: string, horizon = "20d") => api.get<StockForecastResponse>(`/stocks/${encodeURIComponent(identifier)}/forecast?horizon=${horizon}`),
   forecastPerformance: (identifier: string) => api.get<StockForecastPerformanceResponse>(`/stocks/${encodeURIComponent(identifier)}/forecast-performance`),
   analyzeDcf: (identifier: string, forceRefresh = false) => api.post<DCFResult>(`/stocks/${encodeURIComponent(identifier)}/dcf`, { force_refresh: forceRefresh }),
@@ -23,7 +25,7 @@ export const stocksService = {
       ...(input.mode === "amount" ? { amount: input.value } : { quantity: input.value }),
       currency: "KZT", commission: { type: input.commissionType ?? "percent", value: input.commission ?? 0.1 }, scenario: input.scenario, target_period_months: 12,
     }),
-  compare: (identifiers: string[], amount?: number) => api.post<{columns: Array<StockCard & {investment_calculation: StockCalculation | null; dcf_summary: {status: string; bear_fair_value?: number|null; base_fair_value?: number|null; bull_fair_value?: number|null; base_difference_percent?: number|null; analysis_confidence?: string|null}}> ; warning: string}>("/stocks/compare", { identifiers, amount, scenario: "base" }),
+  compare: (identifiers: string[], amount?: number) => api.post<{columns: Array<StockCard & {investment_calculation: StockCalculation | null; dcf_summary: {status: string; bear_fair_value?: number|null; base_fair_value?: number|null; bull_fair_value?: number|null; base_difference_percent?: number|null; analysis_confidence?: string|null}; technical_summary?: Pick<TechnicalAnalysisResponse,"trend"|"rsi"|"technical_risk"|"technical_momentum_score"|"as_of">}> ; warning: string}>("/stocks/compare", { identifiers, amount, scenario: "base" }),
   compareCrossAsset: (instruments: Array<{identifier: string; instrument_type: "stock" | "bond"}>) =>
     api.post<CrossAssetCompareResponse>("/instruments/compare", { instruments }),
 };

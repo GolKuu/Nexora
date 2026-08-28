@@ -56,7 +56,7 @@ class AlertCreate(BaseModel):
     bond: str | None = None
     stock: str | None = None
     instrument_type: str = Field(default="bond", pattern="^(bond|stock)$")
-    kind: str = Field(pattern="^(price_below|price_above|ytm_above|ytm_below|score_above|coupon_date|maturity_date|pe_below|dividend_announced|financial_report|profit_change|score_change|company_news)$")
+    kind: str = Field(pattern="^(price_below|price_above|ytm_above|ytm_below|score_above|coupon_date|maturity_date|pe_below|dividend_announced|financial_report|profit_change|score_change|company_news|price_approaches_support|support_broken|resistance_broken|golden_cross|death_cross|rsi_extreme|volume_spike|technical_risk_changed)$")
     threshold: float | None = None
 
     @model_validator(mode="after")

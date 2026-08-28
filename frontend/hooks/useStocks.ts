@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { stocksService } from "@/services/stocks";
-import type { InstrumentSearchResponse, StockCard, StockEventsResponse, StockForecastPerformanceResponse, StockForecastResponse, StockHistoryResponse, StockListResponse } from "@/types/api";
+import type { InstrumentSearchResponse, StockCard, StockEventsResponse, StockForecastPerformanceResponse, StockForecastResponse, StockHistoryResponse, StockListResponse, TechnicalAnalysisResponse, TechnicalSeriesResponse } from "@/types/api";
 
 export function useTopStocks(category = "best", limit = 12) {
   return useSWR<StockListResponse>(
@@ -24,6 +24,17 @@ export function useStockEvents(identifier: string) {
 }
 export function useStockHistory(identifier: string) {
   return useSWR<StockHistoryResponse>(["stock-history", identifier], () => stocksService.history(identifier), { revalidateOnFocus: false });
+}
+export function useTechnicalAnalysis(identifier: string) {
+  return useSWR<TechnicalAnalysisResponse>(["stock-technical-analysis", identifier], () => stocksService.technicalAnalysis(identifier), {
+    refreshInterval: 600_000, revalidateOnFocus: true, dedupingInterval: 60_000,
+  });
+}
+export function useTechnicalSeries(identifier: string, range: string, indicators: string[]) {
+  const key = indicators.slice().sort().join(",");
+  return useSWR<TechnicalSeriesResponse>(["stock-technical-series", identifier, range, key], () => stocksService.technicalSeries(identifier, range, indicators), {
+    revalidateOnFocus: false, keepPreviousData: true, dedupingInterval: 60_000,
+  });
 }
 export function useStockForecast(identifier: string, horizon: string) {
   return useSWR<StockForecastResponse>(["stock-forecast", identifier, horizon], () => stocksService.forecast(identifier, horizon), {

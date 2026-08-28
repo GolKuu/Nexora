@@ -36,6 +36,7 @@ from app.models.dcf import (DCFAssumption, DCFCostEvent, DCFInputSnapshot, DCFMo
 from app.models.news import (CompanyAlias, EventCluster, EventMarketReaction, MarketEvent,
     NewsArticle, NewsClusterMember, NewsImpactScore, NotificationCandidate)
 from app.models.forecast import ForecastChange, ForecastEvaluation, ForecastModelVersion, ForecastSnapshot
+from app.models.technical import TechnicalAnalysisCache, TechnicalIndicatorConfigVersion
 
 __all__ = [
     "AIAnalysis",
@@ -100,4 +101,5 @@ __all__ = [
     "NewsArticle", "CompanyAlias", "EventCluster", "NewsClusterMember",
     "MarketEvent", "EventMarketReaction", "NewsImpactScore", "NotificationCandidate",
     "ForecastModelVersion", "ForecastSnapshot", "ForecastEvaluation", "ForecastChange",
+    "TechnicalAnalysisCache", "TechnicalIndicatorConfigVersion",
 ]
