@@ -1,0 +1,37 @@
+{
+  "issuer": "KZAP",
+  "about": "Lines KASE does not publish, read off NAC Kazatomprom's own audited IFRS statements. Every figure below is quoted from the document named in each entry; the check against KASE's published totals for the same period runs on import.",
+  "entries": [
+    {
+      "issuer_code": "KZAP",
+      "period_end": "2023-12-31",
+      "period_type": "FY",
+      "currency": "KZT",
+      "units": "mln",
+      "standard": "IFRS",
+      "is_audited": true,
+      "is_consolidated": true,
+      "document": "Consolidated Financial Statements for the year ended 31 December 2023",
+      "source_url": "https://www.kazatomprom.kz/storage/e3/konsolidirovannaya_finansovaya_otchetnost_ao_nak_kazatomprom_za_2023_god_po_msfo_na_angl.pdf",
+      "transcribed_by": "4vladimir.khagay@gmail.com",
+      "transcribed_at": "2026-08-28T00:00:00+00:00",
+      "values": {
+        "operating_profit": 680812,
+        "ebitda": 775974,
+        "interest_expense": 3753,
+        "cash_and_equivalents": 211912,
+        "total_debt": 86377,
+        "capex": 109882
+      },
+      "notes": {
+        "operating_profit": "FY2023 results announcement, consolidated statement of profit or loss: https://www.kazatomprom.kz/en/media/view/finansovie_rezultati_ao_nak_kazatomprom_za_2023_god",
+        "ebitda": "Not a line the issuer reports. Operating profit 680,812 plus depreciation and amortisation charged to profit or loss 95,162 (note 20). Stored so the model adds back reported D&A instead of assuming none; it is not the issuer's 'adjusted EBITDA' of 828,623, which carries further adjustments.",
+        "interest_expense": "Note 15, finance costs: interest expense on loans and borrowings 3,753. Total finance costs of 9,589 also carry the unwinding of provisions, which is not a cost of debt.",
+        "cash_and_equivalents": "Note 29: total cash and cash equivalents 211,912 (2022: 169,536).",
+        "total_debt": "Note 31, reconciliation of debt: debt at 31 December 2023 of 86,377, being loans and borrowings 86,252 plus lease liabilities 125.",
+        "capex": "Note 5, segment information: capital expenditure 109,882 for 2023 (2022: 89,180), being additions to non-current assets. The 201,321 quoted in the results announcement is a 100%-basis mining-company measure, not the Group's consolidated spend.",
+        "cross_check": "The same note reports total assets 2,599,292 and total liabilities 591,025, which match what KASE published for this period."
+      }
+    }
+  ]
+}
