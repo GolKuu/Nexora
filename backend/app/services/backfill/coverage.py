@@ -71,7 +71,11 @@ class CoverageService:
             select(
                 func.min(MarketObservation.observed_at),
                 func.max(MarketObservation.observed_at),
-            ).where(MarketObservation.instrument_id == instrument_id)
+            ).where(
+                MarketObservation.instrument_id == instrument_id,
+                MarketObservation.trading_date >= start_day,
+                MarketObservation.trading_date <= end_day,
+            )
         ).one()
 
         trade_days = self.session.execute(

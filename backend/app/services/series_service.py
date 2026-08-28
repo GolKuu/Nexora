@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Literal, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.collectors.kase_history_importer import SOURCE as LICENSED_SOURCE
@@ -36,6 +36,7 @@ from app.core.enums import DataMode
 from app.forecast.calendar import KASE_TZ, kase_date, kase_holidays
 from app.models.history import DailyMarketSnapshot
 from app.models.incremental import DataChangeSet
+from app.models.instrument import Instrument
 from app.models.market import BondQuote, BondTrade
 from app.models.stock import StockQuote
 from app.services.backfill.records import STATUS_TRADED
@@ -254,12 +255,49 @@ class PublicSeriesService:
     ) -> dict:
         bond = BondService(self.session).require(identifier)
         cutoff = self._cutoff(days)
-        quotes = self.session.execute(
-            select(BondQuote)
-            .where(BondQuote.bond_id == bond.id, BondQuote.timestamp >= cutoff)
-            .order_by(BondQuote.timestamp, BondQuote.id)
-        ).scalars()
-        bars, excluded = self._fold_bond_quotes(quotes, include_licensed=include_licensed)
+        # The one-year capture job stores the public KASE chart feed in the
+        # canonical Instrument history used by shares.  Bonds predate that
+        # identity table in this application, so resolve the mirror by ticker
+        # instead of introducing a second history schema or a destructive FK
+        # migration. Existing ten-minute BondQuote rows remain the fallback and
+        # continue to contribute YTM where KASE published it.
+        history_instrument = self.session.scalar(
+            select(Instrument).where(
+                Instrument.instrument_type == "bond",
+                func.upper(Instrument.ticker) == bond.ticker.upper(),
+            )
+        )
+        snapshots = (
+            PriceService(self.session).daily_snapshots(
+                history_instrument.id,
+                start=kase_date(cutoff),
+                limit=None,
+                traded_only=False,
+            )
+            if history_instrument is not None
+            else []
+        )
+        if snapshots:
+            bars, excluded = self._fold_daily_snapshots(
+                snapshots, include_licensed=include_licensed
+            )
+            quotes = self.session.execute(
+                select(BondQuote)
+                .where(BondQuote.bond_id == bond.id, BondQuote.timestamp >= cutoff)
+                .order_by(BondQuote.timestamp, BondQuote.id)
+            ).scalars()
+            excluded += self._merge_bond_quotes(
+                bars, quotes, include_licensed=include_licensed
+            )
+        else:
+            quotes = self.session.execute(
+                select(BondQuote)
+                .where(BondQuote.bond_id == bond.id, BondQuote.timestamp >= cutoff)
+                .order_by(BondQuote.timestamp, BondQuote.id)
+            ).scalars()
+            bars, excluded = self._fold_bond_quotes(
+                quotes, include_licensed=include_licensed
+            )
         trades = self.session.execute(
             select(BondTrade)
             .where(BondTrade.bond_id == bond.id, BondTrade.timestamp >= cutoff)
@@ -389,6 +427,35 @@ class PublicSeriesService:
             bar.observe_cumulative(
                 _non_negative(row.quantity), _non_negative(row.amount), None
             )
+        return excluded
+
+    def _merge_bond_quotes(
+        self, bars: dict[date, _Bar], rows: Iterable[BondQuote], *, include_licensed: bool
+    ) -> int:
+        """Enrich native public-history bars with factual quote/YTM fields.
+
+        Price/OHLC stays sourced from the official daily chart response.  A
+        quote on the same session may add YTM, book and activity, but never
+        replaces that bar or creates an invented candle.
+        """
+        excluded = 0
+        for row in rows:
+            if not include_licensed and (row.source or "") in LICENSED_SOURCES:
+                excluded += 1
+                continue
+            timestamp = _aware(row.timestamp)
+            bar = bars.get(kase_date(timestamp))
+            if bar is None:
+                continue
+            bar.observe_ytm(timestamp, row.ytm)
+            bar.observe_book(timestamp, _positive(row.bid), _positive(row.ask))
+            bar.observe_cumulative(
+                _non_negative(row.volume), _non_negative(row.turnover), row.number_of_trades
+            )
+            if row.source:
+                bar.sources.add(row.source)
+            if row.data_mode:
+                bar.data_modes.add(row.data_mode)
         return excluded
 
     @staticmethod
