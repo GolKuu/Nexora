@@ -24,7 +24,7 @@ const TREND_LABELS:Record<string,string> = {
   STRONG_UPTREND:"Сильный восходящий", UPTREND:"Восходящий", MIXED:"Смешанный",
   DOWNTREND:"Нисходящий", STRONG_DOWNTREND:"Сильный нисходящий",
 };
-const RISK_LABELS:Record<string,string> = {LOW:"Низкий",MODERATE:"Умеренный",ELEVATED:"Повышенный",HIGH:"Высокий"};
+const RISK_LABELS:Record<string,string> = {LOW:"Низкий",MODERATE:"Умеренный",ELEVATED:"Повышенный",HIGH:"Высокий",UNAVAILABLE:"Недостаточно данных"};
 const RSI_LABELS:Record<string,string> = {OVERSOLD:"зона перепроданности",WEAK:"слабый импульс",NEUTRAL:"нейтрально",POSITIVE_MOMENTUM:"положительный импульс",OVERBOUGHT:"зона перекупленности"};
 const VOLUME_LABELS:Record<string,string> = {CONFIRMED:"Движение подтверждается повышенным объёмом",WEAK:"Объём ниже среднего — подтверждение слабое",NEUTRAL:"Объём без выраженного подтверждения",UNAVAILABLE:"Нет фактических данных объёма"};
 
@@ -107,7 +107,7 @@ function ProDetails({data,series,currency}:{data:TechnicalAnalysisResponse;serie
     {["sma20","sma50","sma200","ema12","ema20","ema26","ema50","ema200"].map(key=><Metric key={key} label={key.toUpperCase()} help="Средняя по фактическим торговым наблюдениям; пропущенные дни не добавляются." value={data.moving_averages[key]?.value==null?"Недостаточно истории":formatMoney(data.moving_averages[key].value,currency,2)}/>) }
     <Metric label="MACD" help="EMA12 минус EMA26; signal — EMA9 линии MACD." value={data.macd.macd==null?"Недостаточно истории":`${formatNumber(data.macd.macd,3)} / signal ${formatNumber(data.macd.signal,3)}`}/>
     <Metric label="Bollinger" help="SMA20 ± 2 стандартных отклонения; касание полосы не является командой." value={data.bollinger.status!=="READY"?"Недостаточно истории":`${data.bollinger.state} · %B ${formatNumber(data.bollinger.percent_b,2)}`}/>
-    <Metric label="OBV" help="Направление накопленного фактического объёма важнее абсолютного значения." value={data.obv.status!=="READY"?"Нет данных объёма":`${data.obv.trend} · ${formatCompact(data.obv.value)}`}/>
+    <Metric label="OBV" help="Направление накопленного фактического объёма важнее абсолютного значения; divergence сравнивает его с движением цены." value={data.obv.status!=="READY"?"Нет данных объёма":`${data.obv.trend} · ${data.obv.divergence} · ${formatCompact(data.obv.value)}`}/>
     <Metric label="ATR14" help="Типичный размер движения, не направление." value={data.atr.value==null?"Нет фактического OHLC":`${formatMoney(data.atr.value,currency,2)} / ${formatNumber(data.atr.percent,2)}%`}/>
     <Metric label="Дивергенция RSI" help="Подтверждённые локальные экстремумы с минимальным расстоянием; однодневный шум исключён." value={data.rsi.divergence.state}/>
     <Metric label="Confluence" help="Совпадение независимых технических сигналов с явным показом конфликтов." value={`${data.confluence.confluence_score}/100 · ${data.confluence.state}`}/>

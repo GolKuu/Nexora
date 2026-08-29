@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
@@ -9,6 +10,7 @@ from app.services.technical_analysis import (
     NO_VOLUME_DATA,
     READY,
     FibonacciEngine,
+    RSIEngine,
     TechnicalAnalysisEngine,
     TechnicalBar,
     atr_wilder,
@@ -156,7 +158,7 @@ def test_technical_api_is_cached_and_keeps_requested_series_small(api, session):
     assert first.status_code == 200
     payload = first.json()
     assert payload["data_quality"]["no_interpolation"] is True
-    assert payload["data_quality"]["config_version"] == "technical-v2"
+    assert payload["data_quality"]["config_version"] == "technical-v3"
     assert "investment_score" not in payload
     second = api.get(f"/stocks/{instrument.ticker}/technical-analysis")
     assert second.status_code == 200
@@ -172,3 +174,57 @@ def test_technical_alert_kinds_are_valid_without_a_numeric_threshold():
 
     alert = AlertCreate(stock="HSBK", instrument_type="stock", kind="support_broken")
     assert alert.threshold is None
+
+
+def test_golden_qualitative_trend_and_range_fixtures():
+    strong_uptrend_stock = bars([100 + index * 1.5 for index in range(240)], start=date.today() - timedelta(days=239))
+    strong_downtrend_stock = bars([500 - index * 1.5 for index in range(240)], start=date.today() - timedelta(days=239))
+    range_bound_stock = bars(([100, 102, 106, 110, 106, 102] * 40), start=date.today() - timedelta(days=239))
+    assert TechnicalAnalysisEngine().calculate(strong_uptrend_stock)["trend"]["state"] == "STRONG_UPTREND"
+    assert TechnicalAnalysisEngine().calculate(strong_downtrend_stock)["trend"]["state"] == "STRONG_DOWNTREND"
+    ranged = TechnicalAnalysisEngine().calculate(range_bound_stock)
+    assert ranged["levels"]["support"] and ranged["levels"]["resistance"]
+
+
+def test_breakout_with_volume_and_false_breakout_low_volume_fixtures():
+    closes = ([100, 103, 107, 110, 106, 102] * 10) + [100, 112]
+    confirmed = bars(closes, start=date.today() - timedelta(days=len(closes) - 1))
+    confirmed = [replace(bar, volume=100.0) for bar in confirmed[:-1]] + [replace(confirmed[-1], volume=1000.0)]
+    confirmed_result = TechnicalAnalysisEngine().calculate(confirmed)
+    assert any(signal["type"] == "BREAKOUT" for signal in confirmed_result["signals"])
+
+    low_volume = [replace(bar, volume=100.0) for bar in bars(closes, start=date.today() - timedelta(days=len(closes) - 1))]
+    false_result = TechnicalAnalysisEngine().calculate(low_volume)
+    assert any(signal["type"] == "WATCH_BREAKOUT" for signal in false_result["signals"])
+    assert not any(signal["type"] == "BREAKOUT" for signal in false_result["signals"])
+
+
+def test_bullish_and_bearish_divergence_golden_fixtures():
+    bearish_prices = [100, 101, 103, 105, 107, 110, 106, 104, 105, 107, 110, 112, 115, 111, 108, 107, 106]
+    bearish_rsi = [50.0] * len(bearish_prices)
+    bearish_rsi[5], bearish_rsi[12] = 72.0, 62.0
+    bearish = RSIEngine.divergence(bars(bearish_prices), bearish_rsi)
+    assert bearish["state"] == "BEARISH_DIVERGENCE"
+
+    bullish_prices = [100, 99, 97, 95, 93, 90, 94, 96, 95, 92, 89, 87, 85, 89, 92, 93, 94]
+    bullish_rsi = [50.0] * len(bullish_prices)
+    bullish_rsi[5], bullish_rsi[12] = 28.0, 38.0
+    bullish = RSIEngine.divergence(bars(bullish_prices), bullish_rsi)
+    assert bullish["state"] == "BULLISH_DIVERGENCE"
+
+
+def test_bollinger_squeeze_and_role_reversal_fixtures():
+    squeeze_prices = [100 + ((index % 2) * 12) for index in range(50)] + [106 + ((index % 2) * 0.05) for index in range(30)]
+    squeeze = TechnicalAnalysisEngine().calculate(bars(squeeze_prices, start=date.today() - timedelta(days=len(squeeze_prices) - 1)))
+    assert squeeze["bollinger"]["state"] == "SQUEEZE"
+
+    reversal_prices = ([100, 103, 107, 110, 106, 102] * 8) + [112, 113, 114, 113, 112, 110.5]
+    reversal = TechnicalAnalysisEngine().calculate(bars(reversal_prices, start=date.today() - timedelta(days=len(reversal_prices) - 1)))
+    assert any(signal["type"] == "RESISTANCE_TO_SUPPORT" for signal in reversal["role_reversals"])
+
+
+def test_level_confidence_exposes_rejection_and_factual_volume_confirmation():
+    result = TechnicalAnalysisEngine().calculate(bars(([100, 103, 108, 110, 106, 102] * 12), start=date.today() - timedelta(days=71)))
+    level = result["levels"]["support"][0]
+    assert level["rejection_strength"] > 0
+    assert level["volume_confirmation"] is not None

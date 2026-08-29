@@ -540,6 +540,7 @@ export type TechnicalStatus = "READY" | "INSUFFICIENT_HISTORY" | "NO_VOLUME_DATA
 export interface TechnicalLevel {
   kind: "support" | "resistance"; level_low: number; level_high: number;
   strength_score: number; touch_count: number; last_tested_at: string;
+  rejection_strength?: number; volume_confirmation?: number | null;
 }
 export interface TechnicalAnalysisResponse {
   instrument: { id?: number; ticker?: string; isin?: string | null; name?: string; currency?: string };
@@ -552,11 +553,12 @@ export interface TechnicalAnalysisResponse {
   macd: { status: TechnicalStatus; macd: number | null; signal: number | null; histogram: number | null; zero_state: string | null };
   bollinger: { status: TechnicalStatus; upper: number|null; middle:number|null; lower:number|null; band_width:number|null; percent_b:number|null; state:string|null };
   volume: { status: TechnicalStatus; current:number|null; average_20d:number|null; average_50d:number|null; ratio_20d:number|null; confirmation:string };
-  obv: { status: TechnicalStatus; value:number|null; trend:string|null };
+  obv: { status: TechnicalStatus; value:number|null; trend:string|null; divergence:string };
   atr: { status: TechnicalStatus; value:number|null; percent:number|null; illustrative_1_5_atr_level:number|null; warning:string };
   fibonacci: { status: TechnicalStatus; direction?:string; swing_low?:number; swing_high?:number; levels:Array<{ratio:number;level_low:number;level_high:number;label:string}> };
   crosses: Array<{type:string;timestamp:string;short_ma:number;long_ma:number;cross_price:number;warning:string}>;
   signals: Array<{type:string;timestamp?:string|null;confidence?:number;warning?:string}>;
+  role_reversals?: Array<{type:"SUPPORT_TO_RESISTANCE"|"RESISTANCE_TO_SUPPORT";timestamp:string;zone:TechnicalLevel;confidence:number;warning:string}>;
   historical_evaluation?: {status:TechnicalStatus;events:Record<string,Record<string,{observations:number;median_return_percent:number|null;positive_rate:number|null;status:TechnicalStatus}>>;warning:string};
   technical_momentum_score: { value:number|null;confidence:number;separate_from_investment_score:true };
   technical_risk: { label:"LOW"|"MODERATE"|"ELEVATED"|"HIGH"|"UNAVAILABLE";score:number|null;reasons:string[] };

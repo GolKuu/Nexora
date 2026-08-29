@@ -23,7 +23,7 @@ UNAVAILABLE = "UNAVAILABLE"
 
 @dataclass(frozen=True, slots=True)
 class TechnicalIndicatorConfigVersion:
-    version: str = "technical-v2"
+    version: str = "technical-v3"
     sma_periods: tuple[int, ...] = (20, 50, 200)
     ema_periods: tuple[int, ...] = (12, 20, 26, 50, 200)
     rsi_period: int = 14
@@ -256,11 +256,32 @@ class SupportResistanceEngine:
                 indexes = [item[0] for item in cluster]
                 recency = indexes[-1] / max(len(bars) - 1, 1)
                 time_spread = (indexes[-1] - indexes[0]) / max(len(bars) - 1, 1)
-                score = min(1.0, 0.18 * len(cluster) + 0.35 * recency + 0.25 * time_spread)
+                rejections = []
+                for index, pivot_price in cluster:
+                    future = closes[index + 1 : min(len(closes), index + 4)]
+                    if future and pivot_price:
+                        rejection = (max(future) / pivot_price - 1) if kind == "support" else (1 - min(future) / pivot_price)
+                        rejections.append(max(0.0, rejection))
+                rejection_strength = fmean(rejections) if rejections else 0.0
+                factual_volumes = [bar.volume for bar in bars if bar.volume is not None]
+                touch_volumes = [bars[index].volume for index in indexes if bars[index].volume is not None]
+                volume_confirmation = None
+                if factual_volumes and touch_volumes and fmean(factual_volumes) > 0:
+                    volume_confirmation = fmean(touch_volumes) / fmean(factual_volumes)
+                score = min(
+                    1.0,
+                    min(0.45, 0.15 * len(cluster))
+                    + 0.2 * recency
+                    + 0.15 * time_spread
+                    + 0.15 * min(1.0, rejection_strength / 0.05)
+                    + 0.05 * min(1.0, volume_confirmation or 0.0),
+                )
                 zone = {
                     "level_low": _round(min(prices)), "level_high": _round(max(prices)),
                     "strength_score": round(score, 3), "touch_count": len(cluster),
                     "last_tested_at": bars[indexes[-1]].day.isoformat(),
+                    "rejection_strength": _round(rejection_strength, 6),
+                    "volume_confirmation": _round(volume_confirmation, 3),
                 }
                 center = fmean(prices)
                 if kind == "support" and center <= last:
@@ -413,7 +434,7 @@ class TechnicalSignalEngine:
 
 class TechnicalRiskEngine:
     @staticmethod
-    def calculate(price: float, moving: dict, atr: dict, divergence: dict, liquidity: dict) -> dict:
+    def calculate(price: float, moving: dict, atr: dict, divergence: dict, liquidity: dict, macd: dict, obv: dict, bollinger: dict, signals: Sequence[dict]) -> dict:
         points, reasons = 0, []
         sma200 = moving["sma200"]["value"]
         if sma200 is not None and price < sma200:
@@ -425,6 +446,14 @@ class TechnicalRiskEngine:
             points += 1; reasons.append("ELEVATED_ATR")
         if divergence["state"] == "BEARISH_DIVERGENCE":
             points += 1; reasons.append("BEARISH_DIVERGENCE")
+        if macd.get("histogram") is not None and macd["histogram"] < 0:
+            points += 1; reasons.append("NEGATIVE_MACD_MOMENTUM")
+        if obv.get("trend") == "DOWN":
+            points += 1; reasons.append("FALLING_OBV")
+        if bollinger.get("state") == "EXPANSION":
+            points += 1; reasons.append("VOLATILITY_EXPANSION")
+        if any(signal["type"] == "BREAKDOWN" for signal in signals):
+            points += 2; reasons.append("SUPPORT_BREAKDOWN")
         if liquidity["confidence"] == "LOW":
             points += 2; reasons.append("LOW_LIQUIDITY")
         label = "HIGH" if points >= 5 else "ELEVATED" if points >= 3 else "MODERATE" if points >= 1 else "LOW"
@@ -528,10 +557,18 @@ class TechnicalAnalysisEngine:
         volume = VolumeAnalysisEngine.calculate(bars)
         if all(bar.volume is not None for bar in bars):
             obv_values = obv_series(closes, [float(bar.volume) for bar in bars if bar.volume is not None])
-            obv = {"status": READY, "value": _round(obv_values[-1]), "trend": "UP" if len(obv_values) >= 6 and obv_values[-1] > obv_values[-6] else "DOWN" if len(obv_values) >= 6 and obv_values[-1] < obv_values[-6] else "FLAT"}
+            obv_trend = "UP" if len(obv_values) >= 6 and obv_values[-1] > obv_values[-6] else "DOWN" if len(obv_values) >= 6 and obv_values[-1] < obv_values[-6] else "FLAT"
+            obv_divergence = "NONE"
+            if len(obv_values) >= 20:
+                price_change = closes[-1] / closes[-20] - 1 if closes[-20] else 0
+                obv_change = obv_values[-1] - obv_values[-20]
+                if price_change > 0.02 and obv_change < 0: obv_divergence = "BEARISH_DIVERGENCE"
+                elif price_change < -0.02 and obv_change > 0: obv_divergence = "BULLISH_DIVERGENCE"
+                elif (price_change > 0 and obv_change > 0) or (price_change < 0 and obv_change < 0): obv_divergence = "PRICE_CONFIRMED"
+            obv = {"status": READY, "value": _round(obv_values[-1]), "trend": obv_trend, "divergence": obv_divergence}
         else:
             obv_values = []
-            obv = {"status": NO_VOLUME_DATA, "value": None, "trend": None}
+            obv = {"status": NO_VOLUME_DATA, "value": None, "trend": None, "divergence": "UNAVAILABLE"}
         atr_value = atr_values[-1]
         atr = {"status": READY if atr_value is not None else NO_OHLC_DATA if any(bar.high is None or bar.low is None for bar in bars[-self.config.atr_period:]) else INSUFFICIENT_HISTORY, "period": self.config.atr_period, "value": _round(atr_value), "percent": _round(atr_value / closes[-1] * 100, 3) if atr_value is not None else None, "illustrative_1_5_atr_level": _round(closes[-1] - 1.5 * atr_value) if atr_value is not None else None, "warning": "Технический ориентир по волатильности, не торговая рекомендация."}
         levels_engine = SupportResistanceEngine(self.config)
@@ -541,18 +578,19 @@ class TechnicalAnalysisEngine:
         trend = TrendEngine.calculate(closes[-1], moving, macd)
         liquidity = self._liquidity(bars)
         confluence = TechnicalConfluenceEngine.calculate(trend, rsi, macd, volume, levels)
-        risk = TechnicalRiskEngine.calculate(closes[-1], moving, atr, divergence, liquidity)
         momentum = self._momentum(trend, rsi, macd, volume, liquidity)
         prior_levels = levels_engine.calculate(bars[:-1]) if len(bars) > 8 else {"support": [], "resistance": []}
         breakouts = self._breakouts(bars, prior_levels, volume)
-        signals = TechnicalSignalEngine.calculate(trend, divergence, bollinger, crosses, breakouts)
+        role_reversals = self._role_reversals(bars, levels_engine)
+        signals = TechnicalSignalEngine.calculate(trend, divergence, bollinger, crosses, [*breakouts, *role_reversals])
+        risk = TechnicalRiskEngine.calculate(closes[-1], moving, atr, divergence, liquidity, macd, obv, bollinger, signals)
         historical_evaluation = TechnicalBacktestEngine.evaluate(bars, rsi_values, macd_line, signal_line, crosses)
         result = {
             "instrument": instrument or {}, "as_of": bars[-1].timestamp or bars[-1].day.isoformat(),
             "last_trade": {"price": _round(closes[-1]), "trading_date": bars[-1].day.isoformat(), "timestamp": bars[-1].timestamp, "source": bars[-1].source, "price_basis": "last_validated_factual_trade"},
             "trend": trend, "levels": levels, "moving_averages": moving, "rsi": {**rsi, "divergence": divergence},
             "macd": macd, "bollinger": bollinger, "volume": volume, "obv": obv, "atr": atr,
-            "fibonacci": fibonacci, "crosses": crosses, "signals": signals,
+            "fibonacci": fibonacci, "crosses": crosses, "role_reversals": role_reversals, "signals": signals,
             "historical_evaluation": historical_evaluation,
             "technical_momentum_score": momentum, "technical_risk": risk, "confluence": confluence,
             "data_quality": {"price_status": READY, "observations": len(bars), "first_trade_date": bars[0].day.isoformat(), "last_trade_date": bars[-1].day.isoformat(), "historical_coverage_days": (bars[-1].day - bars[0].day).days + 1, "volume_status": volume["status"], "ohlc_status": atr["status"], "technical_confidence": liquidity["confidence"], "liquidity": liquidity, "no_interpolation": True, "config_version": self.config.version},
@@ -589,6 +627,30 @@ class TechnicalAnalysisEngine:
                 signals.append({"type": "BREAKDOWN" if confirmed_volume else "WATCH_SUPPORT", "timestamp": timestamp, "zone": level, "volume_confirmed": confirmed_volume})
                 break
         return signals
+
+    @staticmethod
+    def _role_reversals(bars: Sequence[TechnicalBar], levels_engine: SupportResistanceEngine) -> list[dict]:
+        if len(bars) < 20:
+            return []
+        split = len(bars) - 6
+        historical = levels_engine.calculate(bars[:split])
+        bridge = bars[split:-1]
+        current = bars[-1]
+        timestamp = current.timestamp or current.day.isoformat()
+        results: list[dict] = []
+        for level in historical.get("resistance", []):
+            decisively_broken = any(bar.close > level["level_high"] * 1.002 for bar in bridge)
+            retested_from_above = level["level_low"] * 0.995 <= current.close <= level["level_high"] * 1.02
+            if decisively_broken and retested_from_above:
+                results.append({"type": "RESISTANCE_TO_SUPPORT", "timestamp": timestamp, "zone": level, "confidence": level["strength_score"], "warning": "Возможная смена роли зоны, не гарантия удержания поддержки."})
+                break
+        for level in historical.get("support", []):
+            decisively_broken = any(bar.close < level["level_low"] * 0.998 for bar in bridge)
+            retested_from_below = level["level_low"] * 0.98 <= current.close <= level["level_high"] * 1.005
+            if decisively_broken and retested_from_below:
+                results.append({"type": "SUPPORT_TO_RESISTANCE", "timestamp": timestamp, "zone": level, "confidence": level["strength_score"], "warning": "Возможная смена роли зоны, не гарантия удержания сопротивления."})
+                break
+        return results
 
     @staticmethod
     def _liquidity(bars: Sequence[TechnicalBar]) -> dict:
