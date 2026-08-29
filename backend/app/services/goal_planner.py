@@ -23,7 +23,6 @@ from app.models.stock import Dividend, Stock, StockMetric, StockQuote, StockScor
 from app.repositories.market import QuoteRepository
 from app.repositories.metrics import MetricRepository
 from app.services.recommendation_service import RecommendationService
-from app.services.stock_service import StockService
 
 METHODOLOGY_VERSION = "goal-planner-1.0.0"
 RETURN_MODEL_VERSION = "stored-facts-return-1.0.0"
@@ -130,7 +129,6 @@ class GoalReinvestmentEngine:
 class GoalPlannerService:
     def __init__(self, session: Session):
         self.session = session
-        self.stock_service = StockService(session)
         self.bond_recommendations = RecommendationService(session)
         self.quotes = QuoteRepository(session)
         self.metrics = MetricRepository(session)
@@ -236,15 +234,16 @@ class GoalPlannerService:
             if not price or price <= 0 or scores.get("investment") is None:
                 rejected += 1; continue
             stock = item["stock"]
-            dividend_yield = metrics.get("trailing_dividend_yield") or 0.0
+            dividend_yield = metrics.get("trailing_dividend_yield")
             valuation = scores.get("valuation")
             quality = scores.get("quality")
-            if valuation is None and quality is None and dividend_yield == 0:
+            if valuation is None and quality is None and dividend_yield is None:
                 rejected += 1; continue
-            expected = dividend_yield
+            expected = dividend_yield or 0.0
             if valuation is not None: expected += max(-0.04, min(0.06, (valuation - 50) / 1000))
             if quality is not None: expected += max(-0.02, min(0.04, (quality - 50) / 1250))
             risk_score = scores.get("risk")
+            if risk_score is not None: expected -= min(0.03, risk_score / 4000)
             shock = 0.22 if risk_score is None else 0.10 + min(0.20, risk_score / 500)
             rows.append(self._stock_row(stock, item, price, expected, shock, stock_weight / stock_slots, payload))
 
@@ -343,7 +342,12 @@ class GoalPlannerService:
                 "risk": "Высокий" if shock >= .2 else "Умеренный", "liquidity": item["scores"].get("liquidity"),
                 "score": item["scores"].get("investment"), "profile_match_score": item["scores"].get("personal"),
                 "reason": "Детерминированная комбинация оценки, качества и подтверждённой дивидендной истории.",
-                "expected_return_basis": ["VALUATION_SCORE", "QUALITY_SCORE", "TRAILING_DIVIDEND_YIELD"],
+                "expected_return_basis": [basis for basis, available in (
+                    ("VALUATION_SCORE", item["scores"].get("valuation") is not None),
+                    ("QUALITY_SCORE", item["scores"].get("quality") is not None),
+                    ("TRAILING_DIVIDEND_YIELD", item["metrics"].get("trailing_dividend_yield") is not None),
+                    ("RISK_ADJUSTMENT", item["scores"].get("risk") is not None),
+                ) if available],
                 "data_timestamp": item.get("data_timestamp"),
                 "target_weight": min(weight, settings.GOAL_MAX_SINGLE_STOCK_PERCENT), "future_cashflows": future}
 
