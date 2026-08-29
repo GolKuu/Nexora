@@ -372,6 +372,25 @@ export interface GoalPlanPosition {
   score: number | null;
   profile_match_score: number | null;
   reason: string;
+  technical_timing?: {
+    risk: "LOW" | "MODERATE" | "ELEVATED" | "HIGH" | null;
+    momentum: number | null;
+    confidence: "LOW" | "MEDIUM" | "HIGH" | null;
+    as_of: string | null;
+    used_for_selection_or_return: false;
+  } | null;
+  execution_plan?: {
+    kind: "STAGED_PURCHASE_SCENARIO";
+    reason: string;
+    technical_risk: string | null;
+    technical_confidence: string | null;
+    tranches: Array<{
+      percent: number;
+      condition: string;
+      zone?: { level_low: number; level_high: number } | null;
+    }>;
+    warning: string;
+  } | null;
   ytm?: number | null;
   coupon_rate?: number | null;
   maturity_date?: string | null;

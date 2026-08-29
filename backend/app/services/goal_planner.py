@@ -20,9 +20,11 @@ from app.models.bond import Bond
 from app.models.instrument import Instrument
 from app.models.portfolio import GoalPlanVersion, InvestmentGoal, Portfolio, PortfolioPosition
 from app.models.stock import Dividend, Stock, StockMetric, StockQuote, StockScore
+from app.models.technical import TechnicalAnalysisCache
 from app.repositories.market import QuoteRepository
 from app.repositories.metrics import MetricRepository
 from app.services.recommendation_service import RecommendationService
+from app.services.technical_analysis import DEFAULT_CONFIG
 
 METHODOLOGY_VERSION = "goal-planner-1.0.0"
 RETURN_MODEL_VERSION = "stored-facts-return-1.0.0"
@@ -311,6 +313,21 @@ class GoalPlannerService:
         scores: dict[int, dict[str, float | None]] = {}
         for row in self.session.scalars(select(StockScore).where(StockScore.stock_id.in_(ids), StockScore.user_id.is_(None)).order_by(StockScore.calculated_at.desc(), StockScore.id.desc())):
             scores.setdefault(row.stock_id, {}).setdefault(row.kind, row.value)
+        technical: dict[int, dict] = {}
+        for row in self.session.scalars(
+            select(TechnicalAnalysisCache)
+            .where(
+                TechnicalAnalysisCache.instrument_id.in_(
+                    [stock.instrument_id for stock in stocks]
+                ),
+                TechnicalAnalysisCache.config_version == DEFAULT_CONFIG.version,
+            )
+            .order_by(
+                TechnicalAnalysisCache.created_at.desc(),
+                TechnicalAnalysisCache.id.desc(),
+            )
+        ):
+            technical.setdefault(row.instrument_id, row.result)
         items = []
         for stock in stocks:
             quote, metric, stock_scores = quotes.get(stock.id), metrics.get(stock.id), scores.get(stock.id, {})
@@ -319,6 +336,7 @@ class GoalPlannerService:
                           "price": price, "ask": quote.ask if quote else None, "stock": stock,
                           "scores": stock_scores,
                           "metrics": {"trailing_dividend_yield": metric.trailing_dividend_yield if metric else None},
+                          "technical_summary": technical.get(stock.instrument_id),
                           "data_timestamp": quote.timestamp.isoformat() if quote else None})
         return items
 
@@ -334,6 +352,42 @@ class GoalPlannerService:
                 basis = "DECLARED" if dividend.status == "announced" else "HISTORICAL_ESTIMATE"
                 future.append({"month": month, "kind": "DIVIDEND", "amount": 0.0, "per_unit": dividend.dividend_per_share, "basis": basis})
         issuer = stock.instrument.issuer
+        technical = item.get("technical_summary") or {}
+        technical_risk = technical.get("technical_risk") or {}
+        technical_quality = technical.get("data_quality") or {}
+        atr_percent = (technical.get("atr") or {}).get("percent")
+        elevated_timing_risk = technical_risk.get("label") in {"ELEVATED", "HIGH"}
+        elevated_volatility = atr_percent is not None and atr_percent >= 3
+        execution_plan = None
+        if elevated_timing_risk or elevated_volatility:
+            support = (technical.get("levels") or {}).get("support") or []
+            nearest_support = support[0] if support else None
+            execution_plan = {
+                "kind": "STAGED_PURCHASE_SCENARIO",
+                "reason": (
+                    "Повышенный текущий технический риск или волатильность; "
+                    "фундаментальный отбор и ожидаемая доходность не изменены."
+                ),
+                "technical_risk": technical_risk.get("label"),
+                "technical_confidence": technical_quality.get("technical_confidence"),
+                "tranches": [
+                    {"percent": 50, "condition": "первый этап по плану"},
+                    {
+                        "percent": 25,
+                        "condition": "около подтверждённой зоны поддержки"
+                        if nearest_support
+                        else "после появления подтверждённой зоны поддержки",
+                        "zone": {
+                            "level_low": nearest_support["level_low"],
+                            "level_high": nearest_support["level_high"],
+                        }
+                        if nearest_support
+                        else None,
+                    },
+                    {"percent": 25, "condition": "после следующего фактического подтверждения"},
+                ],
+                "warning": "Учебный сценарий исполнения, не торговая рекомендация.",
+            }
         return {"instrument_id": stock.instrument_id, "stock_id": stock.id, "bond_id": None,
                 "ticker": stock.instrument.ticker, "name": issuer.short_name or issuer.name, "instrument_type": "stock",
                 "issuer_id": issuer.id, "issuer": issuer.short_name or issuer.name, "sector": stock.sector or issuer.sector,
@@ -341,6 +395,14 @@ class GoalPlannerService:
                 "unit_cost": round(price, 4), "expected_return": round(expected, 6), "risk_shock": round(shock, 6),
                 "risk": "Высокий" if shock >= .2 else "Умеренный", "liquidity": item["scores"].get("liquidity"),
                 "score": item["scores"].get("investment"), "profile_match_score": item["scores"].get("personal"),
+                "technical_timing": {
+                    "risk": technical_risk.get("label"),
+                    "momentum": (technical.get("technical_momentum_score") or {}).get("value"),
+                    "confidence": technical_quality.get("technical_confidence"),
+                    "as_of": technical.get("as_of"),
+                    "used_for_selection_or_return": False,
+                } if technical else None,
+                "execution_plan": execution_plan,
                 "reason": "Детерминированная комбинация оценки, качества и подтверждённой дивидендной истории.",
                 "expected_return_basis": [basis for basis, available in (
                     ("VALUATION_SCORE", item["scores"].get("valuation") is not None),

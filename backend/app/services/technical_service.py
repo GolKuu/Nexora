@@ -100,6 +100,28 @@ class TechnicalAnalysisService:
         # Calculate from the complete factual prefix, then trim the response.
         # Otherwise switching from 1Y to 1M would restart EMA/RSI at the window edge.
         all_bars, metadata = self._bars(identifier, days=36500)
+        if not all_bars:
+            return {
+                "instrument": {
+                    "id": stock.instrument_id,
+                    "ticker": stock.instrument.ticker,
+                    "currency": stock.instrument.currency or "KZT",
+                },
+                "range": range_key,
+                "indicators": indicators,
+                "series": [],
+                "signals": [],
+                "levels": {"status": "INSUFFICIENT_HISTORY", "support": [], "resistance": []},
+                "fibonacci": {"status": "INSUFFICIENT_HISTORY", "levels": []},
+                "as_of": None,
+                "data_quality": {
+                    "price_status": "INSUFFICIENT_HISTORY",
+                    "observations": 0,
+                    "no_interpolation": True,
+                    "config_version": DEFAULT_CONFIG.version,
+                },
+                "basis": metadata["basis"],
+            }
         result = TechnicalAnalysisEngine().calculate(
             all_bars,
             instrument={"id": stock.instrument_id, "ticker": stock.instrument.ticker, "currency": stock.instrument.currency or "KZT"},
@@ -127,6 +149,36 @@ class TechnicalAnalysisService:
             "technical_risk": result.get("technical_risk") or {"label": "UNAVAILABLE", "score": None, "reasons": ["INSUFFICIENT_HISTORY"]},
             "technical_momentum_score": result.get("technical_momentum_score") or {"value": None, "confidence": 0.0, "separate_from_investment_score": True},
             "as_of": result.get("as_of"),
+        }
+
+    def eligibility(self, identifier: str, *, minimum_sessions: int = 14) -> dict:
+        """Describe whether deterministic momentum indicators have enough facts.
+
+        Shorter histories remain valid product states: the UI can render the
+        available price series and per-indicator statuses, but the bulk
+        precompute job does not pretend RSI/MACD are ready without their
+        required factual prefix.
+        """
+        stock = StockService(self.session).require(identifier)
+        bars, metadata = self._bars(identifier, days=36500)
+        observations = len(bars)
+        return {
+            "instrument_id": stock.instrument_id,
+            "ticker": stock.instrument.ticker,
+            "is_active": stock.instrument.is_active,
+            "status": "ELIGIBLE" if observations >= minimum_sessions else "INSUFFICIENT_HISTORY",
+            "observations": observations,
+            "minimum_sessions": minimum_sessions,
+            "first_trade_date": bars[0].day.isoformat() if bars else None,
+            "last_trade_date": bars[-1].day.isoformat() if bars else None,
+            "has_sma50_history": observations >= 50,
+            "has_sma200_history": observations >= 200,
+            "has_complete_volume": bool(bars) and all(bar.volume is not None for bar in bars),
+            "has_complete_ohlc": bool(bars) and all(
+                bar.high is not None and bar.low is not None for bar in bars
+            ),
+            "basis": metadata["basis"],
+            "licensed_rows_excluded": metadata["coverage"]["licensed_rows_excluded"],
         }
 
     def _bars(self, identifier: str, *, days: int) -> tuple[list[TechnicalBar], dict]:
