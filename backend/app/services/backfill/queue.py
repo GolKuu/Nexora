@@ -65,7 +65,8 @@ class BackfillQueue:
             return PRIORITY_UNIVERSE
         held = self.session.execute(
             select(func.count(PortfolioPosition.id)).where(
-                PortfolioPosition.stock_id == stock.id
+                PortfolioPosition.stock_id == stock.id,
+                PortfolioPosition.status == "EXECUTED",
             )
         ).scalar_one()
         if held:

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, Skeleton, Stat } from "@/components/ui/Stat";
-import { portfolioService } from "@/services/user";
+import { goalPlannerService, portfolioService } from "@/services/user";
 import { useUiStore } from "@/stores/uiStore";
 import { formatDate, formatMoney, formatNumber, formatPercent, formatRate } from "@/utils/format";
 import type { PortfolioDetail, PortfolioPosition } from "@/types/api";
@@ -130,6 +130,7 @@ function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
 
   return (
     <div className="space-y-4">
+      {data.goal_tracking ? <Card><CardHeader title={`Цель ${formatMoney(data.goal_tracking.target, currency)}`} subtitle={`План v${data.goal_tracking.version} · осталось ${data.goal_tracking.time_remaining_months} мес.`}/><CardBody><div className="grid grid-cols-2 gap-4 sm:grid-cols-4"><Stat label="Фактически куплено" value={formatMoney(data.goal_tracking.current,currency)}/><Stat label="Ожидаемая база" value={formatMoney(data.goal_tracking.expected_base,currency)}/><Stat label="Требуется дальше" value={data.goal_tracking.required_return_remaining==null?"—":formatRate(data.goal_tracking.required_return_remaining)}/><Stat label="Статус" value={data.goal_tracking.status === "ON_TRACK" ? "По плану" : data.goal_tracking.status === "NO_EXECUTED_POSITIONS" ? "Покупки не подтверждены" : "Позади плана"} tone={data.goal_tracking.status === "ON_TRACK" ? "positive" : "negative"}/></div><div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800"><Button onClick={async()=>{await goalPlannerService.replan(data.goal_tracking!.goal_id);await mutate(["portfolio",portfolioId]);}}>Обновить план</Button><p className="mt-2 text-xs text-slate-500">Создаст новую версию по текущим ценам и фактическим позициям. Старая версия сохранится.</p></div></CardBody></Card> : null}
       <Card>
         <CardHeader title={data.name} subtitle={`${summary.position_count} позиций`} />
         <CardBody>
@@ -215,6 +216,8 @@ function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
 
       <PortfolioHistoryChart history={data.history} />
 
+      {data.goal_tracking && data.planned_positions?.length ? <PlannedPositions goalId={data.goal_tracking.goal_id} portfolioId={portfolioId} positions={data.planned_positions} /> : null}
+
       <Card>
         <CardHeader title="Позиции" />
         <CardBody className="overflow-x-auto">
@@ -295,6 +298,27 @@ function PortfolioDetailView({ portfolioId }: { portfolioId: number }) {
       </Card>
     </div>
   );
+}
+
+function PlannedPositions({ goalId, portfolioId, positions }: { goalId: number; portfolioId: number; positions: NonNullable<PortfolioDetail["planned_positions"]> }) {
+  const [selected, setSelected] = useState<number | null>(null);
+  const current = positions.find(position => position.id === selected);
+  const [quantity, setQuantity] = useState("");
+  const [price, setPrice] = useState("");
+  const [commission, setCommission] = useState("0");
+  const [executionDate, setExecutionDate] = useState(new Date().toISOString().slice(0,10));
+  const [error, setError] = useState<string | null>(null);
+
+  async function execute() {
+    if (!current) return;
+    setError(null);
+    try {
+      await goalPlannerService.markExecuted(goalId,current.id,{actual_quantity:Number(quantity),actual_price:Number(price),actual_commission:Number(commission),execution_date:executionDate});
+      setSelected(null); await mutate(["portfolio",portfolioId]); await mutate("portfolios");
+    } catch(caught) { setError(caught instanceof Error ? caught.message : "Не удалось подтвердить покупку"); }
+  }
+
+  return <Card><CardHeader title="Запланированные покупки" subtitle="Не входят в стоимость и P/L до подтверждения исполнения"/><CardBody><div className="space-y-2">{positions.map(position=><div key={position.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-slate-300 p-3 dark:border-slate-700"><div><span className="mr-2 rounded bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700">PLANNED</span><strong>{position.ticker}</strong><p className="mt-1 text-xs text-slate-500">{position.quantity} шт. · ориентир {formatMoney(position.planned_reference_price,"KZT")} · {position.planned_allocation==null?"—":`${(position.planned_allocation*100).toFixed(1)}%`}</p></div><Button onClick={()=>{setSelected(position.id);setQuantity(String(position.quantity));setPrice(String(position.planned_reference_price??""));}}>Отметить как куплено</Button></div>)}</div>{current?<div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-800 sm:grid-cols-4"><Field label="Фактическое количество"><Input type="number" value={quantity} onChange={e=>setQuantity(e.target.value)}/></Field><Field label="Фактическая цена"><Input type="number" value={price} onChange={e=>setPrice(e.target.value)}/></Field><Field label="Комиссия"><Input type="number" value={commission} onChange={e=>setCommission(e.target.value)}/></Field><Field label="Дата исполнения"><Input type="date" value={executionDate} onChange={e=>setExecutionDate(e.target.value)}/></Field><div className="flex gap-2 sm:col-span-4"><Button disabled={!Number(quantity)||!Number(price)} onClick={()=>void execute()}>Подтвердить фактическую покупку</Button><button className="text-xs text-slate-500" onClick={()=>setSelected(null)}>Отмена</button></div>{error&&<p className="text-sm text-rose-600 sm:col-span-4">{error}</p>}</div>:null}</CardBody></Card>;
 }
 
 function PortfolioHistoryChart({history}:{history: PortfolioDetail["history"]}) {

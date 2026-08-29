@@ -1,0 +1,10 @@
+
+> kase-bond-ai-frontend@0.1.0 start
+> next start -H 127.0.0.1 -p 3000
+
+   ▲ Next.js 15.5.23
+   - Local:        http://127.0.0.1:3000
+   - Network:      http://127.0.0.1:3000
+
+ ✓ Starting...
+ ✓ Ready in 290ms

@@ -13,6 +13,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    JSON,
+    Integer,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +38,9 @@ class Portfolio(Base, TimestampMixin):
     base_currency: Mapped[str] = mapped_column(String(3), default="KZT")
     description: Mapped[str | None] = mapped_column(Text)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    goal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("investment_goals.id", ondelete="SET NULL"), index=True
+    )
 
     user: Mapped["User | None"] = relationship(back_populates="portfolios")
     positions: Mapped[list["PortfolioPosition"]] = relationship(
@@ -62,10 +67,60 @@ class PortfolioPosition(Base, TimestampMixin):
     purchase_accrued_interest: Mapped[float | None] = mapped_column(Float)
     fees: Mapped[float | None] = mapped_column(Float)
     note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="EXECUTED", index=True)
+    goal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("investment_goals.id", ondelete="SET NULL"), index=True
+    )
+    planned_quantity: Mapped[float | None] = mapped_column(Float)
+    planned_reference_price: Mapped[float | None] = mapped_column(Float)
+    planned_allocation: Mapped[float | None] = mapped_column(Float)
+    actual_quantity: Mapped[float | None] = mapped_column(Float)
+    actual_price: Mapped[float | None] = mapped_column(Float)
+    actual_commission: Mapped[float | None] = mapped_column(Float)
+    execution_date: Mapped[date | None] = mapped_column(Date)
+    source_goal_plan_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("goal_plan_versions.id", ondelete="SET NULL"), index=True
+    )
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="positions")
     bond: Mapped["Bond | None"] = relationship()
     stock: Mapped["Stock | None"] = relationship()
+
+
+class InvestmentGoal(Base, TimestampMixin):
+    __tablename__ = "investment_goals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    anonymous_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    starting_capital: Mapped[float] = mapped_column(Float)
+    target_type: Mapped[str] = mapped_column(String(16))
+    target_amount: Mapped[float] = mapped_column(Float)
+    target_final_value: Mapped[float] = mapped_column(Float)
+    horizon_months: Mapped[int] = mapped_column(Integer)
+    monthly_contribution: Mapped[float] = mapped_column(Float, default=0.0)
+    risk_profile: Mapped[str] = mapped_column(String(16))
+    currency: Mapped[str] = mapped_column(String(3), default="KZT")
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE", index=True)
+    current_version: Mapped[int] = mapped_column(Integer, default=1)
+
+    versions: Mapped[list["GoalPlanVersion"]] = relationship(
+        back_populates="goal", cascade="all, delete-orphan", order_by="GoalPlanVersion.version"
+    )
+
+
+class GoalPlanVersion(Base, TimestampMixin):
+    __tablename__ = "goal_plan_versions"
+    __table_args__ = (UniqueConstraint("goal_id", "version", name="uq_goal_plan_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("investment_goals.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    methodology_version: Mapped[str] = mapped_column(String(32), default="goal-planner-1.0.0")
+    input_snapshot: Mapped[dict] = mapped_column(JSON)
+    plan_snapshot: Mapped[dict] = mapped_column(JSON)
+
+    goal: Mapped["InvestmentGoal"] = relationship(back_populates="versions")
 
 
 class Watchlist(Base, TimestampMixin):

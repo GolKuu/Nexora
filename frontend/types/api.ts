@@ -344,11 +344,66 @@ export interface PortfolioPosition {
   investment_score: number | null;
 }
 
+export interface GoalScenario {
+  final_value: number;
+  target_reached: boolean;
+  difference_vs_target: number;
+}
+
+export interface GoalPlanPosition {
+  instrument_id: number | null;
+  stock_id: number | null;
+  bond_id: number | null;
+  ticker: string;
+  name: string;
+  instrument_type: "stock" | "bond";
+  issuer: string | null;
+  currency: string;
+  quantity: number;
+  lot_size: number;
+  reference_price: number;
+  unit_cost: number;
+  purchase_cost: number;
+  allocation: number;
+  expected_return: number;
+  expected_contribution: number;
+  risk: string;
+  liquidity: number | null;
+  score: number | null;
+  profile_match_score: number | null;
+  reason: string;
+  ytm?: number | null;
+  coupon_rate?: number | null;
+  maturity_date?: string | null;
+}
+
+export interface GoalPlan {
+  goal_id: number | null;
+  plan_version_id?: number;
+  version: number;
+  methodology_version: string;
+  as_of: string;
+  required_return: number;
+  required_return_pct: number;
+  feasibility: "FEASIBLE" | "CHALLENGING" | "HIGH_RISK" | "UNREALISTIC";
+  target: { type: "FINAL_VALUE" | "PROFIT"; amount: number; planner_base_target: number; safety_margin_percent: number };
+  scenarios: { negative: GoalScenario; base: GoalScenario; positive: GoalScenario };
+  initial_portfolio: GoalPlanPosition[];
+  cash_remaining: number;
+  reinvestment_plan: Array<{ month: number; available_before_purchase: number; purchases: Array<{ ticker: string; quantity: number; cost: number }>; cash_remaining: number }>;
+  cashflow_calendar: Array<{ month: number; contribution: number; coupon: number; dividend: number; principal: number; reinvested: number; cash_balance: number; dividend_basis: string[] }>;
+  target_progress: { starting_capital: number; contributions: number; coupon_income: number; dividend_income: number; projected_market_gain: number; projected_final_value: number; target: number; buffer_vs_target: number };
+  warnings: string[];
+  alternative_plans: Array<Record<string, number | string>>;
+}
+
 export interface PortfolioDetail {
   id: number;
   name: string;
   base_currency: string;
   positions: PortfolioPosition[];
+  planned_positions?: Array<{ id: number; status: "PLANNED"; instrument_type: "stock" | "bond"; ticker: string; name: string; quantity: number; planned_reference_price: number | null; planned_allocation: number | null; source_goal_plan_version_id: number | null }>;
+  goal_tracking?: { goal_id: number; version: number; target: number; current: number; expected_base: number; time_remaining_months: number; required_return_remaining: number | null; status: string } | null;
   history: {
     status: "available" | "insufficient_history" | "unavailable_mixed_currency";
     currency: string;

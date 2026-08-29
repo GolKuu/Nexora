@@ -187,7 +187,10 @@ class NewsIntelligencePipeline:
         if not stock: return 0
         audiences = set()
         for row in self.session.execute(select(Watchlist).where(Watchlist.stock_id == stock.id)).scalars(): audiences.add(("watchlist", str(row.user_id or row.anonymous_token)))
-        for row in self.session.execute(select(PortfolioPosition).where(PortfolioPosition.stock_id == stock.id)).scalars(): audiences.add(("portfolio", str(row.portfolio_id)))
+        for row in self.session.execute(select(PortfolioPosition).where(
+            PortfolioPosition.stock_id == stock.id,
+            PortfolioPosition.status == "EXECUTED",
+        )).scalars(): audiences.add(("portfolio", str(row.portfolio_id)))
         for row in self.session.execute(select(Alert).where(Alert.stock_id == stock.id, Alert.is_active.is_(True))).scalars(): audiences.add(("alert", str(row.id)))
         for kind, key in audiences:
             self.session.add(NotificationCandidate(event_id=event.id, audience_type=kind, audience_key=key, importance=event.importance, reason="Важное связанное событие"))

@@ -15,7 +15,7 @@ from app.calculations.portfolio import (
 )
 from app.calculations.returns import calculate_real_return
 from app.core.errors import NotFoundError
-from app.models.portfolio import Portfolio
+from app.models.portfolio import GoalPlanVersion, Portfolio
 from app.models.market import BondQuote
 from app.models.stock import StockQuote
 from app.repositories.bonds import BondRepository
@@ -23,6 +23,7 @@ from app.repositories.metrics import MetricRepository
 from app.repositories.portfolios import PortfolioRepository
 from app.repositories.scores import ScoreRepository
 from app.services.stock_service import StockService
+from app.services.technical_service import TechnicalAnalysisService
 
 
 class PortfolioService:
@@ -40,7 +41,9 @@ class PortfolioService:
         return portfolio
 
     def valuation(self, portfolio: Portfolio) -> dict:
-        bond_ids = [p.bond_id for p in portfolio.positions if p.bond_id is not None]
+        executed_positions = [p for p in portfolio.positions if p.status == "EXECUTED"]
+        planned_positions = [p for p in portfolio.positions if p.status == "PLANNED"]
+        bond_ids = [p.bond_id for p in executed_positions if p.bond_id is not None]
         metrics = self.metrics.latest_for_many(bond_ids)
         scores = self.scores.latest_investment_for_many(bond_ids)
 
@@ -53,7 +56,7 @@ class PortfolioService:
         bond_coupons = 0.0
         coupon_data_available = False
 
-        for position in portfolio.positions:
+        for position in executed_positions:
             if position.instrument_type == "stock" or position.stock_id is not None:
                 stock = position.stock
                 if stock is None:
@@ -73,6 +76,7 @@ class PortfolioService:
                 trailing_yield = item["metrics"].get("trailing_dividend_yield")
                 dividend_income = market_value * trailing_yield if market_value is not None and trailing_yield is not None else None
                 stock_dividends += dividend_income or 0.0
+                technical_summary = TechnicalAnalysisService(self.session).compact(stock.instrument.ticker)
                 positions.append({"id": position.id, "instrument_type": "stock", "stock_id": stock.id, "bond_id": None,
                                   "ticker": stock.instrument.ticker, "name": stock.instrument.issuer.short_name or stock.instrument.issuer.name,
                                   "issuer_id": stock.instrument.issuer_id,
@@ -82,7 +86,10 @@ class PortfolioService:
                                   "current_price": current_price, "market_value": None if market_value is None else round(market_value, 2),
                                   "cost": None if cost is None else round(cost, 2), "unrealized_pnl": None if market_value is None or cost is None else round(market_value - cost, 2),
                                   "dividend_income_trailing": None if dividend_income is None else round(dividend_income, 2),
-                                  "investment_score": item["scores"]["investment"]["value"], "ytm": None, "real_ytm": None, "modified_duration": None})
+                                  "investment_score": item["scores"]["investment"]["value"],
+                                  "technical_summary": technical_summary,
+                                  "implementation_note": "Покупку можно разбить на несколько этапов из-за повышенной текущей волатильности или технического риска." if technical_summary["technical_risk"]["label"] in {"ELEVATED", "HIGH"} else None,
+                                  "ytm": None, "real_ytm": None, "modified_duration": None})
                 continue
             bond = position.bond
             if bond is None:
@@ -193,11 +200,64 @@ class PortfolioService:
             )
         ]
 
+        planned_payload = []
+        for position in planned_positions:
+            instrument = position.stock.instrument if position.stock is not None else None
+            ticker = instrument.ticker if instrument is not None else position.bond.ticker if position.bond is not None else "—"
+            name = (instrument.issuer.short_name or instrument.issuer.name) if instrument is not None else position.bond.name if position.bond is not None else "—"
+            technical_summary = TechnicalAnalysisService(self.session).compact(ticker) if instrument is not None else None
+            allocation = position.planned_allocation
+            staged = None
+            if technical_summary and technical_summary["technical_risk"]["label"] in {"ELEVATED", "HIGH"} and allocation:
+                staged = {
+                    "label": "Образовательный сценарий поэтапной покупки, не торговая рекомендация.",
+                    "stages": [
+                        {"share_percent": 50, "amount": round(allocation * 0.5, 2), "condition": "первый этап"},
+                        {"share_percent": 25, "amount": round(allocation * 0.25, 2), "condition": "около подтверждённой поддержки, если она сохранится"},
+                        {"share_percent": 25, "amount": round(allocation * 0.25, 2), "condition": "после подтверждения или следующего взноса"},
+                    ],
+                }
+            planned_payload.append({
+                "id": position.id, "status": position.status, "instrument_type": position.instrument_type,
+                "ticker": ticker, "name": name, "quantity": position.planned_quantity or position.quantity,
+                "planned_reference_price": position.planned_reference_price,
+                "planned_allocation": position.planned_allocation,
+                "source_goal_plan_version_id": position.source_goal_plan_version_id,
+                "technical_summary": technical_summary,
+                "staged_purchase_scenario": staged,
+            })
+
+        goal_tracking = None
+        if portfolio.goal_id is not None:
+            version = self.session.scalar(select(GoalPlanVersion).where(
+                GoalPlanVersion.goal_id == portfolio.goal_id
+            ).order_by(GoalPlanVersion.version.desc()).limit(1))
+            if version is not None:
+                snapshot = version.plan_snapshot
+                target = snapshot.get("target", {}).get("amount")
+                expected_base = snapshot.get("scenarios", {}).get("base", {}).get("final_value")
+                created = version.created_at.date()
+                elapsed = max(0, (date.today().year - created.year) * 12 + date.today().month - created.month)
+                horizon = int(version.input_snapshot.get("horizon_months", 0))
+                remaining = max(0, horizon - elapsed)
+                required_remaining = None
+                if target and total_value > 0 and remaining > 0:
+                    from app.services.goal_planner import required_annual_return
+                    required_remaining = required_annual_return(total_value, target, remaining, float(version.input_snapshot.get("monthly_contribution", 0)))
+                goal_tracking = {
+                    "goal_id": portfolio.goal_id, "version": version.version, "target": target,
+                    "current": round(total_value, 2), "expected_base": expected_base,
+                    "time_remaining_months": remaining, "required_return_remaining": required_remaining,
+                    "status": "NO_EXECUTED_POSITIONS" if not positions else "ON_TRACK" if target and total_value >= target else "BEHIND_PLAN",
+                }
+
         return {
             "id": portfolio.id,
             "name": portfolio.name,
             "base_currency": portfolio.base_currency,
             "positions": positions,
+            "planned_positions": planned_payload,
+            "goal_tracking": goal_tracking,
             "history": self._history(portfolio),
             "summary": {
                 "position_count": len(positions),
@@ -237,11 +297,12 @@ class PortfolioService:
         request/query per position. Missing market days remain absent and a
         mixed-currency portfolio is not summed without a real FX series.
         """
+        executed_positions = [p for p in portfolio.positions if p.status == "EXECUTED"]
         currencies = {
             position.stock.instrument.currency
             if position.stock_id is not None and position.stock is not None
             else position.bond.currency
-            for position in portfolio.positions
+            for position in executed_positions
             if position.stock is not None or position.bond is not None
         }
         if len(currencies) > 1:
@@ -251,8 +312,8 @@ class PortfolioService:
             }
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=365)
-        stock_positions = {p.stock_id: p for p in portfolio.positions if p.stock_id is not None}
-        bond_positions = {p.bond_id: p for p in portfolio.positions if p.bond_id is not None}
+        stock_positions = {p.stock_id: p for p in executed_positions if p.stock_id is not None}
+        bond_positions = {p.bond_id: p for p in executed_positions if p.bond_id is not None}
         observations: dict[date, list[tuple[str, int, float]]] = {}
 
         if stock_positions:

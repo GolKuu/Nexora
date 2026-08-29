@@ -58,7 +58,8 @@ def list_portfolios(
                 "id": p.id,
                 "name": p.name,
                 "base_currency": p.base_currency,
-                "position_count": len(p.positions),
+                "position_count": sum(1 for position in p.positions if position.status == "EXECUTED"),
+                "planned_position_count": sum(1 for position in p.positions if position.status == "PLANNED"),
             }
             for p in rows
         ],

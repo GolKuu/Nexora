@@ -25,7 +25,7 @@ from app.models.incremental import (
     RecalculationTask, SourceCheckLog,
 )
 from app.models.metrics import BondMetric
-from app.models.portfolio import Alert, Portfolio, PortfolioPosition, Watchlist
+from app.models.portfolio import Alert, GoalPlanVersion, InvestmentGoal, Portfolio, PortfolioPosition, Watchlist
 from app.models.scores import BondScore, ScoreComponent
 from app.models.strict_scores import StrictScoreSnapshot
 from app.models.source import DataSource, RawKaseData
@@ -80,6 +80,8 @@ __all__ = [
     "PeerGroup",
     "Portfolio",
     "PortfolioPosition",
+    "InvestmentGoal",
+    "GoalPlanVersion",
     "RawBrowserSnapshot",
     "RawKaseData",
     "ScoreComponent",

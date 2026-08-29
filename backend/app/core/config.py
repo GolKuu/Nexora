@@ -232,6 +232,14 @@ class Settings(BaseSettings):
     DCF_TERMINAL_GROWTH_CAP: float = 0.06
     DCF_STALE_PRICE_DAYS: int = 7
 
+    # --- deterministic investment goal planner -------------------------
+    GOAL_BASE_SAFETY_MARGIN_PERCENT: float = 0.03
+    GOAL_MAX_SINGLE_STOCK_PERCENT: float = 0.25
+    GOAL_MAX_SINGLE_ISSUER_PERCENT: float = 0.30
+    GOAL_MAX_SECTOR_PERCENT: float = 0.40
+    GOAL_MAX_ILLIQUID_PERCENT: float = 0.15
+    GOAL_COMMISSION_PERCENT: float = 0.0
+
     # --- inflation -------------------------------------------------------
     DEFAULT_INFLATION_RATE: float = 0.0
     INFLATION_SOURCE_URL: str = "https://stat.gov.kz"

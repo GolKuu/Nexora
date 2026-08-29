@@ -56,7 +56,10 @@ class ChangeService:
         }
 
     def portfolio(self, portfolio_id: int, *, since: datetime | None = None, limit: int = 200) -> list[DataChangeSet]:
-        positions = list(self.session.execute(select(PortfolioPosition).where(PortfolioPosition.portfolio_id == portfolio_id)).scalars())
+        positions = list(self.session.execute(select(PortfolioPosition).where(
+            PortfolioPosition.portfolio_id == portfolio_id,
+            PortfolioPosition.status == "EXECUTED",
+        )).scalars())
         bond_ids = [str(row.bond_id) for row in positions if row.bond_id is not None]
         stock_ids = [str(row.stock_id) for row in positions if row.stock_id is not None]
         filters = []

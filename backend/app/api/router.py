@@ -10,6 +10,7 @@ from app.api.routes import (
     events,
     health,
     instruments,
+    investment_goals,
     meta,
     news,
     portfolios,
@@ -30,6 +31,7 @@ api_router.include_router(dcf.router, tags=["dcf"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(news.router, prefix="/news", tags=["news"])
 api_router.include_router(instruments.router, prefix="/instruments", tags=["instruments"])
+api_router.include_router(investment_goals.router, prefix="/investment-goals", tags=["investment-goals"])
 api_router.include_router(browser.router, tags=["browser"])
 api_router.include_router(compare.router, tags=["compare"])
 api_router.include_router(settings_routes.router, prefix="/settings", tags=["settings"])

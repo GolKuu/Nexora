@@ -10,7 +10,9 @@ from app.models.portfolio import Alert, PortfolioPosition, Watchlist
 def prioritized_tickers(session: Session) -> list[str]:
     """Portfolio > watchlist > active alerts > all remaining instruments."""
     priority: dict[int, int] = {}
-    for bond_id in session.scalars(select(PortfolioPosition.bond_id).distinct()):
+    for bond_id in session.scalars(select(PortfolioPosition.bond_id).where(
+        PortfolioPosition.status == "EXECUTED"
+    ).distinct()):
         priority[bond_id] = max(priority.get(bond_id, 0), 100)
     for bond_id in session.scalars(select(Watchlist.bond_id).distinct()):
         priority[bond_id] = max(priority.get(bond_id, 0), 90)

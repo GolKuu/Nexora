@@ -2,6 +2,7 @@ import { api } from "@/services/client";
 import type {
   BondListItem,
   DCFResult,
+  GoalPlan,
   PortfolioDetail,
   StockListItem,
   TechnicalAnalysisResponse,
@@ -79,4 +80,24 @@ export const portfolioService = {
     api.put<{ id: number }>(`/portfolios/${id}/positions/${positionId}`, payload),
   removePosition: (id: number, positionId: number) =>
     api.delete<void>(`/portfolios/${id}/positions/${positionId}`),
+};
+
+export interface GoalPlanInput {
+  starting_capital: number;
+  target_type: "FINAL_VALUE" | "PROFIT";
+  target_amount: number;
+  horizon_months: number;
+  monthly_contribution: number;
+  risk_profile: "conservative" | "balanced" | "growth" | "income";
+  currency: "KZT";
+  excluded_instruments?: string[];
+}
+
+export const goalPlannerService = {
+  plan: (payload: GoalPlanInput) => api.post<GoalPlan>("/investment-goals/plan", payload),
+  copyToPortfolio: (goalId: number) => api.post<{ portfolio_id: number; positions_added: number; already_copied: boolean; status: "PLANNED" }>(`/investment-goals/${goalId}/copy-to-portfolio`),
+  replan: (goalId: number) => api.post<GoalPlan>(`/investment-goals/${goalId}/replan`),
+  edit: (goalId: number, positions: Array<{ticker:string;quantity:number}>) => api.put<GoalPlan>(`/investment-goals/${goalId}/plan`, {positions}),
+  markExecuted: (goalId: number, positionId: number, payload: { actual_quantity: number; actual_price: number; actual_commission: number; execution_date: string }) =>
+    api.post(`/investment-goals/${goalId}/positions/${positionId}/mark-executed`, payload),
 };
