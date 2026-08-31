@@ -38,6 +38,25 @@ def test_tengrinews_collector_extracts_only_bounded_metadata():
 @pytest.mark.parametrize(("text","kind"),[("Компания объявила дивиденды","dividend"),("Apple представила новую линейку iPhone","product_launch"),("Нацбанк изменил процентную ставку","interest_rate"),("неопределённое сообщение","other")])
 def test_event_classification(text,kind): assert classify_event(text)==kind
 
+
+# Russian keyword stems used to be matched as bare substrings, so any headline
+# containing "риск", "выпуск" or "поиск" was filed as a lawsuit, "поставка" as
+# an interest-rate move, and "прибыл" (arrived) as a profit report.
+@pytest.mark.parametrize("text,kind",[
+    ("Токаев прибыл на стадион","other"),
+    ("Чистая прибыль выросла на 20%","profit"),
+    ("Поставка оборудования завершена","other"),
+    ("Национальный банк повысил базовую ставку","interest_rate"),
+    ("Суд удовлетворил иск к эмитенту","lawsuit"),
+])
+def test_stems_match_word_starts_not_substrings(text,kind):
+    assert classify_event(text)==kind
+
+
+def test_arrival_headline_is_not_scored_as_positive_sentiment():
+    from app.services.news_intelligence import language_sentiment
+    assert language_sentiment("Токаев прибыл на стадион") == 0.0
+
 def test_taxonomy_is_complete():
     for value in ("earnings","guidance","M&A","default","buyback","inflation","geopolitics","other"): assert value in EVENT_TAXONOMY
 

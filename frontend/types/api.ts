@@ -938,3 +938,34 @@ export interface DCFLatestResponse {
   result: DCFResult | null;
   usage: DCFResult["usage"];
 }
+
+
+/** One honest card per subsystem on the operations page (`/health/subsystems`).
+ *  Every status is derived from a row the component itself wrote, so a
+ *  component that has never run reports `never_run` rather than a default green.
+ */
+export interface SubsystemHealth {
+  code: string;
+  status: "ok" | "degraded" | "stalled" | "never_run" | "disabled" | string;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_error: string | null;
+  latency_ms: number | null;
+  next_run_at: string | null;
+  reason?: string | null;
+  enabled?: boolean;
+  mode?: string;
+  articles?: number;
+  runs_observed?: number;
+  failed_runs?: number;
+  instruments_cached?: number;
+  unresolved_anomalies?: number;
+  interval_seconds?: number;
+}
+
+export interface SubsystemsHealth {
+  components: SubsystemHealth[];
+  checked_at: string;
+  serverless: boolean;
+}

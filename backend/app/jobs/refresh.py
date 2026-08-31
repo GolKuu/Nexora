@@ -246,14 +246,44 @@ async def refresh_ai_changes(*, limit: int = 50) -> dict:
 
 
 async def refresh_news() -> dict:
-    """Collect metadata incrementally and process only unseen articles."""
+    """Collect metadata incrementally and process only unseen articles.
+
+    Every configured source runs through the same pipeline, and each keeps its
+    own high-water mark so a failure in one never re-reads or skips another.
+    """
+    from app.collectors.kase_disclosures import KaseDisclosureCollector
     from app.collectors.tengrinews import TengrinewsCollector
     from app.models.news import NewsArticle
     from app.services.news_intelligence import NewsIntelligencePipeline
     session = SessionLocal()
     try:
-        latest = session.scalar(select(func.max(NewsArticle.published_at)).where(NewsArticle.source == "tengrinews"))
-        return await NewsIntelligencePipeline(session).collect(TengrinewsCollector(), since=latest)
+        pipeline = NewsIntelligencePipeline(session)
+        # KASE disclosures first: they are the primary record, so when a media
+        # report duplicates one the clusterer keeps the exchange filing as the
+        # canonical article.
+        providers = [
+            KaseDisclosureCollector(session),
+            TengrinewsCollector(),
+        ]
+        totals = {"fetched": 0, "created": 0, "duplicates": 0, "events": 0, "linked": 0}
+        per_source: dict[str, dict] = {}
+        for provider in providers:
+            latest = session.scalar(
+                select(func.max(NewsArticle.published_at)).where(
+                    NewsArticle.source == provider.name
+                )
+            )
+            try:
+                stats = await pipeline.collect(provider, since=latest)
+            except Exception as exc:
+                logger.warning("news source %s failed: %s", provider.name, exc)
+                session.rollback()
+                per_source[provider.name] = {"status": "failed", "error": str(exc)}
+                continue
+            per_source[provider.name] = {"status": "ok", **stats}
+            for key in totals:
+                totals[key] += stats.get(key, 0)
+        return {**totals, "sources": per_source}
     finally:
         session.close()
 

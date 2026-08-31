@@ -44,6 +44,55 @@ def test_goal_plan_returns_executable_quantities_and_visible_downside(api):
     assert body["goal_id"] is not None
 
 
+def test_plan_deploys_the_capital_instead_of_leaving_it_as_cash(api):
+    """The allocator used to stop at each name's target weight.
+
+    Every KZT government bond shares one issuer, so the 30% issuer cap bound
+    immediately and ~70% of a balanced 5 000 000 ₸ plan silently became cash -
+    which then made the plan miss a target its own capital could have reached.
+    """
+    body = api.post("/investment-goals/plan", json={
+        "starting_capital": 5_000_000, "target_type": "FINAL_VALUE", "target_amount": 5_500_000,
+        "horizon_months": 12, "monthly_contribution": 0, "risk_profile": "balanced", "currency": "KZT",
+    }, headers={"X-Anon-Token": "goal-allocation-test"}).json()
+
+    invested = sum(row["purchase_cost"] for row in body["initial_portfolio"])
+    assert invested + body["cash_remaining"] <= 5_000_000 + 1, "spent more than the capital"
+    assert body["cash_remaining"] < 5_000_000 * 0.20, (
+        f"left {body['cash_remaining']:.0f} ₸ of 5 000 000 ₸ undeployed"
+    )
+
+    # Caps must still hold after the spill pass.
+    capital = 5_000_000
+    per_issuer: dict[int, float] = {}
+    for row in body["initial_portfolio"]:
+        per_issuer[row["issuer_id"]] = per_issuer.get(row["issuer_id"], 0.0) + row["purchase_cost"]
+        if row["instrument_type"] == "stock":
+            assert row["purchase_cost"] <= capital * body["constraints"]["max_single_stock_percent"] / 100 + 1
+    for spent in per_issuer.values():
+        assert spent <= capital * body["constraints"]["max_single_issuer_percent"] / 100 + 1
+
+    # Spreading across issuers is the point: one capped name is not a plan.
+    assert len(per_issuer) >= 2
+
+
+def test_plan_reports_achievable_return_separately_from_feasibility(api):
+    """`feasibility` judges the required return; it must not imply the market
+    can supply it. The plan reports both numbers and says which one binds."""
+    body = api.post("/investment-goals/plan", json={
+        "starting_capital": 5_000_000, "target_type": "FINAL_VALUE", "target_amount": 5_500_000,
+        "horizon_months": 12, "monthly_contribution": 0, "risk_profile": "balanced", "currency": "KZT",
+    }, headers={"X-Anon-Token": "goal-achievable-test"}).json()
+
+    assert "achievable_return_pct" in body
+    assert body["plan_reaches_target"] == body["scenarios"]["base"]["target_reached"]
+    assert body["return_gap_pct"] == pytest.approx(
+        body["required_return_pct"] - body["achievable_return_pct"], abs=0.02
+    )
+    if not body["plan_reaches_target"]:
+        assert any("не достигает цели" in w for w in body["warnings"])
+
+
 def test_unrealistic_goal_returns_safer_alternatives(api):
     response = api.post("/investment-goals/plan", json={
         "starting_capital": 500_000, "target_type": "FINAL_VALUE", "target_amount": 2_000_000,
@@ -52,10 +101,22 @@ def test_unrealistic_goal_returns_safer_alternatives(api):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["feasibility"] == "UNREALISTIC"
-    assert {row["kind"] for row in body["alternative_plans"]} == {
-        "INCREASE_CAPITAL", "ADD_MONTHLY_CONTRIBUTION", "EXTEND_HORIZON"
-    }
+    kinds = {row["kind"] for row in body["alternative_plans"]}
+    assert {"INCREASE_CAPITAL", "ADD_MONTHLY_CONTRIBUTION", "EXTEND_HORIZON"} <= kinds
+    # Staged reinvestment is the one lever that needs nothing extra from the user.
+    assert "STAGED_REINVESTMENT" in kinds
     assert "слишком агрессивная" in body["warnings"][0]
+
+    # Every alternative must be a real instruction. These were previously priced
+    # at the profile's feasibility ceiling rather than at the return this plan
+    # can actually deliver, so they came back advising "add 0 ₸ a month" and
+    # "extend to the horizon you already chose".
+    by_kind = {row["kind"]: row for row in body["alternative_plans"]}
+    assert by_kind["INCREASE_CAPITAL"]["starting_capital"] > 500_000
+    assert by_kind["INCREASE_CAPITAL"]["additional_capital"] > 0
+    assert by_kind["ADD_MONTHLY_CONTRIBUTION"]["monthly_contribution"] > 0
+    assert by_kind["EXTEND_HORIZON"]["horizon_months"] > 12
+    assert by_kind["EXTEND_HORIZON"]["additional_months"] > 0
 
 
 def test_editing_quantity_recalculates_and_appends_version(api):

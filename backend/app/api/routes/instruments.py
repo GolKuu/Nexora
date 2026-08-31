@@ -14,7 +14,7 @@ from app.db.session import SessionLocal
 from app.models.history import MarketObservation
 from app.models.market import BondQuote
 from app.collectors.kase_stock_catalog import KaseStockCatalogCollector
-from app.core.errors import NotFoundError, UpstreamError
+from app.core.errors import NotFoundError, StreamingUnsupportedError, UpstreamError
 from app.repositories.bonds import BondRepository
 from app.schemas.stocks import CrossAssetCompareRequest
 from app.services.browser_agent_service import BrowserAgentService, require_browser
@@ -122,7 +122,7 @@ async def instrument_stream(
         # A long-lived generator inside a serverless request handler would be
         # billed for its whole life and killed mid-stream anyway. The client
         # falls back to polling when it sees this.
-        raise UpstreamError(
+        raise StreamingUnsupportedError(
             "Поток недоступен в serverless-развёртывании; используйте опрос."
         )
 

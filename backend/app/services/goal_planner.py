@@ -26,8 +26,11 @@ from app.repositories.metrics import MetricRepository
 from app.services.recommendation_service import RecommendationService
 from app.services.technical_analysis import DEFAULT_CONFIG
 
-METHODOLOGY_VERSION = "goal-planner-1.0.0"
+METHODOLOGY_VERSION = "goal-planner-1.1.0"
 RETURN_MODEL_VERSION = "stored-facts-return-1.0.0"
+#: Names considered per sleeve. Larger than the number of positions actually
+#: held, so a capped first choice has somewhere to spill.
+CANDIDATE_POOL = 10
 FEASIBILITY_THRESHOLDS = {
     "conservative": (0.10, 0.16, 0.24),
     "balanced": (0.14, 0.22, 0.35),
@@ -162,12 +165,29 @@ class GoalPlannerService:
             "План использует сохранённые котировки; фактическая цена исполнения может отличаться.",
             "Налоги и комиссии биржи/депозитария не учтены, если комиссия не настроена.",
         ]
+        if base_value < target:
+            warnings.insert(0,
+                f"Базовый сценарий не достигает цели: доступная доходность портфеля "
+                f"{weighted_return * 100:.1f}% против требуемых {required * 100:.1f}%. "
+                "Риск не повышен ради цели; см. альтернативные планы."
+            )
         if feasibility in {"HIGH_RISK", "UNREALISTIC"}:
             warnings.insert(0, "Цель слишком агрессивная для выбранного срока и уровня риска; риск портфеля не повышен ради цели.")
         if rejected:
             warnings.append(f"Исключено инструментов без достаточных входов: {rejected}.")
+        # Cash that survives both allocation passes is undeployable, not an
+        # oversight - say so rather than letting the user wonder why the plan
+        # falls short of a target its own capital could have reached.
+        if cash > payload.starting_capital * 0.05:
+            warnings.append(
+                f"Не размещено {cash:,.0f} ₸ ({cash / payload.starting_capital * 100:.0f}% капитала): "
+                "лимиты по эмитенту/отрасли и размер лота не позволяют купить больше "
+                "на подтверждённых ценах. Остаток учтён как денежные средства с нулевой доходностью."
+                .replace(",", " ")
+            )
 
-        alternatives = self._alternatives(payload, target)
+        # Priced at what this portfolio actually returns, not at the profile ceiling.
+        alternatives = self._alternatives(payload, target, weighted_return)
         coupon_income = sum(row["coupon"] for row in calendar)
         dividend_income = sum(row["dividend"] for row in calendar)
         progress = {
@@ -183,6 +203,14 @@ class GoalPlannerService:
             "goal_id": None, "version": 1, "methodology_version": METHODOLOGY_VERSION,
             "return_model_version": RETURN_MODEL_VERSION, "as_of": date.today().isoformat(),
             "required_return": round(required, 8), "required_return_pct": round(required * 100, 2),
+            # `feasibility` judges the *required* return against what the risk
+            # profile may pursue. That is not the same question as whether the
+            # instruments actually on KASE today can deliver it, so the plan
+            # reports both and never lets the first imply the second.
+            "achievable_return": round(weighted_return, 8),
+            "achievable_return_pct": round(weighted_return * 100, 2),
+            "return_gap_pct": round((required - weighted_return) * 100, 2),
+            "plan_reaches_target": base_value >= target,
             "feasibility": feasibility,
             "target": {"type": payload.target_type, "amount": _money(target), "planner_base_target": _money(planner_target),
                        "safety_margin_percent": margin * 100},
@@ -226,8 +254,11 @@ class GoalPlannerService:
         stock_items = self._stock_candidates(payload.currency)
         stock_items.sort(key=lambda item: item["scores"].get("investment") or -1, reverse=True)
         stock_slots = 3 if stock_weight >= 0.45 else 2
+        # Gather more candidates than positions we intend to hold: the allocator
+        # needs somewhere to put money when an issuer or sector cap blocks the
+        # first choice. Without spare names, capped capital just becomes cash.
         for item in stock_items:
-            if len([row for row in rows if row["instrument_type"] == "stock"]) >= stock_slots:
+            if len([row for row in rows if row["instrument_type"] == "stock"]) >= CANDIDATE_POOL:
                 break
             if item["ticker"].upper() in excluded or item["currency"] != payload.currency:
                 continue
@@ -251,10 +282,10 @@ class GoalPlannerService:
 
         bond_profile = "conservative" if payload.risk_profile == "conservative" else "aggressive" if payload.risk_profile == "growth" else "balanced"
         bond_result = self.bond_recommendations.recommend(amount=payload.starting_capital, currency=payload.currency,
-                                                          profile=bond_profile, limit=12, settlement=date.today())
+                                                          profile=bond_profile, limit=CANDIDATE_POOL * 2, settlement=date.today())
         bond_slots = 3 if bond_weight >= 0.45 else 2
         for item in bond_result["items"]:
-            if len([row for row in rows if row["instrument_type"] == "bond"]) >= bond_slots:
+            if len([row for row in rows if row["instrument_type"] == "bond"]) >= CANDIDATE_POOL:
                 break
             if item["ticker"].upper() in excluded:
                 continue
@@ -273,25 +304,91 @@ class GoalPlannerService:
             rows.append(self._bond_row(bond, item, unit_cost, expected, 0.05 + duration_penalty * 2,
                                        bond_weight / bond_slots, payload))
 
-        # Turn target weights into executable lots. Unspent money remains cash.
+        # Turn target weights into executable lots.
+        #
+        # The first pass buys each name up to its target weight. That alone used
+        # to be the whole algorithm, which left the plan badly under-invested:
+        # when a cap or a lot size stopped a name short - every KZT government
+        # bond shares one issuer, so the 30% issuer cap binds immediately - the
+        # unspent money silently became cash. A balanced 5 000 000 ₸ plan
+        # deployed 30% and then reported that its own target was unreachable.
+        #
+        # So a second pass spills whatever is left over the remaining eligible
+        # names, still whole-lot and still inside every cap. Cash that survives
+        # both passes is genuinely undeployable, and is reported as such.
         result: list[dict] = []
-        spent = 0.0
         issuer_spent: dict[int, float] = {}
+        sector_spent: dict[str, float] = {}
+        capital = payload.starting_capital
+        commission = 1 + settings.GOAL_COMMISSION_PERCENT / 100
+        cash = capital
+
+        prepared = []
         for row in rows:
-            allocation_amount = payload.starting_capital * row.pop("target_weight")
-            issuer_cap = payload.starting_capital * settings.GOAL_MAX_SINGLE_ISSUER_PERCENT - issuer_spent.get(row["issuer_id"], 0.0)
-            allocation_amount = min(allocation_amount, max(0.0, issuer_cap))
-            lot_cost = row["unit_cost"] * row["lot_size"] * (1 + settings.GOAL_COMMISSION_PERCENT / 100)
-            lots = math.floor(allocation_amount / lot_cost) if lot_cost > 0 else 0
-            quantity = lots * row["lot_size"]
-            if quantity <= 0: rejected += 1; continue
-            cost = quantity * row["unit_cost"] * (1 + settings.GOAL_COMMISSION_PERCENT / 100)
-            row.update(quantity=quantity, purchase_cost=_money(cost), allocation=round(cost / payload.starting_capital, 6),
-                       expected_contribution=round(cost / payload.starting_capital * row["expected_return"], 6))
+            target_weight = row.pop("target_weight")
+            lot_cost = row["unit_cost"] * row["lot_size"] * commission
+            if lot_cost <= 0:
+                rejected += 1
+                continue
+            prepared.append({"row": row, "target": capital * target_weight,
+                             "lot_cost": lot_cost, "quantity": 0, "cost": 0.0})
+
+        def headroom(entry: dict) -> float:
+            """How much more may go into this name under every cap."""
+            row = entry["row"]
+            issuer_cap = capital * settings.GOAL_MAX_SINGLE_ISSUER_PERCENT
+            limits = [issuer_cap - issuer_spent.get(row["issuer_id"], 0.0)]
+            sector = row.get("sector") or "unclassified"
+            limits.append(capital * settings.GOAL_MAX_SECTOR_PERCENT - sector_spent.get(sector, 0.0))
+            if row["instrument_type"] == "stock":
+                limits.append(capital * settings.GOAL_MAX_SINGLE_STOCK_PERCENT - entry["cost"])
+            return min(limits)
+
+        def buy(entry: dict, budget: float) -> None:
+            nonlocal cash
+            allowance = min(budget, headroom(entry), cash)
+            lots = math.floor(allowance / entry["lot_cost"]) if allowance > 0 else 0
+            if lots <= 0:
+                return
+            row = entry["row"]
+            cost = lots * entry["lot_cost"]
+            entry["quantity"] += lots * row["lot_size"]
+            entry["cost"] += cost
+            issuer_spent[row["issuer_id"]] = issuer_spent.get(row["issuer_id"], 0.0) + cost
+            sector = row.get("sector") or "unclassified"
+            sector_spent[sector] = sector_spent.get(sector, 0.0) + cost
+            cash -= cost
+
+        # Pass 1: each name up to its own target weight, best score first.
+        for entry in sorted(prepared, key=lambda e: e["row"].get("score") or 0, reverse=True):
+            buy(entry, entry["target"])
+
+        # Pass 2: spill the remainder. Repeats because buying one name frees no
+        # cap but consumes cash, so the ordering has to be re-checked; it stops
+        # as soon as a whole sweep buys nothing.
+        for _ in range(CANDIDATE_POOL * 2):
+            if cash < min((e["lot_cost"] for e in prepared), default=float("inf")):
+                break
+            progressed = False
+            for entry in sorted(prepared, key=lambda e: e["row"].get("score") or 0, reverse=True):
+                before = entry["quantity"]
+                buy(entry, cash)
+                progressed = progressed or entry["quantity"] > before
+            if not progressed:
+                break
+
+        for entry in prepared:
+            row, quantity, cost = entry["row"], entry["quantity"], entry["cost"]
+            if quantity <= 0:
+                rejected += 1
+                continue
+            row.update(quantity=quantity, purchase_cost=_money(cost),
+                       allocation=round(cost / capital, 6),
+                       expected_contribution=round(cost / capital * row["expected_return"], 6))
             for flow in row.get("future_cashflows", []):
                 flow["amount"] = _money(flow.pop("per_unit") * quantity)
-            issuer_spent[row["issuer_id"]] = issuer_spent.get(row["issuer_id"], 0.0) + cost
-            spent += cost; result.append(row)
+            result.append(row)
+        result.sort(key=lambda row: row["purchase_cost"], reverse=True)
         return result, rejected
 
     def _stock_candidates(self, currency: str) -> list[dict]:
@@ -440,23 +537,63 @@ class GoalPlannerService:
         return {"final_value": _money(value), "target_reached": value >= target,
                 "difference_vs_target": round(value - target, 2)}
 
-    def _alternatives(self, payload, target: float) -> list[dict]:
-        feasible_rate = FEASIBILITY_THRESHOLDS[payload.risk_profile][0]
-        growth = (1 + feasible_rate) ** (payload.horizon_months / 12)
-        needed_capital = max(0.0, (target - payload.monthly_contribution * payload.horizon_months) / growth)
-        contribution = 0.0
-        if payload.horizon_months:
-            fv_without = future_value(payload.starting_capital, 0, payload.horizon_months, feasible_rate)
-            annuity = future_value(0, 1, payload.horizon_months, feasible_rate)
-            contribution = max(0.0, (target - fv_without) / annuity) if annuity else 0.0
-        extended = payload.horizon_months
-        while extended < 600 and future_value(payload.starting_capital, payload.monthly_contribution, extended, feasible_rate) < target:
+    def _alternatives(self, payload, target: float, achievable: float) -> list[dict]:
+        """What would actually close the gap, priced at this plan's own return.
+
+        These used to be computed at the profile's feasibility threshold rather
+        than at the return the constructed portfolio can really deliver. Because
+        that threshold is generous, every alternative came back saying the goal
+        was already met - offering "add 0 ₸ per month", "extend to the same 12
+        months" and a capital figure *below* what the user already had. Pricing
+        them at the achievable return makes each one a real instruction, and an
+        alternative that is not an improvement is not offered at all.
+        """
+        rate = achievable
+        months = payload.horizon_months
+        alternatives: list[dict] = []
+
+        growth = (1 + rate) ** (months / 12) if months else 1.0
+        annuity = future_value(0, 1, months, rate) if months else 0.0
+        needed_capital = max(0.0, (target - payload.monthly_contribution * annuity) / growth) if growth else 0.0
+        if needed_capital > payload.starting_capital + 1:
+            alternatives.append({
+                "kind": "INCREASE_CAPITAL", "starting_capital": _money(needed_capital),
+                "additional_capital": _money(needed_capital - payload.starting_capital),
+                "feasibility": "FEASIBLE", "annual_return": round(rate, 6),
+                "projected_final_value": _money(future_value(needed_capital, payload.monthly_contribution, months, rate)),
+            })
+
+        fv_without = future_value(payload.starting_capital, 0, months, rate)
+        contribution = max(0.0, (target - fv_without) / annuity) if annuity else 0.0
+        if contribution > payload.monthly_contribution + 1:
+            alternatives.append({
+                "kind": "ADD_MONTHLY_CONTRIBUTION", "monthly_contribution": _money(contribution),
+                "additional_monthly": _money(contribution - payload.monthly_contribution),
+                "feasibility": "FEASIBLE", "annual_return": round(rate, 6),
+                "projected_final_value": _money(future_value(payload.starting_capital, contribution, months, rate)),
+            })
+
+        extended = months
+        while extended < 600 and future_value(payload.starting_capital, payload.monthly_contribution, extended, rate) < target:
             extended += 1
-        return [
-            {"kind": "INCREASE_CAPITAL", "starting_capital": _money(needed_capital), "feasibility": "FEASIBLE", "annual_return": feasible_rate},
-            {"kind": "ADD_MONTHLY_CONTRIBUTION", "monthly_contribution": _money(contribution), "feasibility": "FEASIBLE", "annual_return": feasible_rate},
-            {"kind": "EXTEND_HORIZON", "horizon_months": extended, "feasibility": "FEASIBLE" if extended < 600 else "NOT_REACHED", "annual_return": feasible_rate},
-        ]
+        if extended > months:
+            reached = extended < 600
+            alternatives.append({
+                "kind": "EXTEND_HORIZON", "horizon_months": extended,
+                "additional_months": extended - months,
+                "feasibility": "FEASIBLE" if reached else "NOT_REACHED",
+                "annual_return": round(rate, 6),
+                "projected_final_value": _money(future_value(payload.starting_capital, payload.monthly_contribution, extended, rate)) if reached else None,
+            })
+
+        # Staged reinvestment is always available and never raises risk; it is
+        # the only lever that needs nothing extra from the user.
+        alternatives.append({
+            "kind": "STAGED_REINVESTMENT", "feasibility": "FEASIBLE",
+            "annual_return": round(rate, 6),
+            "note": "Купоны и дивиденды реинвестируются по плану без повышения риска.",
+        })
+        return alternatives
 
     def owned_goal(self, goal_id: int, *, user_id: int | None, token: str | None) -> InvestmentGoal:
         goal = self.session.get(InvestmentGoal, goal_id)

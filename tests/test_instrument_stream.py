@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.api.routes import instruments as instruments_route
-from app.core.errors import NotFoundError, UpstreamError
+from app.core.errors import NotFoundError, StreamingUnsupportedError, UpstreamError
 
 
 class FakeRequest:
@@ -204,10 +204,16 @@ async def test_stream_refuses_to_run_on_serverless(session, stream_stock, monkey
     from app.core.config import settings
 
     monkeypatch.setattr(type(settings), "is_serverless", property(lambda _: True))
-    with pytest.raises(UpstreamError):
+    with pytest.raises(StreamingUnsupportedError) as excinfo:
         await instruments_route.instrument_stream(
             stream_stock.ticker, FakeRequest(), session=session
         )
+    # Not 502: KASE is healthy and no data is missing, the deployment simply
+    # cannot hold a connection open. Reporting it as an upstream failure made
+    # every stock page view look like a broken data provider.
+    assert excinfo.value.status_code == 501
+    assert excinfo.value.code == "streaming_unsupported"
+    assert not isinstance(excinfo.value, UpstreamError)
 
 
 def test_sse_frame_format():

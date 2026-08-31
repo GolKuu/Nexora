@@ -36,6 +36,7 @@ from app.models.issuer import Issuer
 from app.models.instrument import Instrument
 from app.models.macro import InflationData, YieldCurve
 from app.models.market import BondQuote
+from app.models.news import NewsArticle
 from app.models.stock import (
     CorporateAction,
     Dividend,
@@ -166,6 +167,18 @@ _ACTION_FIELDS = [
     "action_type", "status", "event_date", "title", "details", "source",
     "source_identifier", "source_url", "source_timestamp", "fetched_at",
 ]
+#: A news article is a fact we observed (a headline at a URL at a time), so it
+#: travels in the snapshot. The classification, clustering, market reaction and
+#: impact score derived from it are NOT shipped - they are recomputed on import
+#: like every other derived value, so they always match this build's rules.
+_NEWS_FIELDS = [
+    "source", "source_url", "canonical_url", "title", "published_at",
+    "fetched_at", "language", "section", "content_hash", "fingerprint",
+    "short_text", "summary", "source_confidence",
+]
+#: Deployments that cannot run a collector serve whatever the snapshot holds,
+#: so the feed is capped rather than unbounded.
+NEWS_LIMIT = 800
 
 
 def export_snapshot(
@@ -278,6 +291,17 @@ def export_snapshot(
         if code:
             statements.append({"issuer_code": code, **_dump(row, _STATEMENT_FIELDS)})
 
+    # Newest first so a truncated snapshot keeps the most recent news, then
+    # written oldest-first so the importer clusters them in publication order.
+    news_articles = [
+        _dump(row, _NEWS_FIELDS)
+        for row in reversed(list(session.execute(
+            select(NewsArticle)
+            .order_by(NewsArticle.published_at.desc(), NewsArticle.id.desc())
+            .limit(NEWS_LIMIT)
+        ).scalars()))
+    ]
+
     payload = {
         "snapshot_version": SNAPSHOT_VERSION,
         "captured_at": datetime.now(timezone.utc).isoformat(),
@@ -315,13 +339,15 @@ def export_snapshot(
             if stock_ticker_by_id.get(row.stock_id)
         ],
         "corporate_actions": stock_actions,
+        "news": news_articles,
     }
 
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     counts = {key: len(payload[key]) for key in
               ("issuers", "bonds", "quotes", "cashflows", "statements",
                "yield_curve", "inflation", "stocks", "stock_quotes",
-               "stock_history", "stock_financials", "dividends", "corporate_actions")}
+               "stock_history", "stock_financials", "dividends",
+               "corporate_actions", "news")}
     logger.info("snapshot written to %s: %s", path, counts)
     return {"path": str(path), "captured_at": payload["captured_at"], **counts}
 
@@ -546,6 +572,39 @@ def import_snapshot(
 
     session.commit()
 
+    # News: store the observed articles, then let the ordinary pipeline derive
+    # the events, clusters, reactions and impact scores from them.
+    news_imported = 0
+    news_events = 0
+    for row in payload.get("news", []):
+        values = _load(row)
+        fingerprint = values.get("fingerprint")
+        exists = session.execute(
+            select(NewsArticle).where(NewsArticle.fingerprint == fingerprint)
+        ).scalars().first()
+        if exists is not None:
+            continue
+        session.add(NewsArticle(**values))
+        news_imported += 1
+    session.commit()
+
+    if news_imported:
+        from app.services.news_intelligence import NewsIntelligencePipeline
+
+        pipeline = NewsIntelligencePipeline(session)
+        pending = session.execute(
+            select(NewsArticle)
+            .where(NewsArticle.is_processed.is_(False))
+            .order_by(NewsArticle.published_at, NewsArticle.id)
+        ).scalars().all()
+        for article in pending:
+            try:
+                news_events += len(pipeline.process_article(article))
+            except Exception as exc:
+                logger.warning("news processing failed for %s: %s", article.id, exc)
+                session.rollback()
+        session.commit()
+
     derived = {}
     if recompute:
         # Metrics and scores are always recomputed locally so they match this
@@ -589,6 +648,8 @@ def import_snapshot(
         "statements": statements,
         "yield_curve": curve,
         "inflation": inflation,
+        "news": news_imported,
+        "news_events": news_events,
         **stock_counts,
         **derived,
     }

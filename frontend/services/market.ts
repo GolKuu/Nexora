@@ -1,5 +1,5 @@
 import { api } from "@/services/client";
-import type { NewsFeedResponse } from "@/types/api";
+import type { NewsFeedResponse, SubsystemsHealth } from "@/types/api";
 
 export const marketService = {
   news: (params: { limit?: number; eventType?: string; minImportance?: number } = {}) => {
@@ -10,6 +10,7 @@ export const marketService = {
   },
   health: () => api.get<Record<string, unknown>>("/health"),
   monitoring: () => api.get<Record<string, unknown>>("/health/monitoring"),
+  subsystems: () => api.get<SubsystemsHealth>("/health/subsystems"),
   sources: () => api.get<Record<string, unknown>>("/meta/sources"),
   ingestion: () => api.get<Record<string, unknown>>("/meta/ingestion-metrics"),
 };

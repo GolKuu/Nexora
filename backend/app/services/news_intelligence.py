@@ -20,7 +20,7 @@ from app.services.news_entity_linker import NewsEntityLinker
 
 EVENT_TAXONOMY = ("earnings", "revenue", "profit", "guidance", "dividend", "product_launch", "new_contract", "M&A", "acquisition", "sale", "management_change", "rating_change", "debt", "default", "lawsuit", "regulation", "government_decision", "capital_raise", "share_issue", "buyback", "accident", "production_change", "commodity_change", "interest_rate", "inflation", "currency", "tax", "geopolitics", "other")
 KEYWORDS = {
-    "earnings": ("earnings", "eps", "отчетност", "результат"), "revenue": ("revenue", "выручк"), "profit": ("profit", "прибыл"),
+    "earnings": ("earnings", "eps", "отчетност", "результат"), "revenue": ("revenue", "выручк"), "profit": ("profit", "прибыль", "прибыли ", "прибыльн"),
     "guidance": ("guidance", "прогноз компании"), "dividend": ("dividend", "дивиденд"), "product_launch": ("launch", "представил", "анонсировал", "новая линейка"),
     "new_contract": ("contract", "контракт", "договор"), "M&A": ("merger", "слияни"), "acquisition": ("acquisition", "поглощен", "приобрета"),
     "sale": ("sale", "продаж"), "management_change": ("ceo", "директор", "руководител"), "rating_change": ("rating", "рейтинг"),
@@ -34,15 +34,29 @@ POSITIVE = ("рост", "вырос", "увелич", "прибыль", "кон�
 NEGATIVE = ("паден", "сниз", "убыт", "дефолт", "авари", "иск", "sanction", "miss", "loss")
 
 
+def _mentions(value: str, token: str) -> bool:
+    """Does `token` start a word in `value`?
+
+    Plain substring matching mis-fires badly in Russian, because these tokens
+    are stems: "иск" (lawsuit) is inside "риск", "поиск" and "выпуск"; "ставк"
+    (interest rate) is inside "поставка"; "долг" is inside "долгосрочный".
+    Anchoring to a word start keeps the stem behaviour that lets one token
+    cover a whole declension, without matching the middle of an unrelated word.
+    """
+    return re.search(rf"(?<!\w){re.escape(token.strip())}", value) is not None
+
+
 def classify_event(text: str) -> str:
     value = text.casefold()
-    scores = {kind: sum(token in value for token in tokens) for kind, tokens in KEYWORDS.items()}
+    scores = {kind: sum(_mentions(value, token) for token in tokens) for kind, tokens in KEYWORDS.items()}
     best = max(scores, key=scores.get)
     return best if scores[best] else "other"
 
 
 def language_sentiment(text: str) -> float:
-    value = text.casefold(); pos = sum(word in value for word in POSITIVE); neg = sum(word in value for word in NEGATIVE)
+    value = text.casefold()
+    pos = sum(_mentions(value, word) for word in POSITIVE)
+    neg = sum(_mentions(value, word) for word in NEGATIVE)
     return (pos - neg) / max(pos + neg, 1)
 
 

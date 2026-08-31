@@ -9,6 +9,7 @@ from app.services.health_service import (
     kase_browser_health,
     kase_health,
     monitoring_health,
+    subsystems_health,
 )
 
 router = APIRouter()
@@ -51,3 +52,17 @@ async def health_kase_browser() -> dict:
 )
 def health_monitoring(session: Session = Depends(get_session)) -> dict:
     return monitoring_health(session)
+
+
+@router.get(
+    "/health/subsystems",
+    summary="Состояние подсистем по сохранённым свидетельствам",
+    description=(
+        "По карточке на подсистему: база, сбор KASE, мониторинг, новости, DCF, "
+        "технический анализ, парсер и планировщик. Каждый статус выводится из "
+        "строки, которую записала сама подсистема, поэтому компонент, который "
+        "никогда не запускался, показывает never_run, а не зелёный по умолчанию."
+    ),
+)
+def health_subsystems(session: Session = Depends(get_session)) -> dict:
+    return subsystems_health(session)

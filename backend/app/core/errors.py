@@ -33,6 +33,19 @@ class UpstreamError(AppError):
     code = "upstream_error"
 
 
+class StreamingUnsupportedError(AppError):
+    """This deployment cannot hold a long-lived connection open.
+
+    Distinct from UpstreamError on purpose: KASE has not failed and no data is
+    missing. A serverless function simply cannot serve SSE, so the client is
+    told to poll instead. Reporting that as 502 made a healthy deployment look
+    like it had a broken data provider on every stock page view.
+    """
+
+    status_code = 501
+    code = "streaming_unsupported"
+
+
 class ForbiddenError(AppError):
     """The caller is not allowed to use this endpoint."""
 
